@@ -14,10 +14,16 @@ exports.login = async (req, res) => {
 
     try {
         const user = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM users WHERE username = ?', [username], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
+            db.get(
+                `SELECT id, username, name, role, department_id, committee_id, password, eligible_for_demand_creation 
+                 FROM users 
+                 WHERE username = ?`,
+                [username],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
         });
 
         if (!user) {
@@ -29,7 +35,6 @@ exports.login = async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        // Create token
         const token = jwt.sign(
             { 
                 id: user.id, 
@@ -51,7 +56,8 @@ exports.login = async (req, res) => {
                 name: user.name,
                 role: user.role,
                 department_id: user.department_id,
-                committee_id: user.committee_id
+                committee_id: user.committee_id,
+                eligibleForDemandCreation: !!user.eligible_for_demand_creation  // ✅ here
             }
         });
     } catch (err) {

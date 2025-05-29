@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../../config/api';
 
-const Login = () => {
+const Login = ({ onLogin }) => {
     const [credentials, setCredentials] = useState({ username: '', password: '' });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -22,7 +22,10 @@ const Login = () => {
             const response = await login(credentials.username, credentials.password);
             localStorage.setItem('token', response.token);
             localStorage.setItem('user', JSON.stringify(response.user));
-            
+
+            // ✅ Update user state in App immediately
+            if (onLogin) onLogin(response.user);
+
             // Redirect based on role
             if (response.user.role === 'superadmin') {
                 navigate('/admin');

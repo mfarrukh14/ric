@@ -33,7 +33,7 @@ const AdminDashboard = () => {
 
     const [newName, setNewName] = useState('');
     const [newUser, setNewUser] = useState({
-        name: '', designation: '', departmentId: '', committeeId: ''
+        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false
     });
     const [error, setError] = useState('');
     const [createdCredentials, setCreatedCredentials] = useState(null);
@@ -90,7 +90,7 @@ const AdminDashboard = () => {
             const { credentials } = await createUser(newUser);
             setCreatedCredentials(credentials);
             setShowUserModal(false);
-            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '' });
+            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false });
             fetchAll();
         } catch {
             setError('Error creating user');
@@ -297,6 +297,20 @@ const AdminDashboard = () => {
                             <option key={com.id} value={com.id}>{com.name}</option>
                         ))}
                     </select>
+                    <label className="flex items-center space-x-2 mb-4">
+                        <input
+                            type="checkbox"
+                            checked={newUser.eligibleForDemandCreation}
+                            onChange={e =>
+                                setNewUser(u => ({
+                                    ...u,
+                                    eligibleForDemandCreation: e.target.checked
+                                }))
+                            }
+                            className="form-checkbox h-5 w-5 text-indigo-600"
+                        />
+                        <span>Eligible for demand creation</span>
+                    </label>
                     <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Add User</button>
                 </form>
             </Modal>

@@ -75,7 +75,7 @@ exports.deleteCommittee = (req, res) => {
 
 // User Controllers
 exports.createUser = async (req, res) => {
-    const { name, designation, departmentId, committeeId } = req.body;
+    const { name, designation, departmentId, committeeId, eligibleForDemandCreation } = req.body;
     const db = getDatabase();
     
     if (!name || !designation || (!departmentId && !committeeId)) {
@@ -88,8 +88,8 @@ exports.createUser = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
         await new Promise((resolve, reject) => {
             db.run(
-                'INSERT INTO users (name, username, password, plain_password, designation, department_id, committee_id, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [name, username, hashedPassword, password, designation, departmentId || null, committeeId || null, 'user'],
+                'INSERT INTO users (name, username, password, plain_password, designation, department_id, committee_id, role, eligible_for_demand_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [name, username, hashedPassword, password, designation, departmentId || null, committeeId || null, 'user', eligibleForDemandCreation ? 1 : 0],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -116,7 +116,7 @@ exports.listUsers = async (req, res) => {
         const query = `
             SELECT u.id, u.name, u.username, u.plain_password as password, u.designation, 
                    u.department_id, u.committee_id, u.role, u.created_at,
-                   d.name as department_name, c.name as committee_name 
+                   d.name as department_name, c.name as committee_name, u.eligible_for_demand_creation as eligibleForDemandCreation 
             FROM users u 
             LEFT JOIN departments d ON u.department_id = d.id 
             LEFT JOIN committees c ON u.committee_id = c.id 

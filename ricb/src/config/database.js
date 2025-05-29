@@ -73,6 +73,7 @@ const initializeDatabase = async () => {
                     department_id INTEGER,
                     committee_id INTEGER,
                     role TEXT NOT NULL,
+                    eligible_for_demand_creation INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (department_id) REFERENCES departments (id) ON DELETE CASCADE,
                 FOREIGN KEY (committee_id) REFERENCES committees (id) ON DELETE CASCADE
