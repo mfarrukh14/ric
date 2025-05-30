@@ -89,10 +89,14 @@ const initializeDatabase = async () => {
                 description TEXT NOT NULL,
                 urgency TEXT NOT NULL DEFAULT 'normal',
                 required_by DATE NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
+                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, vetting, vetting_approved, purchase_review, approved, rejected
                 store_response TEXT,
                 store_response_at DATETIME,
                 store_response_by INTEGER,
+                vetting_status TEXT DEFAULT 'pending', -- pending, approved, rejected
+                vetting_rejection_reason TEXT,
+                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
+                purchase_rejection_reason TEXT,
                 created_by INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -127,9 +131,7 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
-        });
-
-        // Create supplier evaluations table (tracks individual committee member evaluations)
+        });        // Create supplier evaluations table (tracks individual committee member evaluations)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS supplier_evaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,6 +143,26 @@ const initializeDatabase = async () => {
                 FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
                 FOREIGN KEY (evaluator_id) REFERENCES users (id) ON DELETE CASCADE,
                 UNIQUE(supplier_id, evaluator_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create demand evaluations table (tracks vetting committee and purchase department evaluations)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demand_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                demand_id INTEGER NOT NULL,
+                evaluator_id INTEGER NOT NULL,
+                committee_type TEXT NOT NULL, -- 'vetting' or 'purchase'
+                status TEXT NOT NULL, -- approved, rejected
+                comments TEXT,
+                updated_demand_data TEXT, -- JSON string of updated demand fields
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (evaluator_id) REFERENCES users (id) ON DELETE CASCADE,
+                UNIQUE(demand_id, evaluator_id, committee_type)
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
@@ -168,9 +190,7 @@ const initializeDatabase = async () => {
                     }
                 );
             });
-        }
-
-        // Check if Evaluation Committee exists
+        }        // Check if Evaluation Committee exists
         const committeeRow = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM committees WHERE name = 'Evaluation Committee'", (err, row) => {
                 if (err) reject(err);
@@ -187,6 +207,54 @@ const initializeDatabase = async () => {
                         if (err) reject(err);
                         else {
                             console.log('Evaluation Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Vetting Committee exists
+        const vettingCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Vetting Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!vettingCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Vetting Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Vetting Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Purchase Department exists
+        const purchaseDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'Purchase'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!purchaseDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['Purchase'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Purchase Department created successfully');
                             resolve();
                         }
                     }
