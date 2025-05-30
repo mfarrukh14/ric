@@ -1,9 +1,11 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 require('./src/config/database'); // Initialize database
 const authRoutes = require('./src/routes/auth');
 const adminRoutes = require('./src/routes/admin');
 const demandRoutes = require('./src/routes/demands');
+const supplierRoutes = require('./src/routes/suppliers');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -16,6 +18,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/demands', demandRoutes);
+app.use('/api/suppliers', supplierRoutes);
 
 // Test route
 app.get('/', (req, res) => {

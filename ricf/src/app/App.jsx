@@ -4,6 +4,7 @@ import '../index.css';
 import Login from '../components/auth/Login';
 import AdminDashboard from '../components/admin/AdminDashboard';
 import UserDashboard from '../components/user/UserDashboard';
+import SupplierDashboard from '../components/supplier/SupplierDashboard';
 import Header from '../components/layout/header/header';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -69,11 +70,21 @@ function App() {
             }
           />
           <Route
+            path="/supplier-dashboard"
+            element={
+              <ProtectedRoute allowedRoles={['supplier']}>
+                <SupplierDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/"
             element={
               user ? (
                 user.role === 'superadmin' ? (
                   <Navigate to="/admin" replace />
+                ) : user.role === 'supplier' ? (
+                  <Navigate to="/supplier-dashboard" replace />
                 ) : (
                   <Navigate to="/dashboard" replace />
                 )

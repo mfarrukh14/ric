@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CreateDemandModal from '../modals/CreateDemandModal';
 import DemandManagement from '../admin/DemandManagement';
+import SupplierEvaluation from '../admin/SupplierEvaluation';
 import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
@@ -10,9 +11,11 @@ export default function UserDashboard() {
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(false);  const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('my-demands');
-
   // Check if user is Store department user
   const isStoreDepartmentUser = user?.departmentName && user.departmentName.toLowerCase() === 'store';
+  
+  // Check if user is Evaluation Committee member
+  const isEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'evaluation committee';
   // Initialize user from localStorage once
   useEffect(() => {
     const stored = localStorage.getItem('user');
@@ -100,10 +103,10 @@ export default function UserDashboard() {
   };
 
   return (
-    <div className="container mx-auto p-8">
-      <div className="flex justify-between items-center mb-6">
+    <div className="container mx-auto p-8">      <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">
-          {isStoreDepartmentUser ? 'Store Department Dashboard' : 'User Dashboard'}
+          {isStoreDepartmentUser ? 'Store Department Dashboard' : 
+           isEvaluationCommittee ? 'Evaluation Committee Dashboard' : 'User Dashboard'}
         </h1>
         {user?.eligibleForDemandCreation && (
           <button
@@ -115,6 +118,7 @@ export default function UserDashboard() {
         )}
       </div>
 
+      {/* Tab Navigation for Store Department Users */}
       {isStoreDepartmentUser && (
         <div className="mb-6">
           <div className="border-b border-gray-200">
@@ -144,16 +148,44 @@ export default function UserDashboard() {
         </div>
       )}
 
-      {(!isStoreDepartmentUser || activeTab === 'my-demands') && (
+      {/* Tab Navigation for Evaluation Committee Users */}
+      {isEvaluationCommittee && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('supplier-evaluation')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'supplier-evaluation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Supplier Evaluation
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee) || (activeTab === 'my-demands')) && (
         <div>
           <div className="mb-8">
             <p className="text-gray-600">Welcome back, {user?.name || 'User'}!</p>
-            {user?.eligibleForDemandCreation && !isStoreDepartmentUser && (
+            {user?.eligibleForDemandCreation && !isStoreDepartmentUser && !isEvaluationCommittee && (
               <p className="text-sm text-gray-500 mt-1">
                 You can create demands using the button above. Your demands will be reviewed by the store department.
               </p>
             )}
-            {user && !user.eligibleForDemandCreation && !isStoreDepartmentUser && (
+            {user && !user.eligibleForDemandCreation && !isStoreDepartmentUser && !isEvaluationCommittee && (
               <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-blue-800">
                   You currently don't have permission to create demands. Please contact your administrator if you need access.
@@ -167,9 +199,16 @@ export default function UserDashboard() {
                 </p>
               </div>
             )}
+            {isEvaluationCommittee && (
+              <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                <p className="text-purple-800">
+                  As an Evaluation Committee member, you can review and evaluate supplier registrations. Use the tabs above to switch between your personal demands and supplier evaluation.
+                </p>
+              </div>
+            )}
           </div>
 
-          {(user?.eligibleForDemandCreation || isStoreDepartmentUser) && (
+          {(user?.eligibleForDemandCreation || isStoreDepartmentUser || isEvaluationCommittee) && (
             <div className="bg-white rounded-lg shadow">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900">My Demands</h2>
@@ -238,10 +277,12 @@ export default function UserDashboard() {
             </div>
           )}
         </div>
+      )}      {isStoreDepartmentUser && activeTab === 'manage-demands' && (
+        <DemandManagement />
       )}
 
-      {isStoreDepartmentUser && activeTab === 'manage-demands' && (
-        <DemandManagement />
+      {isEvaluationCommittee && activeTab === 'supplier-evaluation' && (
+        <SupplierEvaluation />
       )}
 
       <CreateDemandModal

@@ -79,9 +79,7 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
-        });
-
-        // Create demands table
+        });        // Create demands table
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS demands (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +104,49 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create suppliers table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS suppliers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_name TEXT NOT NULL,
+                company_email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                company_statement TEXT NOT NULL,
+                company_mission TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected
+                professional_tax_cert TEXT, -- file path
+                ntn_document TEXT, -- file path
+                drug_sale_license TEXT, -- file path
+                pec_document TEXT, -- file path
+                gst_document TEXT, -- file path
+                rejection_reason TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                approved_at DATETIME,
+                rejected_at DATETIME
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier evaluations table (tracks individual committee member evaluations)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                evaluator_id INTEGER NOT NULL,
+                status TEXT NOT NULL, -- approved, rejected
+                comments TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                FOREIGN KEY (evaluator_id) REFERENCES users (id) ON DELETE CASCADE,
+                UNIQUE(supplier_id, evaluator_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Check if superadmin exists
         const row = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM users WHERE role = 'superadmin'", (err, row) => {
@@ -122,6 +163,30 @@ const initializeDatabase = async () => {
                         if (err) reject(err);
                         else {
                             console.log('Superadmin user created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Evaluation Committee exists
+        const committeeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Evaluation Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!committeeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Evaluation Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Evaluation Committee created successfully');
                             resolve();
                         }
                     }

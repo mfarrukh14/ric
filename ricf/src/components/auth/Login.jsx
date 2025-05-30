@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../../config/api';
+import SupplierAuth from './SupplierAuth';
 
 const Login = ({ onLogin }) => {
+    const [activeTab, setActiveTab] = useState('user');
     const [credentials, setCredentials] = useState({ username: '', password: '' });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -37,16 +39,43 @@ const Login = ({ onLogin }) => {
         } finally {
             setLoading(false);
         }
-    };
+    };    if (activeTab === 'supplier') {
+        return <SupplierAuth onBack={() => setActiveTab('user')} onLogin={onLogin} />;
+    }
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-md w-full space-y-8">
                 <div>
                     <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-                        Sign in to your account
+                        Welcome to RIC Tender System
                     </h2>
                 </div>
+
+                {/* Tab Navigation */}
+                <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+                    <button
+                        onClick={() => setActiveTab('user')}
+                        className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-all ${
+                            activeTab === 'user'
+                                ? 'bg-white text-gray-900 shadow-sm'
+                                : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                    >
+                        User/Admin Login
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('supplier')}
+                        className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-all ${
+                            activeTab === 'supplier'
+                                ? 'bg-white text-gray-900 shadow-sm'
+                                : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                    >
+                        Supplier Portal
+                    </button>
+                </div>
+
                 <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
                     {error && (
                         <div className="rounded-md bg-red-50 p-4">
