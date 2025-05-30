@@ -12,7 +12,8 @@ import {
 } from '../../config/api';
 import Modal from '../modals/Modal';
 import UserListModal from '../modals/UserListModal';
-import { UserPlus, Trash2, Eye } from 'lucide-react';
+import DemandManagement from './DemandManagement';
+import { UserPlus, Trash2, Eye, Package } from 'lucide-react';
 
 const glassTableClass = `
   w-full table-auto bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg
@@ -20,10 +21,11 @@ const glassTableClass = `
 `;
 
 const AdminDashboard = () => {
-    // state hooks...
+    // State hooks
     const [departments, setDepartments] = useState([]);
     const [committees, setCommittees] = useState([]);
     const [users, setUsers] = useState([]);
+    const [activeTab, setActiveTab] = useState('management'); // management or demands
     const [showDepartmentModal, setShowDepartmentModal] = useState(false);
     const [showCommitteeModal, setShowCommitteeModal] = useState(false);
     const [showUserModal, setShowUserModal] = useState(false);
@@ -116,9 +118,7 @@ const AdminDashboard = () => {
             const comm = committees.find(c => c.id === selectedGroup.id);
             return `Committee Members - ${comm?.name || ''}`;
         }
-    };
-
-    return (
+    }; return (
         <div className="container mx-auto px-4 py-8 space-y-6">
             <h1 className="text-3xl font-bold text-black">Admin Dashboard</h1>
 
@@ -137,88 +137,116 @@ const AdminDashboard = () => {
                 </div>
             )}
 
-            {/* Departments Table */}
-            <div className={glassTableClass}>
-                <div className="flex justify-between items-center p-4">
-                    <h2 className="text-xl font-semibold text-black">Departments</h2>
-                    <button
-                        onClick={() => setShowDepartmentModal(true)}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
-                    >+ Add</button>
-                </div>
-                <table className="min-w-full text-black">
-                    <thead>
-                        <tr className="border-b border-white border-opacity-30">
-                            <th className="px-4 py-2 text-left">Name</th>
-                            <th className="px-4 py-2 text-center">Members</th>
-                            <th className="px-4 py-2">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {departments.length === 0 ? (
-                            <tr><td colSpan="3" className="px-4 py-3 text-center">No Departments added yet.</td></tr>
-                        ) : (
-                            departments.map(d => (
-                                <tr key={d.id} className="hover:bg-white hover:bg-opacity-10">
-                                    <td className="px-4 py-3">{d.name}</td>
-                                    <td className="px-4 py-3 text-center">{getUsersFor(d.id, 'department').length}</td>
-                                    <td className="px-4 py-3 flex items-center justify-center space-x-2">
-                                        <button onClick={() => { setNewUser(u => ({ ...u, departmentId: d.id })); setShowUserModal(true); }} aria-label="Add Member" className="p-1 hover:bg-gray-200 rounded">
-                                            <UserPlus className="h-5 w-5 text-black" />
-                                        </button>
-                                        <button onClick={() => handleDelete('department', d.id)} aria-label="Delete Department" className="p-1 hover:bg-gray-200 rounded">
-                                            <Trash2 className="h-5 w-5 text-red-600" />
-                                        </button>
-                                        <button onClick={() => { setSelectedGroup({ id: d.id, type: 'department' }); setSearchTerm(''); setShowUserListModal(true); }} aria-label="View Members" className="p-1 hover:bg-gray-200 rounded">
-                                            <Eye className="h-5 w-5 text-black" />
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
+            {/* Tab Navigation */}
+            <div className="flex space-x-1 bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg border border-white border-opacity-30 rounded-lg p-1">
+                <button
+                    onClick={() => setActiveTab('management')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'management'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <UserPlus size={20} />
+                    <span>User Management</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('demands')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'demands'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Package size={20} />
+                    <span>Demand Management</span>                </button>
             </div>
 
-            {/* Committees Table */}
-            <div className={glassTableClass}>
-                <div className="flex justify-between items-center p-4">
-                    <h2 className="text-xl font-semibold text-black">Committees</h2>
-                    <button onClick={() => setShowCommitteeModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">+ Add</button>
-                </div>
-                <table className="min-w-full text-black">
-                    <thead>
-                        <tr className="border-b border-white border-opacity-30">
-                            <th className="px-4 py-2 text-left">Name</th>
-                            <th className="px-4 py-2 text-center">Members</th>
-                            <th className="px-4 py-2">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {committees.length === 0 ? (
-                            <tr><td colSpan="3" className="px-4 py-3 text-center">No Committees added yet.</td></tr>
-                        ) : (
-                            committees.map(c => (
-                                <tr key={c.id} className="hover:bg-white hover:bg-opacity-10">
-                                    <td className="px-4 py-3">{c.name}</td>
-                                    <td className="px-4 py-3 text-center">{getUsersFor(c.id, 'committee').length}</td>
-                                    <td className="px-4 py-3 flex items-centertainment space-x-2 justify-center">
-                                        <button onClick={() => { setNewUser(u => ({ ...u, committeeId: c.id })); setShowUserModal(true); }} aria-label="Add Member" className="p-1 hover:bg-gray-200 rounded">
-                                            <UserPlus className="h-5 w-5 text-black" />
-                                        </button>
-                                        <button onClick={() => handleDelete('committee', c.id)} aria-label="Delete Committee" className="p-1 hover:bg-gray-200 rounded">
-                                            <Trash2 className="h-5 w-5 text-red-600" />
-                                        </button>
-                                        <button onClick={() => { setSelectedGroup({ id: c.id, type: 'committee' }); setSearchTerm(''); setShowUserListModal(true); }} aria-label="View Members" className="p-1 hover:bg-gray-200 rounded">
-                                            <Eye className="h-5 w-5 text-black" />
-                                        </button>
-                                    </td>
+            {/* Tab Content */}
+            {activeTab === 'management' && (
+                <div className="space-y-6">
+                    {/* Departments Table */}
+                    <div className={glassTableClass}>
+                        <div className="flex justify-between items-center p-4">
+                            <h2 className="text-xl font-semibold text-black">Departments</h2>
+                            <button
+                                onClick={() => setShowDepartmentModal(true)}
+                                className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+                            >+ Add</button>
+                        </div>
+                        <table className="min-w-full text-black">
+                            <thead>
+                                <tr className="border-b border-white border-opacity-30">
+                                    <th className="px-4 py-2 text-left">Name</th>
+                                    <th className="px-4 py-2 text-center">Members</th>
+                                    <th className="px-4 py-2">Actions</th>
                                 </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
-            </div>
+                            </thead>
+                            <tbody>
+                                {departments.length === 0 ? (
+                                    <tr><td colSpan="3" className="px-4 py-3 text-center">No Departments added yet.</td></tr>
+                                ) : (
+                                    departments.map(d => (
+                                        <tr key={d.id} className="hover:bg-white hover:bg-opacity-10">
+                                            <td className="px-4 py-3">{d.name}</td>
+                                            <td className="px-4 py-3 text-center">{getUsersFor(d.id, 'department').length}</td>
+                                            <td className="px-4 py-3 flex items-center justify-center space-x-2">
+                                                <button onClick={() => { setNewUser(u => ({ ...u, departmentId: d.id })); setShowUserModal(true); }} aria-label="Add Member" className="p-1 hover:bg-gray-200 rounded">
+                                                    <UserPlus className="h-5 w-5 text-black" />
+                                                </button>
+                                                <button onClick={() => handleDelete('department', d.id)} aria-label="Delete Department" className="p-1 hover:bg-gray-200 rounded">
+                                                    <Trash2 className="h-5 w-5 text-red-600" />
+                                                </button>
+                                                <button onClick={() => { setSelectedGroup({ id: d.id, type: 'department' }); setSearchTerm(''); setShowUserListModal(true); }} aria-label="View Members" className="p-1 hover:bg-gray-200 rounded">
+                                                    <Eye className="h-5 w-5 text-black" />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div> 
+                    <div className={glassTableClass}>
+                        <div className="flex justify-between items-center p-4">
+                            <h2 className="text-xl font-semibold text-black">Committees</h2>
+                            <button onClick={() => setShowCommitteeModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">+ Add</button>
+                        </div>
+                        <table className="min-w-full text-black">
+                            <thead>
+                                <tr className="border-b border-white border-opacity-30">
+                                    <th className="px-4 py-2 text-left">Name</th>
+                                    <th className="px-4 py-2 text-center">Members</th>
+                                    <th className="px-4 py-2">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {committees.length === 0 ? (
+                                    <tr><td colSpan="3" className="px-4 py-3 text-center">No Committees added yet.</td></tr>
+                                ) : (committees.map(c => (
+                                        <tr key={c.id} className="hover:bg-white hover:bg-opacity-10">
+                                            <td className="px-4 py-3">{c.name}</td>
+                                            <td className="px-4 py-3 text-center">{getUsersFor(c.id, 'committee').length}</td>
+                                            <td className="px-4 py-3 flex items-centertainment space-x-2 justify-center">
+                                                <button onClick={() => { setNewUser(u => ({ ...u, committeeId: c.id })); setShowUserModal(true); }} aria-label="Add Member" className="p-1 hover:bg-gray-200 rounded">
+                                                    <UserPlus className="h-5 w-5 text-black" />
+                                                </button>
+                                                <button onClick={() => handleDelete('committee', c.id)} aria-label="Delete Committee" className="p-1 hover:bg-gray-200 rounded">
+                                                    <Trash2 className="h-5 w-5 text-red-600" />
+                                                </button>
+                                                <button onClick={() => { setSelectedGroup({ id: c.id, type: 'committee' }); setSearchTerm(''); setShowUserListModal(true); }} aria-label="View Members" className="p-1 hover:bg-gray-200 rounded">
+                                                    <Eye className="h-5 w-5 text-black" />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}                    </tbody>                </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Demand Management Tab */}
+            {activeTab === 'demands' && (
+                <DemandManagement />
+            )}
 
             {/* User List Modal */}
             <UserListModal
@@ -306,14 +334,18 @@ const AdminDashboard = () => {
                                     ...u,
                                     eligibleForDemandCreation: e.target.checked
                                 }))
-                            }
-                            className="form-checkbox h-5 w-5 text-indigo-600"
+                            } className="form-checkbox h-5 w-5 text-indigo-600"
                         />
                         <span>Eligible for demand creation</span>
                     </label>
                     <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Add User</button>
                 </form>
             </Modal>
+
+            {/* Demand Management Tab */}
+            {activeTab === 'demands' && (
+                <DemandManagement />
+            )}
         </div>
     );
 };

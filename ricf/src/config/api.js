@@ -76,4 +76,36 @@ export const deleteUser = async (id) => {
     return response.data;
 };
 
+// Demand Management
+export const createDemand = async (demandData) => {
+    const response = await api.post('/demands', demandData);
+    return response.data;
+};
+
+export const getUserDemands = async () => {
+    const response = await api.get('/demands/user');
+    return response.data;
+};
+
+export const getAllDemands = async () => {
+    const response = await api.get('/demands/all');
+    return response.data;
+};
+
+export const updateDemandStatus = async (demandId, status, responseText) => {
+    const response = await api.patch(`/demands/${demandId}/status`, { 
+        status, 
+        response: responseText 
+    });
+    return response.data;
+};
+
+export const getDemandById = async (demandId) => {
+    const response = await api.get(`/demands/${demandId}`);
+    return response.data;
+};
+
+// Export API URL for direct fetch calls if needed
+export const apiUrl = API_URL;
+
 export default api;

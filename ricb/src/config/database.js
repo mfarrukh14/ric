@@ -60,9 +60,7 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
-        });
-
-        // Create users table
+        });        // Create users table
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,                    name TEXT NOT NULL,
@@ -83,15 +81,38 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create demands table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                estimated_cost DECIMAL(10,2) NOT NULL,
+                description TEXT NOT NULL,
+                urgency TEXT NOT NULL DEFAULT 'normal',
+                required_by DATE NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                store_response TEXT,
+                store_response_at DATETIME,
+                store_response_by INTEGER,
+                created_by INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (store_response_by) REFERENCES users (id) ON DELETE SET NULL
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Check if superadmin exists
         const row = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM users WHERE role = 'superadmin'", (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
-        });
-
-        if (!row) {
+        });        if (!row) {
             const hashedPassword = await bcrypt.hash('superadmin123', 10);
             await new Promise((resolve, reject) => {
                 db.run(
