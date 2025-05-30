@@ -25,7 +25,6 @@ const Login = ({ onLogin }) => {
             localStorage.setItem('token', response.token);
             localStorage.setItem('user', JSON.stringify(response.user));
 
-            // ✅ Update user state in App immediately
             if (onLogin) onLogin(response.user);
 
             // Redirect based on role
@@ -47,8 +46,8 @@ const Login = ({ onLogin }) => {
         <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-md w-full space-y-8">
                 <div>
-                    <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-                        Welcome to RIC Tender System
+                    <h2 className="mt-6 text-center text-3xl font-thin text-gray-700">
+                        RIC E-Tender System
                     </h2>
                 </div>
 

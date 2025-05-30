@@ -465,3 +465,148 @@ exports.downloadDocument = async (req, res) => {
         res.status(500).json({ error: 'Failed to download document' });
     }
 };
+
+// Get active tenders for suppliers
+exports.getActiveTenders = async (req, res) => {
+    const db = getDatabase();
+    
+    try {        const activeTenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT 
+                    dt.id,
+                    dt.bidding_end_time,
+                    dt.tender_status,
+                    d.item_name,
+                    d.quantity,
+                    d.description,
+                    d.urgency,
+                    d.required_by,
+                    COUNT(sb.id) as bid_count
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
+                 WHERE dt.tender_status = 'active' AND datetime(dt.bidding_end_time) > datetime('now', '+5 hours')
+                 GROUP BY dt.id
+                 ORDER BY dt.bidding_end_time ASC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json(activeTenders);
+    } catch (error) {
+        console.error('Error fetching active tenders:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Submit bid for a tender
+exports.submitBid = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const { proposedQuantity, totalCost, deliveryDays, comments } = req.body;
+    const supplierId = req.user.id;
+
+    try {
+        // Validate required fields
+        if (!proposedQuantity || !totalCost || !deliveryDays) {
+            return res.status(400).json({ message: 'Proposed quantity, total cost, and delivery days are required' });
+        }
+
+        if (parseFloat(totalCost) <= 0 || parseInt(proposedQuantity) <= 0 || parseInt(deliveryDays) <= 0) {
+            return res.status(400).json({ message: 'All numeric values must be greater than 0' });
+        }        // Validate tender exists and is active
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT * FROM demand_tenders 
+                 WHERE id = ? AND tender_status = 'active' AND bidding_end_time > datetime('now', '+5 hours')`,
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or expired' });
+        }        // Check if supplier already submitted a bid
+        const existingBid = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id FROM supplier_bids WHERE tender_id = ? AND supplier_id = ?',
+                [tenderId, supplierId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (existingBid) {
+            return res.status(400).json({ message: 'You have already submitted a bid for this tender. Bids cannot be modified once submitted.' });
+        }
+
+        // Insert new bid
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO supplier_bids (tender_id, supplier_id, total_cost, proposed_quantity, delivery_days, bid_comments)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [tenderId, supplierId, totalCost, proposedQuantity, deliveryDays, comments],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve({ id: this.lastID });
+                }
+            );
+        });
+
+        res.status(201).json({ message: 'Bid submitted successfully' });
+    } catch (error) {
+        console.error('Error submitting bid:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Get supplier's own bids
+exports.getSupplierBids = async (req, res) => {
+    const db = getDatabase();
+    const supplierId = req.user.id;
+
+    try {
+        const bids = await new Promise((resolve, reject) => {
+            db.all(                `SELECT 
+                    sb.*,
+                    dt.tender_status,
+                    dt.bidding_end_time as expiry_date,
+                    dt.awarded_supplier_id,
+                    d.item_name,
+                    d.quantity,
+                    d.description,
+                    d.urgency,
+                    d.required_by,
+                    CASE 
+                        WHEN dt.awarded_supplier_id = sb.supplier_id THEN 'won'
+                        WHEN dt.tender_status = 'awarded' THEN 'lost'
+                        WHEN dt.tender_status = 'active' AND dt.bidding_end_time > datetime('now') THEN 'pending'
+                        ELSE 'expired'
+                    END as bid_status                 FROM supplier_bids sb
+                 JOIN demand_tenders dt ON sb.tender_id = dt.id
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE sb.supplier_id = ?
+                 ORDER BY sb.created_at DESC`,
+                [supplierId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json(bids);
+    } catch (error) {
+        console.error('Error fetching supplier bids:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};

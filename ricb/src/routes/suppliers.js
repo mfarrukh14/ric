@@ -9,7 +9,10 @@ const {
     getPendingSuppliers,
     getSupplierDetails,
     submitEvaluation,
-    downloadDocument
+    downloadDocument,
+    getActiveTenders,
+    submitBid,
+    getSupplierBids
 } = require('../controllers/supplierController');
 
 const router = express.Router();
@@ -68,6 +71,15 @@ router.get('/pending', auth, getPendingSuppliers);
 router.get('/:id', auth, getSupplierDetails);
 router.post('/:supplierId/evaluate', auth, submitEvaluation);
 router.get('/:supplierId/document/:documentType', auth, downloadDocument);
+
+// Get active tenders for suppliers
+router.get('/tenders/active', auth, getActiveTenders);
+
+// Submit bid for a tender
+router.post('/tenders/:tenderId/bid', auth, submitBid);
+
+// Get supplier's own bids
+router.get('/bids/my-bids', auth, getSupplierBids);
 
 // Test email endpoint (for development/testing)
 router.post('/test-email', auth, async (req, res) => {

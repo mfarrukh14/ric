@@ -89,19 +89,24 @@ const initializeDatabase = async () => {
                 description TEXT NOT NULL,
                 urgency TEXT NOT NULL DEFAULT 'normal',
                 required_by DATE NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, vetting, vetting_approved, purchase_review, approved, rejected
+                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, vetting, vetting_approved, purchase_review, approved, rejected, bidding_open, bidding_closed, awarded
                 store_response TEXT,
                 store_response_at DATETIME,
                 store_response_by INTEGER,
                 vetting_status TEXT DEFAULT 'pending', -- pending, approved, rejected
-                vetting_rejection_reason TEXT,
-                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
+                vetting_rejection_reason TEXT,                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
                 purchase_rejection_reason TEXT,
+                purchase_response TEXT,
+                purchase_response_by INTEGER,
+                purchase_response_date DATETIME,
+                bidding_expiry_time DATETIME, -- When bidding closes
+                awarded_supplier_id INTEGER, -- ID of winning supplier
                 created_by INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE CASCADE,
-                FOREIGN KEY (store_response_by) REFERENCES users (id) ON DELETE SET NULL
+                FOREIGN KEY (store_response_by) REFERENCES users (id) ON DELETE SET NULL,
+                FOREIGN KEY (awarded_supplier_id) REFERENCES suppliers (id) ON DELETE SET NULL
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
@@ -147,9 +152,7 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
-        });
-
-        // Create demand evaluations table (tracks vetting committee and purchase department evaluations)
+        });        // Create demand evaluations table (tracks vetting committee and purchase department evaluations)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS demand_evaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +166,73 @@ const initializeDatabase = async () => {
                 FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
                 FOREIGN KEY (evaluator_id) REFERENCES users (id) ON DELETE CASCADE,
                 UNIQUE(demand_id, evaluator_id, committee_type)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });        // Create demand tenders table (for approved demands with bidding expiry)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demand_tenders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                demand_id INTEGER NOT NULL,
+                bidding_start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                bidding_end_time DATETIME NOT NULL,
+                minimum_suppliers INTEGER DEFAULT 3,
+                tender_status TEXT DEFAULT 'active', -- active, expired, awarded, cancelled
+                awarded_supplier_id INTEGER,
+                awarded_bid_amount DECIMAL(10,2),
+                awarded_at DATETIME,
+                created_by INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (awarded_supplier_id) REFERENCES suppliers (id) ON DELETE SET NULL,
+                FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE CASCADE,
+                UNIQUE(demand_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });        // Create supplier bids table (confidential bids from suppliers)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                bid_amount DECIMAL(10,2),
+                proposed_quantity INTEGER NOT NULL,
+                delivery_days INTEGER NOT NULL,
+                total_cost DECIMAL(10,2),
+                bid_comments TEXT,
+                bid_status TEXT DEFAULT 'submitted', -- submitted, won, lost
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });// Create supply orders table (awarded contracts)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supply_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT UNIQUE NOT NULL,
+                demand_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                tender_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                unit_price DECIMAL(10,2) NOT NULL,
+                total_amount DECIMAL(10,2) NOT NULL,
+                delivery_date DATE NOT NULL,
+                order_status TEXT DEFAULT 'pending', -- pending, delivered, cancelled
+                pdf_path TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();

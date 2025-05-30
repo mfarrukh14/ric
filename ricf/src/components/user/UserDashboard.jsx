@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import CreateDemandModal from '../modals/CreateDemandModal';
 import DemandManagement from '../admin/DemandManagement';
 import SupplierEvaluation from '../admin/SupplierEvaluation';
+import VettingCommittee from '../committee/VettingCommittee';
+import PurchaseDepartment from '../department/PurchaseDepartment';
 import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
@@ -10,12 +12,17 @@ export default function UserDashboard() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(false);  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('my-demands');
-  // Check if user is Store department user
+  const [activeTab, setActiveTab] = useState('my-demands');  // Check if user is Store department user
   const isStoreDepartmentUser = user?.departmentName && user.departmentName.toLowerCase() === 'store';
   
   // Check if user is Evaluation Committee member
   const isEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'evaluation committee';
+  
+  // Check if user is Vetting Committee member
+  const isVettingCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'vetting committee';
+  
+  // Check if user is Purchase Department member
+  const isPurchaseDepartment = user?.departmentName && user.departmentName.toLowerCase() === 'purchase';
   // Initialize user from localStorage once
   useEffect(() => {
     const stored = localStorage.getItem('user');
@@ -26,12 +33,11 @@ export default function UserDashboard() {
       setUser(userData);
     }
   }, []);
-
   useEffect(() => {
-    if (user?.eligibleForDemandCreation || isStoreDepartmentUser) {
+    if (user?.eligibleForDemandCreation || isStoreDepartmentUser || isVettingCommittee || isPurchaseDepartment) {
       fetchUserDemands();
     }
-  }, [user?.id, isStoreDepartmentUser]);
+  }, [user?.id, isStoreDepartmentUser, isVettingCommittee, isPurchaseDepartment]);
 
   const fetchUserDemands = async () => {
     try {
@@ -103,10 +109,11 @@ export default function UserDashboard() {
   };
 
   return (
-    <div className="container mx-auto p-8">      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">
+    <div className="container mx-auto p-8">      <div className="flex justify-between items-center mb-6">        <h1 className="text-2xl font-bold">
           {isStoreDepartmentUser ? 'Store Department Dashboard' : 
-           isEvaluationCommittee ? 'Evaluation Committee Dashboard' : 'User Dashboard'}
+           isEvaluationCommittee ? 'Evaluation Committee Dashboard' :
+           isVettingCommittee ? 'Vetting Committee Dashboard' :
+           isPurchaseDepartment ? 'Purchase Department Dashboard' : 'User Dashboard'}
         </h1>
         {user?.eligibleForDemandCreation && (
           <button
@@ -146,9 +153,7 @@ export default function UserDashboard() {
             </nav>
           </div>
         </div>
-      )}
-
-      {/* Tab Navigation for Evaluation Committee Users */}
+      )}      {/* Tab Navigation for Evaluation Committee Users */}
       {isEvaluationCommittee && (
         <div className="mb-6">
           <div className="border-b border-gray-200">
@@ -176,16 +181,76 @@ export default function UserDashboard() {
             </nav>
           </div>
         </div>
-      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee) || (activeTab === 'my-demands')) && (
+      )}
+
+      {/* Tab Navigation for Vetting Committee Users */}
+      {isVettingCommittee && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('vetting-evaluation')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'vetting-evaluation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Vetting Evaluation
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Navigation for Purchase Department Users */}
+      {isPurchaseDepartment && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('purchase-review')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'purchase-review'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Purchase Review
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment) || (activeTab === 'my-demands')) && (
         <div>
           <div className="mb-8">
             <p className="text-gray-600">Welcome back, {user?.name || 'User'}!</p>
-            {user?.eligibleForDemandCreation && !isStoreDepartmentUser && !isEvaluationCommittee && (
+            {user?.eligibleForDemandCreation && !isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment && (
               <p className="text-sm text-gray-500 mt-1">
                 You can create demands using the button above. Your demands will be reviewed by the store department.
               </p>
             )}
-            {user && !user.eligibleForDemandCreation && !isStoreDepartmentUser && !isEvaluationCommittee && (
+            {user && !user.eligibleForDemandCreation && !isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment && (
               <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-blue-800">
                   You currently don't have permission to create demands. Please contact your administrator if you need access.
@@ -206,9 +271,23 @@ export default function UserDashboard() {
                 </p>
               </div>
             )}
+            {isVettingCommittee && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-blue-800">
+                  As a Vetting Committee member, you can review and evaluate demands rejected by the store department. Use the tabs above to switch between your personal demands and vetting evaluation.
+                </p>
+              </div>
+            )}
+            {isPurchaseDepartment && (
+              <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="text-orange-800">
+                  As a Purchase Department member, you can review and approve demands that have been vetted by the committee. Use the tabs above to switch between your personal demands and purchase reviews.
+                </p>
+              </div>
+            )}
           </div>
 
-          {(user?.eligibleForDemandCreation || isStoreDepartmentUser || isEvaluationCommittee) && (
+          {(user?.eligibleForDemandCreation || isStoreDepartmentUser || isEvaluationCommittee || isVettingCommittee || isPurchaseDepartment) && (
             <div className="bg-white rounded-lg shadow">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900">My Demands</h2>
@@ -283,6 +362,14 @@ export default function UserDashboard() {
 
       {isEvaluationCommittee && activeTab === 'supplier-evaluation' && (
         <SupplierEvaluation />
+      )}
+
+      {isVettingCommittee && activeTab === 'vetting-evaluation' && (
+        <VettingCommittee />
+      )}
+
+      {isPurchaseDepartment && activeTab === 'purchase-review' && (
+        <PurchaseDepartment />
       )}
 
       <CreateDemandModal

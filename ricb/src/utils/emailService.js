@@ -329,6 +329,303 @@ class EmailService {
         `;
     }
 
+    async sendSupplyOrderEmail(supplierEmail, companyName, orderData, pdfBuffer) {
+        const htmlContent = this.generateSupplyOrderEmailHTML(companyName, orderData);
+        const orderNumber = `SO-${orderData.tender_id}-${Date.now()}`;
+        
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC Tender System',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `🏆 Congratulations! Supply Order Awarded - ${orderNumber}`,
+            html: htmlContent,
+            attachments: [
+                {
+                    filename: `Supply_Order_${orderNumber}.pdf`,
+                    content: pdfBuffer,
+                    contentType: 'application/pdf'
+                }
+            ]
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Supply order email sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending supply order email:', error);
+            throw error;
+        }
+    }
+
+    generateSupplyOrderEmailHTML(companyName, orderData) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        const orderNumber = `SO-${orderData.tender_id}-${Date.now()}`;
+
+        return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Supply Order Awarded</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background-color: #f8fafc;
+                }
+                .container {
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                }
+                .header {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 40px 30px;
+                    text-align: center;
+                }
+                .header h1 {
+                    font-size: 28px;
+                    margin-bottom: 10px;
+                    font-weight: 600;
+                }
+                .header p {
+                    font-size: 16px;
+                    opacity: 0.9;
+                }
+                .content {
+                    padding: 40px 30px;
+                }
+                .success-badge {
+                    display: inline-block;
+                    background-color: #10b981;
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 20px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 20px;
+                }
+                .greeting {
+                    font-size: 18px;
+                    margin-bottom: 20px;
+                    color: #374151;
+                }
+                .message {
+                    font-size: 16px;
+                    line-height: 1.7;
+                    margin-bottom: 30px;
+                    color: #6b7280;
+                }
+                .order-details {
+                    background-color: #f9fafb;
+                    border-radius: 8px;
+                    padding: 25px;
+                    margin: 25px 0;
+                    border-left: 4px solid #10b981;
+                }
+                .order-details h3 {
+                    color: #374151;
+                    margin-bottom: 15px;
+                    font-size: 18px;
+                }
+                .detail-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 10px 0;
+                    border-bottom: 1px solid #e5e7eb;
+                }
+                .detail-row:last-child {
+                    border-bottom: none;
+                }
+                .detail-label {
+                    font-weight: 600;
+                    color: #374151;
+                }
+                .detail-value {
+                    color: #6b7280;
+                    font-weight: 500;
+                }
+                .amount {
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: #059669;
+                }
+                .next-steps {
+                    background-color: #eff6ff;
+                    border-radius: 8px;
+                    padding: 25px;
+                    margin: 25px 0;
+                    border-left: 4px solid #3b82f6;
+                }
+                .next-steps h3 {
+                    color: #1e40af;
+                    margin-bottom: 15px;
+                    font-size: 18px;
+                }
+                .steps-list {
+                    list-style: none;
+                    padding: 0;
+                }
+                .steps-list li {
+                    padding: 8px 0;
+                    position: relative;
+                    padding-left: 25px;
+                    color: #374151;
+                }
+                .steps-list li:before {
+                    content: "✓";
+                    position: absolute;
+                    left: 0;
+                    color: #10b981;
+                    font-weight: bold;
+                }
+                .footer {
+                    background-color: #f9fafb;
+                    padding: 30px;
+                    text-align: center;
+                    border-top: 1px solid #e5e7eb;
+                }
+                .footer p {
+                    color: #6b7280;
+                    font-size: 14px;
+                    margin-bottom: 10px;
+                }
+                .contact-info {
+                    background-color: #fef7ff;
+                    border-radius: 8px;
+                    padding: 20px;
+                    margin: 20px 0;
+                    border-left: 4px solid #a855f7;
+                }
+                .contact-info h4 {
+                    color: #7c2d12;
+                    margin-bottom: 10px;
+                }
+                .contact-info p {
+                    color: #92400e;
+                    margin: 5px 0;
+                }
+                .attachment-notice {
+                    background-color: #fef3c7;
+                    border-radius: 8px;
+                    padding: 15px;
+                    margin: 20px 0;
+                    border-left: 4px solid #f59e0b;
+                    text-align: center;
+                }
+                .attachment-notice p {
+                    color: #92400e;
+                    font-weight: 600;
+                    margin: 0;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🏆 Supply Order Awarded!</h1>
+                    <p>Regional Institute of Computer Sciences</p>
+                </div>
+                
+                <div class="content">
+                    <div class="success-badge">ORDER AWARDED</div>
+                    
+                    <div class="greeting">
+                        Dear ${companyName} Team,
+                    </div>
+                    
+                    <div class="message">
+                        Congratulations! We are pleased to inform you that your bid has been selected for the supply order. 
+                        Your competitive pricing and commitment to quality have made you our preferred supplier for this requirement.
+                    </div>
+
+                    <div class="order-details">
+                        <h3>📋 Order Summary</h3>
+                        <div class="detail-row">
+                            <span class="detail-label">Order Number:</span>
+                            <span class="detail-value">${orderNumber}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Order Date:</span>
+                            <span class="detail-value">${currentDate}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Item:</span>
+                            <span class="detail-value">${orderData.item_name}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Quantity:</span>
+                            <span class="detail-value">${orderData.quantity}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Delivery Timeline:</span>
+                            <span class="detail-value">${orderData.delivery_time_days} days</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Award Amount:</span>
+                            <span class="detail-value amount">$${orderData.awarded_bid_amount.toLocaleString()}</span>
+                        </div>
+                    </div>
+
+                    <div class="attachment-notice">
+                        <p>📎 Detailed supply order document is attached to this email</p>
+                    </div>
+
+                    <div class="next-steps">
+                        <h3>📌 Next Steps</h3>
+                        <ul class="steps-list">
+                            <li>Review the attached supply order document carefully</li>
+                            <li>Confirm order acceptance within 48 hours</li>
+                            <li>Begin procurement and preparation for delivery</li>
+                            <li>Ensure delivery within ${orderData.delivery_time_days} days as committed</li>
+                            <li>Contact us for any clarifications or special requirements</li>
+                        </ul>
+                    </div>
+
+                    <div class="contact-info">
+                        <h4>📞 Contact Information</h4>
+                        <p><strong>Purchase Department</strong></p>
+                        <p>Email: purchase@rics.edu.pk</p>
+                        <p>Phone: +92-XXX-XXXXXXX</p>
+                        <p>Office Hours: Monday - Friday, 9:00 AM - 5:00 PM</p>
+                    </div>
+
+                    <div class="message">
+                        We look forward to a successful partnership and timely delivery of the ordered items. 
+                        Thank you for your participation in our tender process.
+                    </div>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>Regional Institute of Computer Sciences</strong></p>
+                    <p>Tender Management System | Automated Message</p>
+                    <p>This email was sent on ${currentDate}</p>
+                    <p>Please do not reply to this automated email. For inquiries, contact our Purchase Department.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+    }
+
     // Test email connectivity
     async testConnection() {
         try {

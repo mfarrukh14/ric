@@ -156,7 +156,7 @@ const SupplierAuth = ({ onBack, onLogin }) => {
                     >
                         ← Back to Main Login
                     </button>
-                    <h2 className="text-3xl font-extrabold text-gray-900">
+                    <h2 className="text-3xl font-thin text-gray-700">
                         Supplier Portal
                     </h2>
                     <div></div>
