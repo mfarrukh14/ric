@@ -114,22 +114,25 @@ const PurchaseDepartment = () => {
                 setError('Bidding expiry must be at least 1 minute from now');
                 return;
             }
-        }try {
+        }        try {
             const token = localStorage.getItem('token');
             let endpoint, method, bodyData;
             
             if (evaluationForm.status === 'approved') {
-                // Use the new approve endpoint that creates tenders
+                // Use the approve endpoint that creates tenders
                 endpoint = `${apiUrl}/demands/${selectedDemand.id}/approve`;
-                method = 'PUT'; // Changed from 'POST' to 'PUT' to match backend route
+                method = 'PUT';
                 bodyData = {
                     expiryDate: evaluationForm.biddingExpiryTime
                 };
             } else {
-                // Use the old evaluate endpoint for rejections
-                endpoint = `${apiUrl}/demands/${selectedDemand.id}/evaluate-purchase`;
-                method = 'POST';
-                bodyData = evaluationForm;
+                // Use the purchase evaluation endpoint for rejections
+                endpoint = `${apiUrl}/demands/${selectedDemand.id}/purchase`;
+                method = 'PUT';
+                bodyData = {
+                    action: 'reject',
+                    remarks: evaluationForm.comments
+                };
             }
             
             const response = await fetch(endpoint, {

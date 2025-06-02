@@ -1,4 +1,9 @@
 const { getDatabase } = require('../config/database');
+const pdfService = require('../utils/pdfService');
+const EmailService = require('../utils/emailService');
+
+// Initialize email service
+const emailService = new EmailService();
 
 // Create a new demand with multiple items
 const createDemand = async (req, res) => {
@@ -763,21 +768,17 @@ const evaluateDemandVetting = async (req, res) => {
 
     if (!['approve', 'reject'].includes(action)) {
         return res.status(400).json({ message: 'Action must be approve or reject' });
-    }
-
-    try {
+    }    try {
         const newStatus = action === 'approve' ? 'vetting_approved' : 'vetting_rejected';
         
         await new Promise((resolve, reject) => {
             db.run(
                 `UPDATE demands SET 
                  status = ?, 
-                 vetting_remarks = ?, 
-                 vetting_evaluated_by = ?,
-                 vetting_evaluated_at = CURRENT_TIMESTAMP,
+                 vetting_rejection_reason = ?,
                  updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?`,
-                [newStatus, remarks || null, user.id, id],
+                [newStatus, action === 'reject' ? remarks || null : null, id],
                 (err) => {
                     if (err) reject(err);
                     else resolve();
@@ -889,18 +890,212 @@ const evaluateDemandPurchase = async (req, res) => {
     }
 };
 
-// Process expired tenders (placeholder)
+// Process expired tenders
 const processExpiredTenders = async (req, res) => {
-    try {
-        // If called from scheduler (no res object), just process and return
+    const db = getDatabase();
+    let processedCount = 0;
+      try {
+        console.log('Starting to process expired tenders...');
+        
+        // First, let's log the current time for debugging
+        const currentTime = new Date().toLocaleString('en-US', { 
+            timeZone: 'Asia/Karachi',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        console.log(`Current Pakistan time: ${currentTime}`);
+          // Get all expired tenders that haven't been processed yet
+        // Convert current time to Pakistan timezone and compare with bidding_end_time
+        const expiredTenders = await new Promise((resolve, reject) => {
+            console.log('Executing query to find expired tenders...');
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE datetime(dt.bidding_end_time) <= datetime('now', 'localtime') 
+                 AND dt.tender_status = 'active'
+                 ORDER BY dt.bidding_end_time ASC`,
+                [],
+                (err, rows) => {
+                    if (err) {
+                        console.error('Query error:', err);
+                        reject(err);
+                    } else {
+                        console.log('Query executed successfully. Raw rows:', rows);
+                        resolve(rows);
+                    }
+                }
+            );
+        });
+
+        console.log(`Found ${expiredTenders.length} expired tenders to process`);
+
+        for (const tender of expiredTenders) {
+            try {
+                console.log(`Processing tender ${tender.id} for demand ${tender.demand_id}`);
+                
+                // Begin transaction for this tender
+                await new Promise((resolve, reject) => {
+                    db.run('BEGIN TRANSACTION', (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    });
+                });
+
+                // Get all bids for this tender, ordered by cost (lowest first)
+                const bids = await new Promise((resolve, reject) => {
+                    db.all(
+                        `SELECT sb.*, s.company_name, s.company_email
+                         FROM supplier_bids sb
+                         JOIN suppliers s ON sb.supplier_id = s.id
+                         WHERE sb.tender_id = ? AND s.status = 'approved'
+                         ORDER BY sb.total_cost ASC, sb.created_at ASC`,
+                        [tender.id],
+                        (err, rows) => {
+                            if (err) reject(err);
+                            else resolve(rows);
+                        }
+                    );
+                });
+
+                console.log(`Found ${bids.length} bids for tender ${tender.id}`);
+
+                if (bids.length === 0) {
+                    // No bids received, mark tender as closed
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'UPDATE demand_tenders SET tender_status = ?, awarded_at = CURRENT_TIMESTAMP WHERE id = ?',
+                            ['closed_no_bids', tender.id],
+                            (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            }
+                        );
+                    });
+                    
+                    console.log(`Tender ${tender.id} closed - no bids received`);
+                } else {
+                    // Award to the lowest bidder
+                    const winningBid = bids[0];
+                    
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            `UPDATE demand_tenders SET 
+                             tender_status = 'awarded', 
+                             awarded_supplier_id = ?, 
+                             awarded_bid_amount = ?,
+                             awarded_at = CURRENT_TIMESTAMP
+                             WHERE id = ?`,
+                            [winningBid.supplier_id, winningBid.total_cost, tender.id],
+                            (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            }
+                        );
+                    });                    // Create supply order
+                    const orderNumber = `SO-${Date.now()}-${tender.id}`;
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            `INSERT INTO supply_orders (
+                                order_number, demand_id, supplier_id, tender_id, bid_id,
+                                item_name, quantity, unit_price, total_amount, delivery_date, order_status
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', '+' || ? || ' days'), 'pending')`,
+                            [
+                                orderNumber,
+                                tender.demand_id,
+                                winningBid.supplier_id, 
+                                tender.id,
+                                winningBid.id,
+                                tender.item_name,
+                                winningBid.proposed_quantity,
+                                (winningBid.total_cost / winningBid.proposed_quantity),
+                                winningBid.total_cost,
+                                winningBid.delivery_days
+                            ],
+                            (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            }
+                        );
+                    });
+
+                    console.log(`Tender ${tender.id} awarded to supplier ${winningBid.supplier_id} (${winningBid.company_name}) for $${winningBid.total_cost}`);
+                    
+                    // Generate PDF and send email notification
+                    try {
+                        // Prepare order data for PDF and email
+                        const orderData = {
+                            tender_id: tender.id,
+                            demand_id: tender.demand_id,
+                            item_name: tender.item_name,
+                            description: tender.description,
+                            quantity: winningBid.proposed_quantity,
+                            awarded_bid_amount: winningBid.total_cost,
+                            delivery_time_days: winningBid.delivery_days,
+                            urgency: tender.urgency,
+                            company_name: winningBid.company_name,
+                            company_email: winningBid.company_email,
+                            bid_comments: winningBid.comments || ''
+                        };
+
+                        // Generate supply order PDF
+                        console.log(`Generating PDF for tender ${tender.id}...`);
+                        const pdfBuffer = await pdfService.generateSupplyOrderPDF(orderData);
+                        
+                        // Send email with PDF attachment to supplier
+                        console.log(`Sending email to ${winningBid.company_email}...`);
+                        await emailService.sendSupplyOrderEmail(
+                            winningBid.company_email,
+                            winningBid.company_name,
+                            orderData,
+                            pdfBuffer
+                        );
+                        
+                        console.log(`PDF generated and email sent successfully for tender ${tender.id}`);
+                    } catch (emailError) {
+                        console.error(`Failed to send PDF/email for tender ${tender.id}:`, emailError);
+                        // Don't fail the entire process if email fails
+                    }
+                }
+
+                // Commit transaction
+                await new Promise((resolve, reject) => {
+                    db.run('COMMIT', (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    });
+                });
+
+                processedCount++;
+
+            } catch (error) {
+                // Rollback transaction on error
+                await new Promise((resolve) => {
+                    db.run('ROLLBACK', () => resolve());
+                });
+                console.error(`Error processing tender ${tender.id}:`, error);
+                // Continue with next tender
+            }
+        }
+
+        console.log(`Successfully processed ${processedCount} expired tenders`);
+
+        // If called from scheduler (no res object), just return count
         if (!res) {
-            console.log('Processing expired tenders from scheduler...');
-            // Add actual tender processing logic here
-            return { success: true, message: 'Expired tenders processed' };
+            return processedCount;
         }
         
         // If called as HTTP endpoint, return JSON response
-        res.json({ message: 'Expired tenders processed' });
+        res.json({ 
+            message: 'Expired tenders processed successfully', 
+            processedCount: processedCount 
+        });
+        
     } catch (error) {
         console.error('Error processing expired tenders:', error);
         if (res) {
@@ -933,11 +1128,86 @@ const generateSupplyOrderPDF = async (req, res) => {
     }
 };
 
-// Approve demand (placeholder)
+// Approve demand (for purchase department)
 const approveDemand = async (req, res) => {
+    const db = getDatabase();
+    const { id } = req.params;
+    const { expiryDate } = req.body;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canApprove = user.role === 'superadmin' || 
+                      (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canApprove) {
+        return res.status(403).json({ message: 'Only purchase department members can approve demands' });
+    }
+
+    if (!expiryDate) {
+        return res.status(400).json({ message: 'Bidding expiry date is required for approval' });
+    }
+
     try {
-        // Placeholder for demand approval
-        res.json({ message: 'Demand approved' });
+        // Start transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Update the demand with approved status
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE demands SET 
+                     status = 'purchase_approved', 
+                     purchase_response = 'Approved by purchase department',
+                     purchase_response_by = ?,
+                     purchase_response_date = CURRENT_TIMESTAMP,
+                     updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
+                    [user.id, id],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Create a tender automatically
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO demand_tenders (demand_id, bidding_end_time, tender_status, created_by)
+                     VALUES (?, ?, 'active', ?)`,
+                    [id, expiryDate, user.id],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve({ id: this.lastID });
+                    }
+                );
+            });
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            res.json({ 
+                message: 'Demand approved successfully',
+                status: 'purchase_approved',
+                createdTender: true
+            });
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
+        }
     } catch (error) {
         console.error('Error approving demand:', error);
         res.status(500).json({ message: 'Internal server error' });

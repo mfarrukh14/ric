@@ -313,17 +313,60 @@ const SupplierDashboard = () => {
                                                 <div className="flex-1">
                                                     <div className="flex items-center justify-between mb-3">
                                                         <h3 className="text-lg font-semibold text-gray-900">
-                                                            {tender.item_name}
+                                                            {tender.items.length > 1 ? 
+                                                                `Multi-Item Tender (${tender.items.length} items)` : 
+                                                                tender.item_name || tender.items[0]?.item_name
+                                                            }
                                                         </h3>
                                                         {getUrgencyBadge(tender.urgency)}
                                                     </div>
                                                     
-                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                                                        <div className="bg-blue-50 p-3 rounded-lg">
-                                                            <p className="text-sm font-medium text-blue-800">Quantity Required</p>
-                                                            <p className="text-xl font-bold text-blue-900">{tender.quantity}</p>
+                                                    {/* Items Display */}
+                                                    {tender.items && tender.items.length > 0 ? (
+                                                        <div className="mb-4">
+                                                            <h4 className="font-medium text-gray-900 mb-3">Items in this Tender:</h4>
+                                                            <div className="space-y-3 max-h-48 overflow-y-auto">
+                                                                {tender.items.map((item, index) => (
+                                                                    <div key={item.id || index} className="bg-gray-50 rounded-lg p-3 border">
+                                                                        <div className="flex justify-between items-start mb-2">
+                                                                            <h5 className="font-medium text-gray-900">{item.item_name}</h5>
+                                                                            <span className="text-sm text-gray-500">Item #{index + 1}</span>
+                                                                        </div>
+                                                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                                                            <div>
+                                                                                <span className="font-medium">Quantity:</span> {item.quantity}
+                                                                            </div>
+                                                                            {item.estimated_cost && (
+                                                                                <div>
+                                                                                    <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                                                </div>
+                                                                            )}
+                                                                            {item.unit && (
+                                                                                <div>
+                                                                                    <span className="font-medium">Unit:</span> {item.unit}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                        {item.remarks && (
+                                                                            <div className="mt-2 text-sm text-gray-600">
+                                                                                <span className="font-medium">Remarks:</span> {item.remarks}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
                                                         </div>
-                                                        
+                                                    ) : (
+                                                        /* Fallback for legacy single-item display */
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                                            <div className="bg-blue-50 p-3 rounded-lg">
+                                                                <p className="text-sm font-medium text-blue-800">Quantity Required</p>
+                                                                <p className="text-xl font-bold text-blue-900">{tender.quantity}</p>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                                                         <div className="bg-orange-50 p-3 rounded-lg">
                                                             <p className="text-sm font-medium text-orange-800">Time Remaining</p>
                                                             <p className="text-lg font-bold text-orange-900">
@@ -335,6 +378,13 @@ const SupplierDashboard = () => {
                                                             <p className="text-sm font-medium text-green-800">Required By</p>
                                                             <p className="text-lg font-bold text-green-900">
                                                                 {new Date(tender.required_by).toLocaleDateString()}
+                                                            </p>
+                                                        </div>
+                                                        
+                                                        <div className="bg-purple-50 p-3 rounded-lg">
+                                                            <p className="text-sm font-medium text-purple-800">Total Items</p>
+                                                            <p className="text-lg font-bold text-purple-900">
+                                                                {tender.items?.length || 1}
                                                             </p>
                                                         </div>
                                                     </div>
@@ -442,23 +492,58 @@ const SupplierDashboard = () => {
                         </div>
                     )}
                 </div>
-            </div>
-
-            {/* Bid Submission Modal */}            {showBidModal && (
+            </div>            {/* Bid Submission Modal */}            {showBidModal && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-10 mx-auto p-6 border w-full max-w-md shadow-lg rounded-lg bg-white">
+                    <div className="relative top-10 mx-auto p-6 border w-full max-w-2xl shadow-lg rounded-lg bg-white">
                         <div className="mt-3">
                             <h3 className="text-xl font-bold text-gray-900 mb-4">
                                 {myBids.find(bid => bid.tender_id === selectedTender?.id) ? 'Update Your Bid' : 'Submit Your Bid'}
                             </h3>
                             
                             <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                                <h4 className="font-semibold text-blue-900 mb-2">{selectedTender?.item_name}</h4>
-                                <div className="text-sm text-blue-800 space-y-1">
-                                    <p><span className="font-medium">Required Quantity:</span> {selectedTender?.quantity}</p>
-                                    <p><span className="font-medium">Description:</span> {selectedTender?.description}</p>
-                                    <p><span className="font-medium">Bidding Expires:</span> {formatDateTime(selectedTender.bidding_end_time)}</p>
-                                </div>
+                                <h4 className="font-semibold text-blue-900 mb-2">
+                                    {selectedTender?.items?.length > 1 ? 
+                                        `Multi-Item Tender (${selectedTender.items.length} items)` : 
+                                        selectedTender?.item_name || selectedTender?.items?.[0]?.item_name
+                                    }
+                                </h4>
+                                
+                                {/* Items Details */}
+                                {selectedTender?.items && selectedTender.items.length > 0 ? (
+                                    <div className="space-y-3 mt-3">
+                                        <h5 className="font-medium text-blue-900">Items in this tender:</h5>
+                                        <div className="max-h-32 overflow-y-auto space-y-2">
+                                            {selectedTender.items.map((item, index) => (
+                                                <div key={item.id || index} className="bg-white p-2 rounded border">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="font-medium text-gray-900">{item.item_name}</span>
+                                                        <span className="text-sm text-gray-600">Qty: {item.quantity}</span>
+                                                    </div>
+                                                    {item.estimated_cost && (
+                                                        <p className="text-sm text-gray-600">Est. Cost: ₹{item.estimated_cost}</p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-blue-800 space-y-1">
+                                        <p><span className="font-medium">Required Quantity:</span> {selectedTender?.quantity}</p>
+                                        <p><span className="font-medium">Description:</span> {selectedTender?.description}</p>
+                                    </div>
+                                )}
+                                
+                                <p className="text-sm text-blue-800 mt-2">
+                                    <span className="font-medium">Bidding Expires:</span> {formatDateTime(selectedTender?.bidding_end_time)}
+                                </p>
+                                
+                                {selectedTender?.items?.length > 1 && (
+                                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                                        <p className="text-sm text-yellow-800">
+                                            <strong>Note:</strong> This is a multi-item tender. You can bid on the entire tender with your proposed quantities and total cost for all items.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                             
                             {error && (
@@ -467,10 +552,12 @@ const SupplierDashboard = () => {
                                 </div>
                             )}
                             
-                            <form onSubmit={handleBidSubmit} className="space-y-4">
-                                <div>
+                            <form onSubmit={handleBidSubmit} className="space-y-4">                                <div>
                                     <label htmlFor="proposedQuantity" className="block text-sm font-medium text-gray-700 mb-1">
-                                        Quantity You Can Provide *
+                                        {selectedTender?.items?.length > 1 ? 
+                                            'Total Quantity You Can Provide *' : 
+                                            'Quantity You Can Provide *'
+                                        }
                                     </label>
                                     <input
                                         type="number"
@@ -479,12 +566,20 @@ const SupplierDashboard = () => {
                                         value={bidForm.proposedQuantity}
                                         onChange={handleFormChange}
                                         min="1"
-                                        max={selectedTender?.quantity}
+                                        max={selectedTender?.items?.length > 1 ? 
+                                            selectedTender.items.reduce((sum, item) => sum + item.quantity, 0) :
+                                            selectedTender?.quantity
+                                        }
                                         required
                                         className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                         placeholder="Enter quantity"
                                     />
-                                    <p className="text-xs text-gray-500 mt-1">Maximum: {selectedTender?.quantity}</p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {selectedTender?.items?.length > 1 ? 
+                                            `Maximum total: ${selectedTender.items.reduce((sum, item) => sum + item.quantity, 0)} (across all items)` :
+                                            `Maximum: ${selectedTender?.quantity}`
+                                        }
+                                    </p>
                                 </div>
                                 
                                 <div>
@@ -503,6 +598,11 @@ const SupplierDashboard = () => {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                         placeholder="Enter total cost"
                                     />
+                                    {selectedTender?.items?.length > 1 && (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            This should be your total cost for all items you can provide
+                                        </p>
+                                    )}
                                 </div>
                                 
                                 <div>

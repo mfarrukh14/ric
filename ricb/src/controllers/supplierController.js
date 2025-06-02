@@ -472,10 +472,12 @@ exports.downloadDocument = async (req, res) => {
 exports.getActiveTenders = async (req, res) => {
     const db = getDatabase();
     
-    try {        const activeTenders = await new Promise((resolve, reject) => {
+    try {        // Get active tenders with demand info (excluding expired tenders using Pakistan timezone)
+        const activeTenders = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT 
                     dt.id,
+                    dt.demand_id,
                     dt.bidding_end_time,
                     dt.tender_status,
                     d.item_name,
@@ -487,7 +489,7 @@ exports.getActiveTenders = async (req, res) => {
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
-                 WHERE dt.tender_status = 'active' AND datetime(dt.bidding_end_time) > datetime('now', '+5 hours')
+                 WHERE dt.tender_status = 'active' AND datetime(dt.bidding_end_time) > datetime('now', 'localtime')
                  GROUP BY dt.id
                  ORDER BY dt.bidding_end_time ASC`,
                 [],
@@ -498,7 +500,45 @@ exports.getActiveTenders = async (req, res) => {
             );
         });
 
-        res.json(activeTenders);
+        // For each tender, get the associated items from demand_items table
+        const tendersWithItems = await Promise.all(activeTenders.map(async (tender) => {
+            const items = await new Promise((resolve, reject) => {
+                db.all(
+                    `SELECT id, item_name, quantity, estimated_cost, unit, remarks
+                     FROM demand_items 
+                     WHERE demand_id = ? 
+                     ORDER BY id`,
+                    [tender.demand_id],
+                    (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows);
+                    }
+                );
+            });
+
+            // If no items found in demand_items (legacy single-item demand), 
+            // use the data from demands table
+            if (items.length === 0) {
+                return {
+                    ...tender,
+                    items: [{
+                        id: 0, // Placeholder for legacy items
+                        item_name: tender.item_name,
+                        quantity: tender.quantity,
+                        estimated_cost: null,
+                        unit: 'pieces',
+                        remarks: null
+                    }]
+                };
+            } else {
+                return {
+                    ...tender,
+                    items: items
+                };
+            }
+        }));
+
+        res.json(tendersWithItems);
     } catch (error) {
         console.error('Error fetching active tenders:', error);
         res.status(500).json({ message: 'Internal server error' });
@@ -520,11 +560,11 @@ exports.submitBid = async (req, res) => {
 
         if (parseFloat(totalCost) <= 0 || parseInt(proposedQuantity) <= 0 || parseInt(deliveryDays) <= 0) {
             return res.status(400).json({ message: 'All numeric values must be greater than 0' });
-        }        // Validate tender exists and is active
+        }        // Validate tender exists and is active (using Pakistan timezone)
         const tender = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT * FROM demand_tenders 
-                 WHERE id = ? AND tender_status = 'active' AND bidding_end_time > datetime('now', '+5 hours')`,
+                 WHERE id = ? AND tender_status = 'active' AND bidding_end_time > datetime('now', 'localtime')`,
                 [tenderId],
                 (err, row) => {
                     if (err) reject(err);
@@ -587,13 +627,13 @@ exports.getSupplierBids = async (req, res) => {
                     d.quantity,
                     d.description,
                     d.urgency,
-                    d.required_by,
-                    CASE 
+                    d.required_by,                    CASE 
                         WHEN dt.awarded_supplier_id = sb.supplier_id THEN 'won'
                         WHEN dt.tender_status = 'awarded' THEN 'lost'
-                        WHEN dt.tender_status = 'active' AND dt.bidding_end_time > datetime('now') THEN 'pending'
+                        WHEN dt.tender_status = 'active' AND dt.bidding_end_time > datetime('now', 'localtime') THEN 'pending'
                         ELSE 'expired'
-                    END as bid_status                 FROM supplier_bids sb
+                    END as bid_status
+                 FROM supplier_bids sb
                  JOIN demand_tenders dt ON sb.tender_id = dt.id
                  JOIN demands d ON dt.demand_id = d.id
                  WHERE sb.supplier_id = ?
