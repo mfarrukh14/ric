@@ -7,23 +7,28 @@ const PurchaseDepartment = () => {
     const [selectedDemand, setSelectedDemand] = useState(null);
     const [activeTab, setActiveTab] = useState('demands');
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');const [evaluationForm, setEvaluationForm] = useState({
+    const [error, setError] = useState('');
+
+    const [evaluationForm, setEvaluationForm] = useState({
         status: '',
         comments: '',
         biddingExpiryTime: '',
         updatedDemand: {
-            item_name: '',
-            quantity: '',
-            estimated_cost: '',
             description: '',
             urgency: '',
             required_by: ''
         }
-    });const [showEvaluationModal, setShowEvaluationModal] = useState(false);
-    const [showSuccessModal, setShowSuccessModal] = useState(false);    useEffect(() => {
+    });
+
+    const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+    const [showSuccessModal, setShowSuccessModal] = useState(false);
+
+    useEffect(() => {
         fetchPurchaseDemands();
         fetchSupplyOrders();
-    }, []);    const fetchPurchaseDemands = async () => {
+    }, []);
+
+    const fetchPurchaseDemands = async () => {
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/demands/purchase`, {
@@ -69,21 +74,21 @@ const PurchaseDepartment = () => {
     };
 
     const handleEvaluate = (demand) => {
-        setSelectedDemand(demand);        setEvaluationForm({
+        setSelectedDemand(demand);
+        setEvaluationForm({
             status: '',
             comments: '',
             biddingExpiryTime: '',
             updatedDemand: {
-                item_name: demand.item_name,
-                quantity: demand.quantity,
-                estimated_cost: demand.estimated_cost,
                 description: demand.description,
                 urgency: demand.urgency,
                 required_by: demand.required_by
             }
         });
         setShowEvaluationModal(true);
-    };    const handleEvaluationSubmit = async (e) => {
+    };
+
+    const handleEvaluationSubmit = async (e) => {
         e.preventDefault();
         setError('');
 
@@ -116,7 +121,7 @@ const PurchaseDepartment = () => {
             if (evaluationForm.status === 'approved') {
                 // Use the new approve endpoint that creates tenders
                 endpoint = `${apiUrl}/demands/${selectedDemand.id}/approve`;
-                method = 'POST';
+                method = 'PUT'; // Changed from 'POST' to 'PUT' to match backend route
                 bodyData = {
                     expiryDate: evaluationForm.biddingExpiryTime
                 };
@@ -236,6 +241,16 @@ const PurchaseDepartment = () => {
         );
     };
 
+    const getTotalEstimatedCost = (items) => {
+        if (!items || items.length === 0) return 0;
+        return items.reduce((total, item) => total + parseFloat(item.estimated_cost || 0), 0);
+    };
+
+    const getTotalQuantity = (items) => {
+        if (!items || items.length === 0) return 0;
+        return items.reduce((total, item) => total + parseInt(item.quantity || 0), 0);
+    };
+
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -247,7 +262,8 @@ const PurchaseDepartment = () => {
     return (
         <div className="min-h-screen bg-gray-50">
             <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                <div className="px-4 py-6 sm:px-0">                    <div className="mb-6">
+                <div className="px-4 py-6 sm:px-0">
+                    <div className="mb-6">
                         <h1 className="text-3xl font-bold text-gray-900">Purchase Department</h1>
                         <p className="text-gray-600">Review and process demands approved by vetting committee</p>
                     </div>
@@ -303,85 +319,126 @@ const PurchaseDepartment = () => {
                                         <div className="text-gray-500">No demands available for purchase review at this time.</div>
                                     </div>
                                 ) : (
-                                    <div className="overflow-x-auto">
-                                        <table className="min-w-full divide-y divide-gray-200">
-                                            <thead className="bg-gray-50">
-                                                <tr>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Item Details
-                                                    </th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Quantity & Cost
-                                                    </th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Urgency
-                                                    </th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Required By
-                                                    </th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Requested By
-                                                    </th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Status
-                                                    </th>
-                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                        Actions
-                                                    </th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="bg-white divide-y divide-gray-200">
-                                                {demands.map((demand) => (
-                                                    <tr key={demand.id} className="hover:bg-gray-50">
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            <div>
-                                                                <div className="text-sm font-medium text-gray-900">
-                                                                    {demand.item_name}
+                                    <div className="space-y-6">
+                                        {demands.map((demand) => (
+                                            <div key={demand.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div>
+                                                        <h3 className="text-xl font-semibold text-gray-900">
+                                                            Demand #{demand.id}
+                                                        </h3>
+                                                        <p className="text-sm text-gray-600">
+                                                            Created by: {demand.created_by_name}
+                                                            {demand.creator_department && ` (${demand.creator_department})`}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex space-x-2">
+                                                        {getStatusBadge(demand.status)}
+                                                        {getUrgencyBadge(demand.urgency)}
+                                                    </div>
+                                                </div>
+
+                                                {/* Demand Summary */}
+                                                <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Total Items:</span>
+                                                            <span className="ml-2">{demand.items?.length || 1}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Total Est. Cost:</span>
+                                                            <span className="ml-2">₹{demand.items ? getTotalEstimatedCost(demand.items) : demand.estimated_cost}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Required By:</span>
+                                                            <span className="ml-2">{new Date(demand.required_by).toLocaleDateString()}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-3">
+                                                        <span className="font-medium text-gray-700">Description:</span>
+                                                        <p className="text-gray-600 mt-1">{demand.description}</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Items Display */}
+                                                {demand.items && demand.items.length > 0 ? (
+                                                    <div className="mb-4">
+                                                        <h4 className="font-medium text-gray-900 mb-3">Items Requested:</h4>
+                                                        <div className="space-y-3">
+                                                            {demand.items.map((item, index) => (
+                                                                <div key={item.id} className="bg-white border rounded-lg p-4">
+                                                                    <div className="flex justify-between items-start mb-2">
+                                                                        <h5 className="font-medium text-gray-900">{item.item_name}</h5>
+                                                                        {item.store_status && (
+                                                                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                                                                item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                                                                item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                                                                'bg-red-100 text-red-800'
+                                                                            }`}>
+                                                                                {item.store_status.toUpperCase()}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
+                                                                        <div>
+                                                                            <span className="font-medium">Quantity:</span> {item.quantity}
+                                                                        </div>
+                                                                        <div>
+                                                                            <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                                        </div>
+                                                                        {item.store_available_quantity !== undefined && (
+                                                                            <div>
+                                                                                <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                                                            </div>
+                                                                        )}
+                                                                        {item.remarks && (
+                                                                            <div className="col-span-2 md:col-span-4">
+                                                                                <span className="font-medium">Remarks:</span> {item.remarks}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
-                                                                <div className="text-sm text-gray-500">
-                                                                    {demand.description}
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    // Fallback for old single-item demands
+                                                    <div className="mb-4">
+                                                        <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
+                                                        <div className="bg-white border rounded-lg p-4">
+                                                            <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
+                                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                                                <div>
+                                                                    <span className="font-medium">Quantity:</span> {demand.quantity}
+                                                                </div>
+                                                                <div>
+                                                                    <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
                                                                 </div>
                                                             </div>
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            <div className="text-sm text-gray-900">
-                                                                Qty: {demand.quantity}
-                                                            </div>
-                                                            <div className="text-sm text-gray-500">
-                                                                Cost: ${demand.estimated_cost}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            {getUrgencyBadge(demand.urgency)}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            <div className="text-sm text-gray-900">
-                                                                {new Date(demand.required_by).toLocaleDateString()}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            <div className="text-sm text-gray-900">
-                                                                {demand.created_by_name}
-                                                            </div>
-                                                            <div className="text-sm text-gray-500">
-                                                                {demand.creator_department}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            {getStatusBadge(demand.status)}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                                            <button
-                                                                onClick={() => handleEvaluate(demand)}
-                                                                className="text-indigo-600 hover:text-indigo-900"
-                                                            >
-                                                                Review
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {demand.store_response && (
+                                                    <div className="mb-4 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                        <p className="text-sm font-medium text-gray-900">Store Response:</p>
+                                                        <p className="text-sm text-gray-700 mt-1">{demand.store_response}</p>
+                                                        <p className="text-xs text-gray-500 mt-2">
+                                                            Responded by {demand.store_response_by_name} on {new Date(demand.store_response_at).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                )}
+
+                                                <div className="flex justify-end">
+                                                    <button
+                                                        onClick={() => handleEvaluate(demand)}
+                                                        className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    >
+                                                        Review Demand
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>
@@ -517,40 +574,78 @@ const PurchaseDepartment = () => {
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
                     <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
                         <h3 className="text-lg font-bold text-gray-900 mb-4">
-                            Purchase Review: {selectedDemand?.item_name}
+                            Purchase Review: Demand #{selectedDemand?.id}
                         </h3>
 
                         <form onSubmit={handleEvaluationSubmit}>
+                            {/* Show all items in the demand */}
+                            {selectedDemand?.items && selectedDemand.items.length > 0 ? (
+                                <div className="mb-6">
+                                    <h4 className="font-medium text-gray-900 mb-3">Items in this Demand:</h4>
+                                    <div className="space-y-3 max-h-60 overflow-y-auto">
+                                        {selectedDemand.items.map((item, index) => (
+                                            <div key={item.id} className="bg-gray-50 rounded-lg p-4">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <h5 className="font-medium text-gray-900">{item.item_name}</h5>
+                                                    {item.store_status && (
+                                                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                                            item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                                            item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                                            'bg-red-100 text-red-800'
+                                                        }`}>
+                                                            {item.store_status.toUpperCase()}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                                    <div>
+                                                        <span className="font-medium">Requested:</span> {item.quantity}
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                    </div>
+                                                    {item.store_available_quantity !== undefined && (
+                                                        <div>
+                                                            <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {item.remarks && (
+                                                    <div className="mt-2 text-sm text-gray-600">
+                                                        <span className="font-medium">Remarks:</span> {item.remarks}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                // Fallback for old single-item demands
+                                <div className="mb-6">
+                                    <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
+                                    <div className="bg-gray-50 rounded-lg p-4">
+                                        <h5 className="font-medium text-gray-900 mb-2">{selectedDemand?.item_name}</h5>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                            <div>
+                                                <span className="font-medium">Quantity:</span> {selectedDemand?.quantity}
+                                            </div>
+                                            <div>
+                                                <span className="font-medium">Est. Cost:</span> ₹{selectedDemand?.estimated_cost}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Demand Details (Editable) */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Item Name</label>
-                                    <input
-                                        type="text"
-                                        name="demand_item_name"
-                                        value={evaluationForm.updatedDemand.item_name}
+                                <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700">Description</label>
+                                    <textarea
+                                        name="demand_description"
+                                        value={evaluationForm.updatedDemand.description}
                                         onChange={handleFormChange}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Quantity</label>
-                                    <input
-                                        type="number"
-                                        name="demand_quantity"
-                                        value={evaluationForm.updatedDemand.quantity}
-                                        onChange={handleFormChange}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700">Estimated Cost</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        name="demand_estimated_cost"
-                                        value={evaluationForm.updatedDemand.estimated_cost}
-                                        onChange={handleFormChange}
+                                        rows={3}
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                                     />
                                 </div>
@@ -566,16 +661,6 @@ const PurchaseDepartment = () => {
                                         <option value="normal">Normal</option>
                                         <option value="high">High</option>
                                     </select>
-                                </div>
-                                <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-700">Description</label>
-                                    <textarea
-                                        name="demand_description"
-                                        value={evaluationForm.updatedDemand.description}
-                                        onChange={handleFormChange}
-                                        rows={3}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                    />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">Required By</label>
@@ -666,7 +751,8 @@ const PurchaseDepartment = () => {
                                     Submit Review
                                 </button>
                             </div>
-                        </form>                    </div>
+                        </form>
+                    </div>
                 </div>
             )}
 

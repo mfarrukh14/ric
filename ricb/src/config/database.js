@@ -136,6 +136,27 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
+        });        // Create demand_items table (for multiple items per demand)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demand_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                demand_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                estimated_cost DECIMAL(10,2) NOT NULL,
+                remarks TEXT,
+                unit TEXT DEFAULT 'pieces',
+                store_available_quantity INTEGER DEFAULT 0,
+                store_status TEXT DEFAULT 'pending', -- pending, available, partial, not_available
+                store_response_at DATETIME,
+                store_response_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (store_response_by) REFERENCES users (id) ON DELETE SET NULL
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
         });        // Create supplier evaluations table (tracks individual committee member evaluations)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS supplier_evaluations (

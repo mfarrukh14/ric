@@ -1,254 +1,316 @@
 import React, { useState, useEffect } from 'react';
 import { apiUrl } from '../../config/api';
+import FulfillmentModal from '../modals/FulfillmentModal';
 
 const DemandManagement = () => {
-  const [demands, setDemands] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState('all');
-  const [selectedDemand, setSelectedDemand] = useState(null);
-  const [responseText, setResponseText] = useState('');
-  const [showResponseModal, setShowResponseModal] = useState(false);
+    const [demands, setDemands] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [selectedDemand, setSelectedDemand] = useState(null);
+    const [showFulfillmentModal, setShowFulfillmentModal] = useState(false);
 
-  useEffect(() => {
-    fetchDemands();
-  }, []);
-
-  const fetchDemands = async () => {
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${apiUrl}/demands/all`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setDemands(data);
-      }
-    } catch (error) {
-      console.error('Error fetching demands:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStatusUpdate = async (demandId, status) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${apiUrl}/demands/${demandId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ status, response: responseText })
-      });
-      
-      if (response.ok) {
+    useEffect(() => {
         fetchDemands();
-        setShowResponseModal(false);
-        setResponseText('');
+    }, []);
+
+    const fetchDemands = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/with-items`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch demands');
+            }
+
+            const data = await response.json();
+            setDemands(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleManageFulfillment = (demand) => {
+        setSelectedDemand(demand);
+        setShowFulfillmentModal(true);
+    };
+
+    const handleFulfillmentSuccess = (result) => {
+        // Refresh the demands list
+        fetchDemands();
         setSelectedDemand(null);
-      }
-    } catch (error) {
-      console.error('Error updating demand status:', error);
-    }
-  };
+    };
 
-  const openResponseModal = (demand, status) => {
-    setSelectedDemand(demand);
-    setShowResponseModal(true);
-    // If marking as not available, prompt for response
-    if (status === 'not_available') {
-      setResponseText('');
-    } else {
-      setResponseText('Item is available and will be processed.');
-    }
-  };
+    const getStatusBadge = (status) => {
+        const statusColors = {
+            'pending': 'bg-yellow-100 text-yellow-800',
+            'store_pending': 'bg-blue-100 text-blue-800',
+            'available': 'bg-green-100 text-green-800',
+            'not_available': 'bg-red-100 text-red-800',
+            'vetting_pending': 'bg-purple-100 text-purple-800',
+            'vetting_approved': 'bg-green-100 text-green-800',
+            'vetting_rejected': 'bg-red-100 text-red-800',
+            'purchase_pending': 'bg-indigo-100 text-indigo-800',
+            'purchase_approved': 'bg-green-100 text-green-800',
+            'rejected': 'bg-red-100 text-red-800'
+        };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'available': return 'bg-green-100 text-green-800 border-green-300';
-      case 'not_available': return 'bg-red-100 text-red-800 border-red-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
+        const statusLabels = {
+            'pending': 'Pending Review',
+            'store_pending': 'Store Review',
+            'available': 'Available',
+            'not_available': 'Not Available',
+            'vetting_pending': 'Vetting Review',
+            'vetting_approved': 'Vetting Approved',
+            'vetting_rejected': 'Vetting Rejected',
+            'purchase_pending': 'Purchase Review',
+            'purchase_approved': 'Purchase Approved',
+            'rejected': 'Rejected'
+        };
 
-  const getUrgencyColor = (urgency) => {
-    switch (urgency) {
-      case 'urgent': return 'bg-red-100 text-red-800 border-red-300';
-      case 'high': return 'bg-orange-100 text-orange-800 border-orange-300';
-      case 'normal': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'low': return 'bg-gray-100 text-gray-800 border-gray-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
+        return (
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[status] || 'bg-gray-100 text-gray-800'}`}>
+                {statusLabels[status] || status}
+            </span>
+        );
+    };
 
-  const filteredDemands = demands.filter(demand => {
-    if (filter === 'all') return true;
-    return demand.status === filter;
-  });
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const canViewDemands = user.role === 'superadmin' || 
-                         (user.departmentName && user.departmentName.toLowerCase() === 'store');
-  const canUpdateStatus = user.departmentName && user.departmentName.toLowerCase() === 'store';
-  return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Demand Management</h2>
-        <div className="flex space-x-2">
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Demands</option>
-            <option value="pending">Pending</option>
-            <option value="available">Available</option>
-            <option value="not_available">Not Available</option>
-          </select>        </div>
-      </div>
+    const getUrgencyBadge = (urgency) => {
+        const urgencyColors = {
+            'high': 'bg-red-100 text-red-800',
+            'medium': 'bg-yellow-100 text-yellow-800',
+            'normal': 'bg-yellow-100 text-yellow-800',
+            'low': 'bg-green-100 text-green-800'
+        };
 
-      {/* Access Control Information */}
-      {user.role === 'superadmin' && !canUpdateStatus && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-blue-800">
-            <strong>Note:</strong> As a superadmin, you can view all demands but only Store department members can mark them as Available/Not Available.
-          </p>
-        </div>
-      )}
+        return (
+            <span className={`px-2 py-1 rounded-full text-xs font-medium ${urgencyColors[urgency] || 'bg-gray-100 text-gray-800'}`}>
+                {urgency?.charAt(0).toUpperCase() + urgency?.slice(1) || 'Normal'}
+            </span>
+        );
+    };
 
-      {loading ? (
-        <div className="text-center py-8">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <p className="mt-2 text-gray-600">Loading demands...</p>
-        </div>
-      ) : filteredDemands.length > 0 ? (
-        <div className="space-y-4">
-          {filteredDemands.map((demand) => (
-            <div key={demand.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="font-semibold text-lg text-gray-900">{demand.item_name}</h3>
-                  <p className="text-sm text-gray-600">
-                    Created by: {demand.created_by_name} 
-                    {demand.creator_department && ` (${demand.creator_department})`}
-                  </p>
-                </div>
-                <div className="flex space-x-2">
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(demand.status)}`}>
-                    {demand.status.replace('_', ' ').toUpperCase()}
-                  </span>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getUrgencyColor(demand.urgency)}`}>
-                    {demand.urgency.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-3">
-                <div>
-                  <span className="font-medium">Quantity:</span> {demand.quantity}
-                </div>
-                <div>
-                  <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
-                </div>
-                <div>
-                  <span className="font-medium">Required By:</span> {new Date(demand.required_by).toLocaleDateString()}
-                </div>
-                <div>
-                  <span className="font-medium">Created:</span> {new Date(demand.created_at).toLocaleDateString()}
-                </div>
-              </div>
-              
-              <p className="text-gray-700 text-sm mb-4">{demand.description}</p>
-              
-              {demand.store_response && (
-                <div className="mb-4 p-3 bg-gray-50 rounded border-l-4 border-blue-500">
-                  <p className="text-sm font-medium text-gray-900">Store Response:</p>
-                  <p className="text-sm text-gray-700">{demand.store_response}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Responded by {demand.store_response_by_name} on {new Date(demand.store_response_at).toLocaleString()}
-                  </p>
-                </div>
-              )}
-              
-              {canUpdateStatus && demand.status === 'pending' && (
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => openResponseModal(demand, 'available')}
-                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-                  >
-                    Mark Available
-                  </button>
-                  <button
-                    onClick={() => openResponseModal(demand, 'not_available')}
-                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  >
-                    Mark Not Available
-                  </button>
-                </div>
-              )}
+    const getTotalEstimatedCost = (items) => {
+        if (!items || items.length === 0) return 0;
+        return items.reduce((total, item) => total + parseFloat(item.estimated_cost || 0), 0);
+    };
+
+    const canManageFulfillment = (demand) => {
+        return demand.status === 'pending' || demand.status === 'store_pending';
+    };
+
+    const getItemStatusSummary = (items) => {
+        if (!items || items.length === 0) return null;
+        
+        const statusCounts = items.reduce((acc, item) => {
+            const status = item.store_status || 'pending';
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+        }, {});
+
+        return statusCounts;
+    };
+
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-8">
-          <p className="text-gray-500">No demands found for the selected filter.</p>
-        </div>
-      )}
+        );
+    }
 
-      {/* Response Modal */}
-      {showResponseModal && selectedDemand && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-4">
-              Update Demand Status: {selectedDemand.item_name}
-            </h3>
-            
-            <div className="mb-4">
-              <label htmlFor="response" className="block text-sm font-medium text-gray-700 mb-2">
-                Response Message:
-              </label>
-              <textarea
-                id="response"
-                value={responseText}
-                onChange={(e) => setResponseText(e.target.value)}
-                rows="4"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter your response..."
-              />
+    return (
+        <div className="min-h-screen bg-gray-50">
+            <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+                <div className="px-4 py-6 sm:px-0">
+                    <div className="mb-6">
+                        <h1 className="text-3xl font-bold text-gray-900">Store Department - Demand Management</h1>
+                        <p className="text-gray-600">Review and manage fulfillment for incoming demands</p>
+                    </div>
+
+                    {error && (
+                        <div className="mb-4 rounded-md bg-red-50 p-4">
+                            <div className="text-sm text-red-700">{error}</div>
+                        </div>
+                    )}
+
+                    <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                        <div className="px-4 py-5 sm:p-6">
+                            <h2 className="text-lg font-medium text-gray-900 mb-4">Pending Demands</h2>
+                            
+                            {demands.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <div className="text-gray-500">No pending demands at this time.</div>
+                                </div>
+                            ) : (
+                                <div className="space-y-6">
+                                    {demands.map((demand) => (
+                                        <div key={demand.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div>
+                                                    <h3 className="text-xl font-semibold text-gray-900">
+                                                        Demand #{demand.id}
+                                                    </h3>
+                                                    <p className="text-sm text-gray-600">
+                                                        Created by: {demand.created_by_name}
+                                                        {demand.creator_department && ` (${demand.creator_department})`}
+                                                    </p>
+                                                </div>
+                                                <div className="flex space-x-2">
+                                                    {getStatusBadge(demand.status)}
+                                                    {getUrgencyBadge(demand.urgency)}
+                                                </div>
+                                            </div>
+
+                                            {/* Demand Summary */}
+                                            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Total Items:</span>
+                                                        <span className="ml-2">{demand.items?.length || 1}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Total Est. Cost:</span>
+                                                        <span className="ml-2">₹{demand.items ? getTotalEstimatedCost(demand.items) : demand.estimated_cost}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Required By:</span>
+                                                        <span className="ml-2">{new Date(demand.required_by).toLocaleDateString()}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Created:</span>
+                                                        <span className="ml-2">{new Date(demand.created_at).toLocaleDateString()}</span>
+                                                    </div>
+                                                </div>
+                                                {demand.description && (
+                                                    <div className="mt-3">
+                                                        <span className="font-medium text-gray-700">Description:</span>
+                                                        <p className="text-gray-600 mt-1">{demand.description}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Items Display */}
+                                            {demand.items && demand.items.length > 0 ? (
+                                                <div className="mb-4">
+                                                    <h4 className="font-medium text-gray-900 mb-3">Items Requested:</h4>
+                                                    <div className="space-y-3">
+                                                        {demand.items.map((item, index) => (
+                                                            <div key={item.id} className="bg-white border rounded-lg p-4">
+                                                                <div className="flex justify-between items-start mb-2">
+                                                                    <h5 className="font-medium text-gray-900">{item.item_name}</h5>
+                                                                    {item.store_status && (
+                                                                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                                                            item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                                                            item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                                                            item.store_status === 'not_available' ? 'bg-red-100 text-red-800' :
+                                                                            'bg-gray-100 text-gray-800'
+                                                                        }`}>
+                                                                            {item.store_status === 'available' ? 'AVAILABLE' :
+                                                                             item.store_status === 'partial' ? 'PARTIAL' :
+                                                                             item.store_status === 'not_available' ? 'NOT AVAILABLE' :
+                                                                             'PENDING'}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
+                                                                    <div>
+                                                                        <span className="font-medium">Quantity:</span> {item.quantity}
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                                    </div>
+                                                                    {item.store_available_quantity !== undefined && (
+                                                                        <div>
+                                                                            <span className="font-medium">Available:</span> {item.store_available_quantity}
+                                                                        </div>
+                                                                    )}
+                                                                    {item.unit && (
+                                                                        <div>
+                                                                            <span className="font-medium">Unit:</span> {item.unit}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                {item.remarks && (
+                                                                    <div className="mt-2 text-sm text-gray-600">
+                                                                        <span className="font-medium">Remarks:</span> {item.remarks}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                // Fallback for old single-item demands
+                                                <div className="mb-4">
+                                                    <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
+                                                    <div className="bg-white border rounded-lg p-4">
+                                                        <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
+                                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                                            <div>
+                                                                <span className="font-medium">Quantity:</span> {demand.quantity}
+                                                            </div>
+                                                            <div>
+                                                                <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Store Response Display */}
+                                            {demand.store_response && (
+                                                <div className="mb-4 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                    <p className="text-sm font-medium text-gray-900">Store Response:</p>
+                                                    <p className="text-sm text-gray-700 mt-1">{demand.store_response}</p>
+                                                    <p className="text-xs text-gray-500 mt-2">
+                                                        Responded by {demand.store_response_by_name} on {new Date(demand.store_response_at).toLocaleString()}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* Action Buttons */}
+                                            <div className="flex justify-end">
+                                                {canManageFulfillment(demand) ? (
+                                                    <button
+                                                        onClick={() => handleManageFulfillment(demand)}
+                                                        className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    >
+                                                        Manage Fulfillment
+                                                    </button>
+                                                ) : (
+                                                    <div className="text-sm text-gray-500">
+                                                        Response already submitted
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             </div>
-            
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowResponseModal(false);
-                  setResponseText('');
-                  setSelectedDemand(null);
+
+            {/* Fulfillment Modal */}
+            <FulfillmentModal
+                demand={selectedDemand}
+                isOpen={showFulfillmentModal}
+                onClose={() => {
+                    setShowFulfillmentModal(false);
+                    setSelectedDemand(null);
                 }}
-                className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const status = responseText.includes('available') ? 'available' : 'not_available';
-                  handleStatusUpdate(selectedDemand.id, status);
-                }}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Update Status
-              </button>
-            </div>
-          </div>
+                onSuccess={handleFulfillmentSuccess}
+            />
         </div>
-      )}
-    </div>
-  );
+    );
 };
 
 export default DemandManagement;

@@ -5,7 +5,7 @@ import Login from '../components/auth/Login';
 import AdminDashboard from '../components/admin/AdminDashboard';
 import UserDashboard from '../components/user/UserDashboard';
 import SupplierDashboard from '../components/supplier/SupplierDashboard';
-import Header from '../components/layout/header/header';
+import Header from '../components/layout/header/Header';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const user = JSON.parse(localStorage.getItem('user'));

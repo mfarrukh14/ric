@@ -300,43 +300,114 @@ export default function UserDashboard() {
                     <p className="mt-2 text-gray-600">Loading demands...</p>
                   </div>
                 ) : demands.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     {demands.map((demand) => (
-                      <div key={demand.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-semibold text-lg text-gray-900">{demand.item_name}</h3>
+                      <div key={demand.id} className="border rounded-lg p-6 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h3 className="font-semibold text-xl text-gray-900">
+                              Demand #{demand.id}
+                            </h3>
+                            <p className="text-sm text-gray-600 mt-1">
+                              Created on {new Date(demand.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
                           <div className="flex space-x-2">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(demand.status)}`}>
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(demand.status)}`}>
                               {demand.status.replace('_', ' ').toUpperCase()}
                             </span>
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(demand.urgency)}`}>
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${getUrgencyColor(demand.urgency)}`}>
                               {demand.urgency.toUpperCase()}
                             </span>
                           </div>
                         </div>
-                        
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-3">
-                          <div>
-                            <span className="font-medium">Quantity:</span> {demand.quantity}
+
+                        {/* Demand Summary */}
+                        <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                            <div>
+                              <span className="font-medium text-gray-700">Total Items:</span>
+                              <span className="ml-2">{demand.items?.length || 1}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-700">Total Est. Cost:</span>
+                              <span className="ml-2">₹{demand.estimated_cost}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-700">Required By:</span>
+                              <span className="ml-2">{new Date(demand.required_by).toLocaleDateString()}</span>
+                            </div>
                           </div>
-                          <div>
-                            <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
-                          </div>
-                          <div>
-                            <span className="font-medium">Required By:</span> {new Date(demand.required_by).toLocaleDateString()}
-                          </div>
-                          <div>
-                            <span className="font-medium">Created:</span> {new Date(demand.created_at).toLocaleDateString()}
+                          <div className="mt-3">
+                            <span className="font-medium text-gray-700">Description:</span>
+                            <p className="text-gray-600 mt-1">{demand.description}</p>
                           </div>
                         </div>
-                        
-                        <p className="text-gray-700 text-sm">{demand.description}</p>
+
+                        {/* Items Display */}
+                        {demand.items && demand.items.length > 0 ? (
+                          <div className="mb-4">
+                            <h4 className="font-medium text-gray-900 mb-3">Items Requested:</h4>
+                            <div className="space-y-3">
+                              {demand.items.map((item, index) => (
+                                <div key={item.id} className="bg-white border rounded-lg p-4">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <h5 className="font-medium text-gray-900">{item.item_name}</h5>
+                                    {item.store_status && (
+                                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                        item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                        item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-red-100 text-red-800'
+                                      }`}>
+                                        {item.store_status.toUpperCase()}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
+                                    <div>
+                                      <span className="font-medium">Quantity:</span> {item.quantity}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                    </div>
+                                    {item.store_available_quantity > 0 && (
+                                      <div>
+                                        <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                      </div>
+                                    )}
+                                    {item.remarks && (
+                                      <div className="col-span-2 md:col-span-4">
+                                        <span className="font-medium">Remarks:</span> {item.remarks}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          // Fallback for old single-item demands
+                          <div className="mb-4">
+                            <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
+                            <div className="bg-white border rounded-lg p-4">
+                              <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                <div>
+                                  <span className="font-medium">Quantity:</span> {demand.quantity}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         
                         {demand.store_response && (
-                          <div className="mt-3 p-3 bg-gray-50 rounded border-l-4 border-blue-500">
+                          <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
                             <p className="text-sm font-medium text-gray-900">Store Response:</p>
-                            <p className="text-sm text-gray-700">{demand.store_response}</p>
-                            <p className="text-xs text-gray-500 mt-1">
+                            <p className="text-sm text-gray-700 mt-1">{demand.store_response}</p>
+                            <p className="text-xs text-gray-500 mt-2">
                               Responded on {new Date(demand.store_response_at).toLocaleString()}
                             </p>
                           </div>

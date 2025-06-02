@@ -27,6 +27,9 @@ const VettingCommittee = () => {
     const fetchVettingDemands = async () => {
         try {
             const token = localStorage.getItem('token');
+            console.log('Token:', token ? 'Token exists' : 'No token found');
+            console.log('API URL:', `${apiUrl}/demands/vetting`);
+            
             const response = await fetch(`${apiUrl}/demands/vetting`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -34,13 +37,19 @@ const VettingCommittee = () => {
                 }
             });
 
+            console.log('Response status:', response.status);
+            console.log('Response ok:', response.ok);
+
             if (!response.ok) {
-                throw new Error('Failed to fetch demands');
+                const errorText = await response.text();
+                console.log('Error response:', errorText);
+                throw new Error(`Failed to fetch demands: ${response.status} - ${errorText}`);
             }
 
             const data = await response.json();
             setDemands(data);
         } catch (err) {
+            console.error('Fetch error:', err);
             setError(err.message);
         } finally {
             setLoading(false);
@@ -80,19 +89,28 @@ const VettingCommittee = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/demands/${selectedDemand.id}/evaluate-vetting`, {
-                method: 'POST',
+            
+            // Convert frontend format to backend format
+            const payload = {
+                action: evaluationForm.status === 'approved' ? 'approve' : 'reject',
+                remarks: evaluationForm.comments
+            };
+            
+            const response = await fetch(`${apiUrl}/demands/${selectedDemand.id}/vetting`, {
+                method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(evaluationForm)
+                body: JSON.stringify(payload)
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.message || 'Failed to submit evaluation');
-            }            setShowEvaluationModal(false);
+            }
+
+            setShowEvaluationModal(false);
             fetchVettingDemands(); // Refresh the list
             
             // Show success modal
@@ -170,83 +188,138 @@ const VettingCommittee = () => {
                                     <div className="text-gray-500">No demands available for vetting at this time.</div>
                                 </div>
                             ) : (
-                                <div className="overflow-x-auto">
-                                    <table className="min-w-full divide-y divide-gray-200">
-                                        <thead className="bg-gray-50">
-                                            <tr>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Item Details
-                                                </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Quantity & Cost
-                                                </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Urgency
-                                                </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Requested By
-                                                </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Status
-                                                </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Actions
-                                                </th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="bg-white divide-y divide-gray-200">
-                                            {demands.map((demand) => (
-                                                <tr key={demand.id} className="hover:bg-gray-50">
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div>
-                                                            <div className="text-sm font-medium text-gray-900">
-                                                                {demand.item_name}
+                                <div className="space-y-6">
+                                    {demands.map((demand) => (
+                                        <div key={demand.id} className="border rounded-lg p-6 hover:shadow-md transition-shadow">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div>
+                                                    <h3 className="font-semibold text-xl text-gray-900">
+                                                        Demand #{demand.id}
+                                                    </h3>
+                                                    <p className="text-sm text-gray-600">
+                                                        Created by: {demand.created_by_name}
+                                                        {demand.creator_department && ` (${demand.creator_department})`}
+                                                    </p>
+                                                </div>
+                                                <div className="flex space-x-2">
+                                                    {getStatusBadge(demand.status)}
+                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                                        demand.urgency === 'urgent' ? 'bg-red-100 text-red-800' :
+                                                        demand.urgency === 'high' ? 'bg-orange-100 text-orange-800' :
+                                                        demand.urgency === 'normal' ? 'bg-blue-100 text-blue-800' :
+                                                        'bg-gray-100 text-gray-800'
+                                                    }`}>
+                                                        {demand.urgency.toUpperCase()}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* Demand Summary */}
+                                            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Total Items:</span>
+                                                        <span className="ml-2">{demand.items?.length || 1}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Total Est. Cost:</span>
+                                                        <span className="ml-2">₹{demand.estimated_cost}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium text-gray-700">Required By:</span>
+                                                        <span className="ml-2">{new Date(demand.required_by).toLocaleDateString()}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-3">
+                                                    <span className="font-medium text-gray-700">Description:</span>
+                                                    <p className="text-gray-600 mt-1">{demand.description}</p>
+                                                </div>
+                                            </div>
+
+                                            {/* Items Display */}
+                                            {demand.items && demand.items.length > 0 ? (
+                                                <div className="mb-4">
+                                                    <h4 className="font-medium text-gray-900 mb-3">Items for Review:</h4>
+                                                    <div className="space-y-3">
+                                                        {demand.items.map((item, index) => (
+                                                            <div key={item.id} className="bg-white border rounded-lg p-4">
+                                                                <div className="flex justify-between items-start mb-2">
+                                                                    <h5 className="font-medium text-gray-900">{item.item_name}</h5>
+                                                                    {item.store_status && (
+                                                                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                                                            item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                                                            item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                                                            'bg-red-100 text-red-800'
+                                                                        }`}>
+                                                                            {item.store_status.toUpperCase()}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
+                                                                    <div>
+                                                                        <span className="font-medium">Required Qty:</span> {item.quantity}
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                                    </div>
+                                                                    {item.store_available_quantity && (
+                                                                        <div>
+                                                                            <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                                                        </div>
+                                                                    )}
+                                                                    {item.store_available_quantity < item.quantity && (
+                                                                        <div>
+                                                                            <span className="font-medium">Shortage:</span> {item.quantity - (item.store_available_quantity || 0)}
+                                                                        </div>
+                                                                    )}
+                                                                    {item.remarks && (
+                                                                        <div className="col-span-2 md:col-span-4">
+                                                                            <span className="font-medium">Remarks:</span> {item.remarks}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
                                                             </div>
-                                                            <div className="text-sm text-gray-500">
-                                                                {demand.description}
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                // Fallback for old single-item demands
+                                                <div className="mb-4">
+                                                    <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
+                                                    <div className="bg-white border rounded-lg p-4">
+                                                        <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
+                                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                                            <div>
+                                                                <span className="font-medium">Quantity:</span> {demand.quantity}
+                                                            </div>
+                                                            <div>
+                                                                <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
                                                             </div>
                                                         </div>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className="text-sm text-gray-900">
-                                                            Qty: {demand.quantity}
-                                                        </div>
-                                                        <div className="text-sm text-gray-500">
-                                                            Cost: ${demand.estimated_cost}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                                            demand.urgency === 'high' ? 'bg-red-100 text-red-800' :
-                                                            demand.urgency === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                                            'bg-green-100 text-green-800'
-                                                        }`}>
-                                                            {demand.urgency}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className="text-sm text-gray-900">
-                                                            {demand.created_by_name}
-                                                        </div>
-                                                        <div className="text-sm text-gray-500">
-                                                            {demand.creator_department}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        {getStatusBadge(demand.status)}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                                        <button
-                                                            onClick={() => handleEvaluate(demand)}
-                                                            className="text-indigo-600 hover:text-indigo-900"
-                                                        >
-                                                            Evaluate
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {demand.store_response && (
+                                                <div className="mb-4 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                    <p className="text-sm font-medium text-gray-900">Store Response:</p>
+                                                    <p className="text-sm text-gray-700 mt-1">{demand.store_response}</p>
+                                                    <p className="text-xs text-gray-500 mt-2">
+                                                        Responded by {demand.store_response_by_name} on {new Date(demand.store_response_at).toLocaleString()}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            <div className="flex justify-end">
+                                                <button
+                                                    onClick={() => handleEvaluate(demand)}
+                                                    className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                >
+                                                    Evaluate Demand
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                         </div>

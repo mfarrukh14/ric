@@ -11,7 +11,9 @@ const SupplierAuth = ({ onBack, onLogin }) => {
         password: '',
         confirmPassword: '',
         companyStatement: '',
-        companyMission: ''
+        companyMission: '',
+        contactPerson: '',
+        contactNumber: ''
     });
     const [files, setFiles] = useState({});
     const [error, setError] = useState('');
@@ -135,7 +137,9 @@ const SupplierAuth = ({ onBack, onLogin }) => {
                 password: '',
                 confirmPassword: '',
                 companyStatement: '',
-                companyMission: ''
+                companyMission: '',
+                contactPerson: '',
+                contactNumber: ''
             });
             setFiles({});
 
@@ -341,6 +345,36 @@ const SupplierAuth = ({ onBack, onLogin }) => {
                                 rows={3}
                                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                                 value={registerData.companyMission}
+                                onChange={handleRegisterChange}
+                            />
+                        </div>
+
+                        <div>
+                            <label htmlFor="contactPerson" className="block text-sm font-medium text-gray-700">
+                                Contact Person *
+                            </label>
+                            <input
+                                id="contactPerson"
+                                name="contactPerson"
+                                type="text"
+                                required
+                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                value={registerData.contactPerson}
+                                onChange={handleRegisterChange}
+                            />
+                        </div>
+
+                        <div>
+                            <label htmlFor="contactNumber" className="block text-sm font-medium text-gray-700">
+                                Contact Number *
+                            </label>
+                            <input
+                                id="contactNumber"
+                                name="contactNumber"
+                                type="text"
+                                required
+                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                value={registerData.contactNumber}
                                 onChange={handleRegisterChange}
                             />
                         </div>

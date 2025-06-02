@@ -5,18 +5,23 @@ const {
     createDemand,
     getUserDemands,
     getAllDemands,
+    updateDemandStatus,
+    getDemandById,
     getVettingDemands,
     getPurchaseDemands,
-    updateDemandStatus,
     evaluateDemandVetting,
     evaluateDemandPurchase,
-    getDemandById,
+    processExpiredTenders,
     getAwardedTenders,
     generateSupplyOrderPDF,
     approveDemand,
     setExpiryForTender,
     getSupplyOrders,
-    generateSupplyOrderPDFById
+    generateSupplyOrderPDFById,
+    updateDemandItemsStatus,
+    getDemandWithItems,
+    getAllDemandsWithItems,
+    updateItemStatuses
 } = require('../controllers/demandController');
 
 // Create a new demand
@@ -28,40 +33,57 @@ router.get('/user', auth, getUserDemands);
 // Get all demands (for superadmin and store department)
 router.get('/all', auth, getAllDemands);
 
-// Get vetting committee demands
-router.get('/vetting', auth, getVettingDemands);
+// Get all demands with items (for store management)
+router.get('/with-items', auth, getAllDemandsWithItems);
 
-// Get purchase department demands
+// Get demands for vetting committee (must be before /:id route)
+router.get('/vetting', auth, getVettingDemands);
+router.get('/vetting/pending', auth, getVettingDemands);
+
+// Get demands for purchase department
 router.get('/purchase', auth, getPurchaseDemands);
+router.get('/purchase/pending', auth, getPurchaseDemands);
 
 // Get awarded tenders
-router.get('/tenders/awarded', auth, getAwardedTenders);
+router.get('/awarded/all', auth, getAwardedTenders);
 
-// Generate supply order PDF
-router.get('/tenders/:tenderId/pdf', auth, generateSupplyOrderPDF);
-
-// Approve demand (for purchase department) 
-router.post('/:id/approve', auth, approveDemand);
-
-// Set expiry for tender (for purchase department)
-router.post('/:id/set-expiry', auth, setExpiryForTender);
-
-// Get specific demand by ID
-router.get('/:id', auth, getDemandById);
-
-// Update demand status (for store department)
-router.patch('/:id/status', auth, updateDemandStatus);
-
-// Evaluate demand by vetting committee
-router.post('/:id/evaluate-vetting', auth, evaluateDemandVetting);
-
-// Evaluate demand by purchase department
-router.post('/:id/evaluate-purchase', auth, evaluateDemandPurchase);
-
-// Get supply orders (for purchase department dashboard)
+// Get supply orders
 router.get('/supply-orders/all', auth, getSupplyOrders);
 
-// Generate supply order PDF by order ID
-router.get('/supply-orders/:orderId/pdf', auth, generateSupplyOrderPDFById);
+// Generate supply order PDF by ID
+router.get('/supply-orders/:id/pdf', auth, generateSupplyOrderPDFById);
+
+// Get specific demand by ID (must be after specific routes)
+router.get('/:id', auth, getDemandById);
+
+// Get demand with all items
+router.get('/:id/with-items', auth, getDemandWithItems);
+
+// Update demand status (for store department)
+router.put('/:id/status', auth, updateDemandStatus);
+
+// Update item statuses with fulfillment management
+router.put('/:id/items-status', auth, updateItemStatuses);
+
+// Update demand items status with partial quantities
+router.put('/:id/items', auth, updateDemandItemsStatus);
+
+// Evaluate demand in vetting
+router.put('/:id/vetting', auth, evaluateDemandVetting);
+
+// Evaluate demand in purchase department
+router.put('/:id/purchase', auth, evaluateDemandPurchase);
+
+// Process expired tenders
+router.post('/process-expired', auth, processExpiredTenders);
+
+// Generate supply order PDF
+router.post('/:id/supply-order', auth, generateSupplyOrderPDF);
+
+// Approve demand (for superadmin)
+router.put('/:id/approve', auth, approveDemand);
+
+// Set expiry for tender
+router.put('/:id/set-expiry', auth, setExpiryForTender);
 
 module.exports = router;

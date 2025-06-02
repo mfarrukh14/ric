@@ -3,12 +3,12 @@ import Modal from './Modal';
 
 const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
-    itemName: '',
-    quantity: '',
-    estimatedCost: '',
     description: '',
     urgency: 'normal',
-    requiredBy: ''
+    requiredBy: '',
+    items: [
+      { itemName: '', quantity: '', estimatedCost: '', remarks: '' }
+    ]
   });
 
   const [errors, setErrors] = useState({});
@@ -20,7 +20,6 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
       ...prev,
       [name]: value
     }));
-    // Clear error when user starts typing
     if (errors[name]) {
       setErrors(prev => ({
         ...prev,
@@ -29,20 +28,42 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
     }
   };
 
+  const handleItemChange = (index, field, value) => {
+    const newItems = [...formData.items];
+    newItems[index][field] = value;
+    setFormData(prev => ({
+      ...prev,
+      items: newItems
+    }));
+    
+    // Clear item error
+    if (errors[`item_${index}_${field}`]) {
+      setErrors(prev => ({
+        ...prev,
+        [`item_${index}_${field}`]: ''
+      }));
+    }
+  };
+
+  const addItem = () => {
+    setFormData(prev => ({
+      ...prev,
+      items: [...prev.items, { itemName: '', quantity: '', estimatedCost: '', remarks: '' }]
+    }));
+  };
+
+  const removeItem = (index) => {
+    if (formData.items.length > 1) {
+      const newItems = formData.items.filter((_, i) => i !== index);
+      setFormData(prev => ({
+        ...prev,
+        items: newItems
+      }));
+    }
+  };
+
   const validateForm = () => {
     const newErrors = {};
-    
-    if (!formData.itemName.trim()) {
-      newErrors.itemName = 'Item name is required';
-    }
-    
-    if (!formData.quantity || formData.quantity <= 0) {
-      newErrors.quantity = 'Valid quantity is required';
-    }
-    
-    if (!formData.estimatedCost || formData.estimatedCost <= 0) {
-      newErrors.estimatedCost = 'Valid estimated cost is required';
-    }
     
     if (!formData.description.trim()) {
       newErrors.description = 'Description is required';
@@ -59,6 +80,19 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
         newErrors.requiredBy = 'Required by date cannot be in the past';
       }
     }
+
+    // Validate each item
+    formData.items.forEach((item, index) => {
+      if (!item.itemName.trim()) {
+        newErrors[`item_${index}_itemName`] = 'Item name is required';
+      }
+      if (!item.quantity || item.quantity <= 0) {
+        newErrors[`item_${index}_quantity`] = 'Valid quantity is required';
+      }
+      if (!item.estimatedCost || item.estimatedCost <= 0) {
+        newErrors[`item_${index}_estimatedCost`] = 'Valid estimated cost is required';
+      }
+    });
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -75,14 +109,12 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
     
     try {
       await onSubmit(formData);
-      // Reset form on successful submission
+      // Reset form
       setFormData({
-        itemName: '',
-        quantity: '',
-        estimatedCost: '',
         description: '',
         urgency: 'normal',
-        requiredBy: ''
+        requiredBy: '',
+        items: [{ itemName: '', quantity: '', estimatedCost: '', remarks: '' }]
       });
       setErrors({});
       onClose();
@@ -96,105 +128,147 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
 
   const handleClose = () => {
     setFormData({
-      itemName: '',
-      quantity: '',
-      estimatedCost: '',
       description: '',
       urgency: 'normal',
-      requiredBy: ''
+      requiredBy: '',
+      items: [{ itemName: '', quantity: '', estimatedCost: '', remarks: '' }]
     });
     setErrors({});
     onClose();
   };
+
   return (
     <Modal show={isOpen} onClose={handleClose} title="Create New Demand">
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Item Name */}
-        <div>
-          <label htmlFor="itemName" className="block text-sm font-medium text-gray-700 mb-1">
-            Item Name *
-          </label>
-          <input
-            type="text"
-            id="itemName"
-            name="itemName"
-            value={formData.itemName}
-            onChange={handleChange}
-            className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.itemName ? 'border-red-500' : 'border-gray-300'
-            }`}
-            placeholder="Enter item name"
-          />
-          {errors.itemName && <p className="text-red-500 text-xs mt-1">{errors.itemName}</p>}
-        </div>
-
-        {/* Quantity */}
-        <div>
-          <label htmlFor="quantity" className="block text-sm font-medium text-gray-700 mb-1">
-            Quantity *
-          </label>
-          <input
-            type="number"
-            id="quantity"
-            name="quantity"
-            value={formData.quantity}
-            onChange={handleChange}
-            min="1"
-            className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.quantity ? 'border-red-500' : 'border-gray-300'
-            }`}
-            placeholder="Enter quantity"
-          />
-          {errors.quantity && <p className="text-red-500 text-xs mt-1">{errors.quantity}</p>}
-        </div>
-
-        {/* Estimated Cost */}
-        <div>
-          <label htmlFor="estimatedCost" className="block text-sm font-medium text-gray-700 mb-1">
-            Estimated Cost (₹) *
-          </label>
-          <input
-            type="number"
-            id="estimatedCost"
-            name="estimatedCost"
-            value={formData.estimatedCost}
-            onChange={handleChange}
-            min="0"
-            step="0.01"
-            className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.estimatedCost ? 'border-red-500' : 'border-gray-300'
-            }`}
-            placeholder="Enter estimated cost"
-          />
-          {errors.estimatedCost && <p className="text-red-500 text-xs mt-1">{errors.estimatedCost}</p>}
-        </div>
-
         {/* Description */}
         <div>
-          <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
-            Description *
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Demand Description *
           </label>
           <textarea
-            id="description"
             name="description"
             value={formData.description}
             onChange={handleChange}
-            rows="3"
+            rows="2"
             className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               errors.description ? 'border-red-500' : 'border-gray-300'
             }`}
-            placeholder="Describe the item and purpose"
+            placeholder="Describe the purpose of this demand"
           />
           {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description}</p>}
         </div>
 
+        {/* Items Section */}
+        <div>
+          <div className="flex justify-between items-center mb-3">
+            <label className="block text-sm font-medium text-gray-700">
+              Items Required *
+            </label>
+            <button
+              type="button"
+              onClick={addItem}
+              className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+            >
+              + Add Item
+            </button>
+          </div>
+
+          {formData.items.map((item, index) => (
+            <div key={index} className="border border-gray-200 rounded-lg p-4 mb-3">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="text-sm font-medium text-gray-800">Item {index + 1}</h4>
+                {formData.items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeItem(index)}
+                    className="text-red-600 hover:text-red-800 text-sm"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Item Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={item.itemName}
+                    onChange={(e) => handleItemChange(index, 'itemName', e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-md text-sm ${
+                      errors[`item_${index}_itemName`] ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    placeholder="Enter item name"
+                  />
+                  {errors[`item_${index}_itemName`] && (
+                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_itemName`]}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Quantity *
+                  </label>
+                  <input
+                    type="number"
+                    value={item.quantity}
+                    onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                    min="1"
+                    className={`w-full px-3 py-2 border rounded-md text-sm ${
+                      errors[`item_${index}_quantity`] ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    placeholder="Qty"
+                  />
+                  {errors[`item_${index}_quantity`] && (
+                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_quantity`]}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Estimated Cost (₹) *
+                  </label>
+                  <input
+                    type="number"
+                    value={item.estimatedCost}
+                    onChange={(e) => handleItemChange(index, 'estimatedCost', e.target.value)}
+                    min="0"
+                    step="0.01"
+                    className={`w-full px-3 py-2 border rounded-md text-sm ${
+                      errors[`item_${index}_estimatedCost`] ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    placeholder="Cost"
+                  />
+                  {errors[`item_${index}_estimatedCost`] && (
+                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_estimatedCost`]}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Remarks (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={item.remarks}
+                    onChange={(e) => handleItemChange(index, 'remarks', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                    placeholder="Any remarks"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
         {/* Urgency */}
         <div>
-          <label htmlFor="urgency" className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Urgency Level
           </label>
           <select
-            id="urgency"
             name="urgency"
             value={formData.urgency}
             onChange={handleChange}
@@ -209,12 +283,11 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
 
         {/* Required By Date */}
         <div>
-          <label htmlFor="requiredBy" className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Required By Date *
           </label>
           <input
             type="date"
-            id="requiredBy"
             name="requiredBy"
             value={formData.requiredBy}
             onChange={handleChange}
@@ -226,22 +299,20 @@ const CreateDemandModal = ({ isOpen, onClose, onSubmit }) => {
           {errors.requiredBy && <p className="text-red-500 text-xs mt-1">{errors.requiredBy}</p>}
         </div>
 
-        {/* Submit Error */}
         {errors.submit && <p className="text-red-500 text-sm">{errors.submit}</p>}
 
-        {/* Action Buttons */}
         <div className="flex justify-end space-x-3 pt-4">
           <button
             type="button"
             onClick={handleClose}
-            className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
             disabled={isSubmitting}
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
             disabled={isSubmitting}
           >
             {isSubmitting ? 'Creating...' : 'Create Demand'}

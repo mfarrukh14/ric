@@ -16,7 +16,9 @@ exports.registerSupplier = async (req, res) => {
         password,
         confirmPassword,
         companyStatement,
-        companyMission
+        companyMission,
+        contactPerson,
+        contactNumber
     } = req.body;
 
     const db = getDatabase();
