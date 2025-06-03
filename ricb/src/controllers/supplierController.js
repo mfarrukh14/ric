@@ -558,6 +558,11 @@ exports.submitBid = async (req, res) => {
             return res.status(400).json({ message: 'Proposed quantity, total cost, and delivery days are required' });
         }
 
+        // Validate required documents
+        if (!req.files || !req.files.technicalBid || !req.files.financialBid) {
+            return res.status(400).json({ message: 'Both technical bid and financial bid PDF documents are required' });
+        }
+
         if (parseFloat(totalCost) <= 0 || parseInt(proposedQuantity) <= 0 || parseInt(deliveryDays) <= 0) {
             return res.status(400).json({ message: 'All numeric values must be greater than 0' });
         }        // Validate tender exists and is active (using Pakistan timezone)
@@ -575,7 +580,9 @@ exports.submitBid = async (req, res) => {
 
         if (!tender) {
             return res.status(404).json({ message: 'Tender not found or expired' });
-        }        // Check if supplier already submitted a bid
+        }
+
+        // Check if supplier already submitted a bid
         const existingBid = await new Promise((resolve, reject) => {
             db.get(
                 'SELECT id FROM supplier_bids WHERE tender_id = ? AND supplier_id = ?',
@@ -591,12 +598,16 @@ exports.submitBid = async (req, res) => {
             return res.status(400).json({ message: 'You have already submitted a bid for this tender. Bids cannot be modified once submitted.' });
         }
 
-        // Insert new bid
+        // Get uploaded file paths
+        const technicalBidPath = req.files.technicalBid[0].path;
+        const financialBidPath = req.files.financialBid[0].path;
+
+        // Insert new bid with document paths
         await new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO supplier_bids (tender_id, supplier_id, total_cost, proposed_quantity, delivery_days, bid_comments)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [tenderId, supplierId, totalCost, proposedQuantity, deliveryDays, comments],
+                `INSERT INTO supplier_bids (tender_id, supplier_id, total_cost, proposed_quantity, delivery_days, bid_comments, technical_bid_document, financial_bid_document)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [tenderId, supplierId, totalCost, proposedQuantity, deliveryDays, comments, technicalBidPath, financialBidPath],
                 function(err) {
                     if (err) reject(err);
                     else resolve({ id: this.lastID });
@@ -604,7 +615,7 @@ exports.submitBid = async (req, res) => {
             );
         });
 
-        res.status(201).json({ message: 'Bid submitted successfully' });
+        res.status(201).json({ message: 'Bid submitted successfully with required documents' });
     } catch (error) {
         console.error('Error submitting bid:', error);
         res.status(500).json({ message: 'Internal server error' });

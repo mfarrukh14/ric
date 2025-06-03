@@ -15,7 +15,9 @@ const SupplierDashboard = () => {
         proposedQuantity: '',
         totalCost: '',
         deliveryTime: '',
-        comments: ''
+        comments: '',
+        technicalBid: null,
+        financialBid: null
     });
     const navigate = useNavigate();
 
@@ -77,8 +79,23 @@ const SupplierDashboard = () => {
 
     const handleBidSubmit = async (e) => {
         e.preventDefault();
-        setError('');        if (!bidForm.proposedQuantity || !bidForm.totalCost || !bidForm.deliveryTime) {
+        setError('');
+
+        if (!bidForm.proposedQuantity || !bidForm.totalCost || !bidForm.deliveryTime) {
             setError('Proposed quantity, total cost, and delivery time are required');
+            return;
+        }
+
+        // Validate required documents
+        if (!bidForm.technicalBid || !bidForm.financialBid) {
+            setError('Both technical bid and financial bid documents are required');
+            return;
+        }
+
+        // Validate file types
+        const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+        if (!allowedTypes.includes(bidForm.technicalBid.type) || !allowedTypes.includes(bidForm.financialBid.type)) {
+            setError('Only PDF, DOC, and DOCX files are allowed');
             return;
         }
 
@@ -97,25 +114,29 @@ const SupplierDashboard = () => {
             return;
         }        try {
             const token = localStorage.getItem('token');
+            const formData = new FormData();
+            formData.append('proposedQuantity', parseInt(bidForm.proposedQuantity));
+            formData.append('totalCost', parseFloat(bidForm.totalCost));
+            formData.append('deliveryDays', parseInt(bidForm.deliveryTime));
+            formData.append('comments', bidForm.comments);
+            formData.append('technicalBid', bidForm.technicalBid);
+            formData.append('financialBid', bidForm.financialBid);
+
             const response = await fetch(`${apiUrl}/suppliers/tenders/${selectedTender.id}/bid`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({
-                    proposedQuantity: parseInt(bidForm.proposedQuantity),
-                    totalCost: parseFloat(bidForm.totalCost),
-                    deliveryDays: parseInt(bidForm.deliveryTime),
-                    comments: bidForm.comments
-                })
+                body: formData
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.message || 'Failed to submit bid');
-            }            setShowBidModal(false);
-            setBidForm({ proposedQuantity: '', totalCost: '', deliveryTime: '', comments: '' });
+            }
+
+            setShowBidModal(false);
+            setBidForm({ proposedQuantity: '', totalCost: '', deliveryTime: '', comments: '', technicalBid: null, financialBid: null });
             fetchMyBids(); // Refresh bids list
             
             // Show success modal
@@ -138,16 +159,23 @@ const SupplierDashboard = () => {
         }
         
         // Reset form for new bid
-        setBidForm({ proposedQuantity: '', totalCost: '', deliveryTime: '', comments: '' });
+        setBidForm({ proposedQuantity: '', totalCost: '', deliveryTime: '', comments: '', technicalBid: null, financialBid: null });
         setShowBidModal(true);
     };
 
     const handleFormChange = (e) => {
-        const { name, value } = e.target;
-        setBidForm(prev => ({
-            ...prev,
-            [name]: value
-        }));
+        const { name, value, type, files } = e.target;
+        if (type === 'file') {
+            setBidForm(prev => ({
+                ...prev,
+                [name]: files[0]
+            }));
+        } else {
+            setBidForm(prev => ({
+                ...prev,
+                [name]: value
+            }));
+        }
     };    const getTimeRemaining = (endTime) => {
         const now = new Date();
         // Handle date format like '2025-05-31T19:56' by adding seconds if missing
@@ -486,28 +514,28 @@ const SupplierDashboard = () => {
                                                     </div>
                                                     
                                                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                                                        <div className="bg-green-50 p-3 rounded-lg">
-                                                            <p className="text-sm font-medium text-green-800">Your Bid</p>
-                                                            <p className="text-xl font-bold text-green-900">₹{bid.total_cost?.toLocaleString()}</p>
-                                                        </div>
-                                                        
-                                                        <div className="bg-blue-50 p-3 rounded-lg">
-                                                            <p className="text-sm font-medium text-blue-800">Quantity</p>
-                                                            <p className="text-lg font-bold text-blue-900">{bid.proposed_quantity}</p>
-                                                        </div>
-                                                        
-                                                        <div className="bg-orange-50 p-3 rounded-lg">
-                                                            <p className="text-sm font-medium text-orange-800">Delivery</p>
-                                                            <p className="text-lg font-bold text-orange-900">{bid.delivery_days} days</p>
-                                                        </div>
-                                                        
-                                                        <div className="bg-purple-50 p-3 rounded-lg">
-                                                            <p className="text-sm font-medium text-purple-800">Submitted</p>
-                                                            <p className="text-sm font-bold text-purple-900">
-                                                                {new Date(bid.created_at).toLocaleDateString()}
-                                                            </p>
-                                                        </div>
-                                                    </div>
+                                        <div className="bg-green-50 p-3 rounded-lg">
+                                            <p className="text-sm font-medium text-green-800">Your Bid</p>
+                                            <p className="text-xl font-bold text-green-900">₹{bid.total_cost?.toLocaleString()}</p>
+                                        </div>
+                                        
+                                        <div className="bg-blue-50 p-3 rounded-lg">
+                                            <p className="text-sm font-medium text-blue-800">Quantity</p>
+                                            <p className="text-lg font-bold text-blue-900">{bid.proposed_quantity}</p>
+                                        </div>
+                                        
+                                        <div className="bg-orange-50 p-3 rounded-lg">
+                                            <p className="text-sm font-medium text-orange-800">Delivery</p>
+                                            <p className="text-lg font-bold text-orange-900">{bid.delivery_days} days</p>
+                                        </div>
+                                        
+                                        <div className="bg-purple-50 p-3 rounded-lg">
+                                            <p className="text-sm font-medium text-purple-800">Submitted</p>
+                                            <p className="text-sm font-bold text-purple-900">
+                                                {new Date(bid.created_at).toLocaleDateString()}
+                                            </p>
+                                        </div>
+                                    </div>
                                                     
                                                     <div className="text-sm text-gray-600 mb-3">
                                                         <p><span className="font-medium">Description:</span> {bid.description}</p>
@@ -620,6 +648,38 @@ const SupplierDashboard = () => {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                         placeholder="Any additional information or terms..."
                                     />
+                                </div>
+                                
+                                <div>
+                                    <label htmlFor="technicalBid" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Technical Bid Document *
+                                    </label>
+                                    <input
+                                        type="file"
+                                        id="technicalBid"
+                                        name="technicalBid"
+                                        onChange={handleFormChange}
+                                        accept=".pdf"
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Upload your technical bid document (PDF only)</p>
+                                </div>
+                                
+                                <div>
+                                    <label htmlFor="financialBid" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Financial Bid Document *
+                                    </label>
+                                    <input
+                                        type="file"
+                                        id="financialBid"
+                                        name="financialBid"
+                                        onChange={handleFormChange}
+                                        accept=".pdf"
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Upload your financial bid document (PDF only)</p>
                                 </div>
                                 
                                 <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">

@@ -226,6 +226,8 @@ const initializeDatabase = async () => {
                 delivery_days INTEGER NOT NULL,
                 total_cost DECIMAL(10,2),
                 bid_comments TEXT,
+                technical_bid_document TEXT, -- path to technical bid PDF
+                financial_bid_document TEXT, -- path to financial bid PDF
                 bid_status TEXT DEFAULT 'submitted', -- submitted, won, lost
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,

@@ -35,13 +35,13 @@ const storage = multer.diskStorage({
     }
 });
 
-// File filter to allow only PDF and DOCX files
+// File filter to allow only PDF files
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    const allowedTypes = ['application/pdf'];
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
     } else {
-        cb(new Error('Only PDF and DOCX files are allowed'), false);
+        cb(new Error('Only PDF files are allowed'), false);
     }
 };
 
@@ -53,8 +53,8 @@ const upload = multer({
     }
 });
 
-// Define upload fields for documents
-const uploadFields = upload.fields([
+// Define upload fields for registration documents
+const uploadRegistrationFields = upload.fields([
     { name: 'professionalTaxCert', maxCount: 1 },
     { name: 'ntnDocument', maxCount: 1 },
     { name: 'drugSaleLicense', maxCount: 1 },
@@ -62,8 +62,14 @@ const uploadFields = upload.fields([
     { name: 'gstDocument', maxCount: 1 }
 ]);
 
+// Define upload fields for bid documents
+const uploadBidFields = upload.fields([
+    { name: 'technicalBid', maxCount: 1 },
+    { name: 'financialBid', maxCount: 1 }
+]);
+
 // Public routes
-router.post('/register', uploadFields, registerSupplier);
+router.post('/register', uploadRegistrationFields, registerSupplier);
 router.post('/login', loginSupplier);
 
 // Protected routes (for evaluation committee)
@@ -76,7 +82,7 @@ router.get('/:supplierId/document/:documentType', auth, downloadDocument);
 router.get('/tenders/active', auth, getActiveTenders);
 
 // Submit bid for a tender
-router.post('/tenders/:tenderId/bid', auth, submitBid);
+router.post('/tenders/:tenderId/bid', auth, uploadBidFields, submitBid);
 
 // Get supplier's own bids
 router.get('/bids/my-bids', auth, getSupplierBids);
