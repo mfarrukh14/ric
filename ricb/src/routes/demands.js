@@ -4,28 +4,42 @@ const path = require('path');
 const fs = require('fs');
 const router = express.Router();
 const auth = require('../middleware/auth');
+
+// Import from separate controllers
 const {
     createDemand,
     getUserDemands,
     getAllDemands,
-    updateDemandStatus,
     getDemandById,
+    getDemandWithItems,
+    getAllDemandsWithItems
+} = require('../controllers/demandController');
+
+const {
+    updateDemandStatus,
+    updateDemandItemsStatus,
+    updateItemStatuses
+} = require('../controllers/storeController');
+
+const {
     getVettingDemands,
+    evaluateDemandVetting
+} = require('../controllers/vettingController');
+
+const {
     getPurchaseDemands,
-    evaluateDemandVetting,
     evaluateDemandPurchase,
+    approveDemand,
+    setExpiryForTender,
+    getSupplyOrders
+} = require('../controllers/purchaseController');
+
+const {
     processExpiredTenders,
     getAwardedTenders,
     generateSupplyOrderPDF,
-    approveDemand,
-    setExpiryForTender,
-    getSupplyOrders,
-    generateSupplyOrderPDFById,
-    updateDemandItemsStatus,
-    getDemandWithItems,
-    getAllDemandsWithItems,
-    updateItemStatuses
-} = require('../controllers/demandController');
+    generateSupplyOrderPDFById
+} = require('../controllers/tenderController');
 
 // Create tender documents directory if it doesn't exist
 const tenderDocsDir = path.join(__dirname, '../../tender-documents');

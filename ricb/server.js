@@ -6,7 +6,7 @@ const authRoutes = require('./src/routes/auth');
 const adminRoutes = require('./src/routes/admin');
 const demandRoutes = require('./src/routes/demands');
 const supplierRoutes = require('./src/routes/suppliers');
-const { startTenderScheduler } = require('./src/utils/scheduler');
+const technicalEvaluationRoutes = require('./src/routes/technicalEvaluation');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -20,6 +20,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/demands', demandRoutes);
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/technical-evaluation', technicalEvaluationRoutes);
 
 // Test route
 app.get('/', (req, res) => {
@@ -28,7 +29,4 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    
-    // Start the tender auto-award scheduler
-    startTenderScheduler();
 });
