@@ -237,28 +237,86 @@ const SupplierDashboard = () => {
         return <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">CLOSED</span>;
     };
 
-    if (!supplier || loading) {
+    const downloadTenderDocument = async (tenderId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/tenders/${tenderId}/tender-document`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download tender document');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `tender-document-${tenderId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            setError('Failed to download tender document: ' + err.message);
+        }
+    };
+
+    const downloadItemsList = async (tenderId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/tenders/${tenderId}/items-list`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download items list');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            // Get filename from response headers or use default
+            const contentDisposition = response.headers.get('content-disposition');
+            const filename = contentDisposition 
+                ? contentDisposition.split('filename=')[1]?.replace(/"/g, '') 
+                : `items-list-${tenderId}.csv`;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            setError('Failed to download items list: ' + err.message);
+        }
+    };
+
+    if (loading) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div>
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-500"></div>
             </div>
         );
-    }    return (
-        <div className="min-h-screen bg-gray-50">
-            {/* Header */}
-            <div className="bg-white shadow">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex justify-between h-16">
-                        <div className="flex items-center">
-                            <h1 className="text-xl font-semibold text-gray-900">Supplier Dashboard</h1>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    }
 
-            {/* Main Content */}
+    return (
+        <div className="min-h-screen bg-gray-50">
             <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
                 <div className="px-4 py-6 sm:px-0">
+                    <div className="mb-8">
+                        <h1 className="text-3xl font-bold text-gray-900">Supplier Dashboard</h1>
+                        <p className="mt-2 text-sm text-gray-600">
+                            Welcome back! Here are your tender opportunities and bid submissions.
+                        </p>
+                    </div>
+
                     {error && (
                         <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative">
                             {error}
@@ -306,67 +364,25 @@ const SupplierDashboard = () => {
                                 <div className="px-4 py-5 sm:p-6 text-center">
                                     <p className="text-gray-500">No active tenders available at the moment.</p>
                                 </div>
-                            ) : (                                <ul className="divide-y divide-gray-200">
+                            ) : (
+                                <ul className="divide-y divide-gray-200">
                                     {activeTenders.map((tender) => (
                                         <li key={tender.id} className="px-4 py-6 sm:px-6 hover:bg-gray-50">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex-1">
                                                     <div className="flex items-center justify-between mb-3">
                                                         <h3 className="text-lg font-semibold text-gray-900">
-                                                            {tender.items.length > 1 ? 
-                                                                `Multi-Item Tender (${tender.items.length} items)` : 
-                                                                tender.item_name || tender.items[0]?.item_name
-                                                            }
+                                                            {tender.item_name}
                                                         </h3>
                                                         {getUrgencyBadge(tender.urgency)}
                                                     </div>
                                                     
-                                                    {/* Items Display */}
-                                                    {tender.items && tender.items.length > 0 ? (
-                                                        <div className="mb-4">
-                                                            <h4 className="font-medium text-gray-900 mb-3">Items in this Tender:</h4>
-                                                            <div className="space-y-3 max-h-48 overflow-y-auto">
-                                                                {tender.items.map((item, index) => (
-                                                                    <div key={item.id || index} className="bg-gray-50 rounded-lg p-3 border">
-                                                                        <div className="flex justify-between items-start mb-2">
-                                                                            <h5 className="font-medium text-gray-900">{item.item_name}</h5>
-                                                                            <span className="text-sm text-gray-500">Item #{index + 1}</span>
-                                                                        </div>
-                                                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
-                                                                            <div>
-                                                                                <span className="font-medium">Quantity:</span> {item.quantity}
-                                                                            </div>
-                                                                            {item.estimated_cost && (
-                                                                                <div>
-                                                                                    <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
-                                                                                </div>
-                                                                            )}
-                                                                            {item.unit && (
-                                                                                <div>
-                                                                                    <span className="font-medium">Unit:</span> {item.unit}
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                        {item.remarks && (
-                                                                            <div className="mt-2 text-sm text-gray-600">
-                                                                                <span className="font-medium">Remarks:</span> {item.remarks}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        /* Fallback for legacy single-item display */
-                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                                                            <div className="bg-blue-50 p-3 rounded-lg">
-                                                                <p className="text-sm font-medium text-blue-800">Quantity Required</p>
-                                                                <p className="text-xl font-bold text-blue-900">{tender.quantity}</p>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    
                                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                                        <div className="bg-blue-50 p-3 rounded-lg">
+                                                            <p className="text-sm font-medium text-blue-800">Quantity Required</p>
+                                                            <p className="text-xl font-bold text-blue-900">{tender.quantity}</p>
+                                                        </div>
+                                                        
                                                         <div className="bg-orange-50 p-3 rounded-lg">
                                                             <p className="text-sm font-medium text-orange-800">Time Remaining</p>
                                                             <p className="text-lg font-bold text-orange-900">
@@ -380,23 +396,40 @@ const SupplierDashboard = () => {
                                                                 {new Date(tender.required_by).toLocaleDateString()}
                                                             </p>
                                                         </div>
-                                                        
-                                                        <div className="bg-purple-50 p-3 rounded-lg">
-                                                            <p className="text-sm font-medium text-purple-800">Total Items</p>
-                                                            <p className="text-lg font-bold text-purple-900">
-                                                                {tender.items?.length || 1}
-                                                            </p>
-                                                        </div>
                                                     </div>
-                                                      <div className="text-sm text-gray-600 mb-3">
+                                                      
+                                                    <div className="text-sm text-gray-600 mb-3">
                                                         <p><span className="font-medium">Description:</span> {tender.description}</p>
                                                         <p className="mt-1">
                                                             <span className="font-medium">Bidding Expires:</span> {' '}
                                                             {formatDateTime(tender.bidding_end_time)}
                                                         </p>
                                                     </div>
+
+                                                    {/* Download Buttons */}
+                                                    <div className="flex flex-wrap gap-2 mb-4">
+                                                        <button
+                                                            onClick={() => downloadTenderDocument(tender.id)}
+                                                            className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                                        >
+                                                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                            </svg>
+                                                            Download Tender Document
+                                                        </button>
+                                                        <button
+                                                            onClick={() => downloadItemsList(tender.id)}
+                                                            className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                                        >
+                                                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                            </svg>
+                                                            Download Items List
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                                  <div className="ml-6 flex-shrink-0">
+                                                  
+                                                <div className="ml-6 flex-shrink-0">
                                                     {!isExpired(tender.bidding_end_time) ? (
                                                         myBids.find(bid => bid.tender_id === tender.id) ? (
                                                             <span className="text-sm text-green-600 font-medium bg-green-50 px-3 py-2 rounded-lg border border-green-200">
@@ -439,7 +472,8 @@ const SupplierDashboard = () => {
                                 <div className="px-4 py-5 sm:p-6 text-center">
                                     <p className="text-gray-500">You haven't submitted any bids yet.</p>
                                 </div>
-                            ) : (                                <ul className="divide-y divide-gray-200">
+                            ) : (
+                                <ul className="divide-y divide-gray-200">
                                     {myBids.map((bid) => (
                                         <li key={bid.id} className="px-4 py-6 sm:px-6 hover:bg-gray-50">
                                             <div className="flex items-center justify-between">
@@ -492,58 +526,24 @@ const SupplierDashboard = () => {
                         </div>
                     )}
                 </div>
-            </div>            {/* Bid Submission Modal */}            {showBidModal && (
+            </div>
+
+            {/* Bid Submission Modal */}
+            {showBidModal && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-10 mx-auto p-6 border w-full max-w-2xl shadow-lg rounded-lg bg-white">
+                    <div className="relative top-10 mx-auto p-6 border w-full max-w-md shadow-lg rounded-lg bg-white">
                         <div className="mt-3">
                             <h3 className="text-xl font-bold text-gray-900 mb-4">
                                 {myBids.find(bid => bid.tender_id === selectedTender?.id) ? 'Update Your Bid' : 'Submit Your Bid'}
                             </h3>
                             
                             <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                                <h4 className="font-semibold text-blue-900 mb-2">
-                                    {selectedTender?.items?.length > 1 ? 
-                                        `Multi-Item Tender (${selectedTender.items.length} items)` : 
-                                        selectedTender?.item_name || selectedTender?.items?.[0]?.item_name
-                                    }
-                                </h4>
-                                
-                                {/* Items Details */}
-                                {selectedTender?.items && selectedTender.items.length > 0 ? (
-                                    <div className="space-y-3 mt-3">
-                                        <h5 className="font-medium text-blue-900">Items in this tender:</h5>
-                                        <div className="max-h-32 overflow-y-auto space-y-2">
-                                            {selectedTender.items.map((item, index) => (
-                                                <div key={item.id || index} className="bg-white p-2 rounded border">
-                                                    <div className="flex justify-between items-center">
-                                                        <span className="font-medium text-gray-900">{item.item_name}</span>
-                                                        <span className="text-sm text-gray-600">Qty: {item.quantity}</span>
-                                                    </div>
-                                                    {item.estimated_cost && (
-                                                        <p className="text-sm text-gray-600">Est. Cost: ₹{item.estimated_cost}</p>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="text-sm text-blue-800 space-y-1">
-                                        <p><span className="font-medium">Required Quantity:</span> {selectedTender?.quantity}</p>
-                                        <p><span className="font-medium">Description:</span> {selectedTender?.description}</p>
-                                    </div>
-                                )}
-                                
-                                <p className="text-sm text-blue-800 mt-2">
-                                    <span className="font-medium">Bidding Expires:</span> {formatDateTime(selectedTender?.bidding_end_time)}
-                                </p>
-                                
-                                {selectedTender?.items?.length > 1 && (
-                                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                                        <p className="text-sm text-yellow-800">
-                                            <strong>Note:</strong> This is a multi-item tender. You can bid on the entire tender with your proposed quantities and total cost for all items.
-                                        </p>
-                                    </div>
-                                )}
+                                <h4 className="font-semibold text-blue-900 mb-2">{selectedTender?.item_name}</h4>
+                                <div className="text-sm text-blue-800 space-y-1">
+                                    <p><span className="font-medium">Required Quantity:</span> {selectedTender?.quantity}</p>
+                                    <p><span className="font-medium">Description:</span> {selectedTender?.description}</p>
+                                    <p><span className="font-medium">Bidding Expires:</span> {formatDateTime(selectedTender?.bidding_end_time)}</p>
+                                </div>
                             </div>
                             
                             {error && (
@@ -552,12 +552,10 @@ const SupplierDashboard = () => {
                                 </div>
                             )}
                             
-                            <form onSubmit={handleBidSubmit} className="space-y-4">                                <div>
+                            <form onSubmit={handleBidSubmit} className="space-y-4">
+                                <div>
                                     <label htmlFor="proposedQuantity" className="block text-sm font-medium text-gray-700 mb-1">
-                                        {selectedTender?.items?.length > 1 ? 
-                                            'Total Quantity You Can Provide *' : 
-                                            'Quantity You Can Provide *'
-                                        }
+                                        Quantity You Can Provide *
                                     </label>
                                     <input
                                         type="number"
@@ -566,20 +564,12 @@ const SupplierDashboard = () => {
                                         value={bidForm.proposedQuantity}
                                         onChange={handleFormChange}
                                         min="1"
-                                        max={selectedTender?.items?.length > 1 ? 
-                                            selectedTender.items.reduce((sum, item) => sum + item.quantity, 0) :
-                                            selectedTender?.quantity
-                                        }
+                                        max={selectedTender?.quantity}
                                         required
                                         className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                         placeholder="Enter quantity"
                                     />
-                                    <p className="text-xs text-gray-500 mt-1">
-                                        {selectedTender?.items?.length > 1 ? 
-                                            `Maximum total: ${selectedTender.items.reduce((sum, item) => sum + item.quantity, 0)} (across all items)` :
-                                            `Maximum: ${selectedTender?.quantity}`
-                                        }
-                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">Maximum: {selectedTender?.quantity}</p>
                                 </div>
                                 
                                 <div>
@@ -598,11 +588,6 @@ const SupplierDashboard = () => {
                                         className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                         placeholder="Enter total cost"
                                     />
-                                    {selectedTender?.items?.length > 1 && (
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            This should be your total cost for all items you can provide
-                                        </p>
-                                    )}
                                 </div>
                                 
                                 <div>
@@ -647,7 +632,8 @@ const SupplierDashboard = () => {
                                         className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded-md text-sm font-medium transition-colors"
                                     >
                                         Cancel
-                                    </button>                                    <button
+                                    </button>
+                                    <button
                                         type="submit"
                                         className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
                                     >

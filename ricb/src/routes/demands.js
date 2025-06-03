@@ -142,4 +142,106 @@ router.put('/:id/approve', auth, uploadTenderFiles, approveDemand);
 // Set expiry for tender
 router.put('/:id/set-expiry', auth, setExpiryForTender);
 
+// Download tender document
+router.get('/tenders/:tenderId/tender-document', auth, async (req, res) => {
+    const db = require('../config/database').getDatabase();
+    const { tenderId } = req.params;
+    
+    try {
+        // Get tender document path from database
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT tender_document_path FROM demand_tenders WHERE id = ?',
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender || !tender.tender_document_path) {
+            return res.status(404).json({ message: 'Tender document not found' });
+        }
+
+        // Use the stored path directly (it's already absolute)
+        const filePath = tender.tender_document_path;
+        
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ message: 'Tender document file not found' });
+        }
+
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="tender-document-${tenderId}.pdf"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        
+        // Send file
+        res.sendFile(filePath);
+    } catch (error) {
+        console.error('Error downloading tender document:', error);
+        res.status(500).json({ message: 'Failed to download tender document' });
+    }
+});
+
+// Download items list
+router.get('/tenders/:tenderId/items-list', auth, async (req, res) => {
+    const db = require('../config/database').getDatabase();
+    const { tenderId } = req.params;
+    
+    try {
+        // Get items list path from database
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT items_list_path FROM demand_tenders WHERE id = ?',
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender || !tender.items_list_path) {
+            return res.status(404).json({ message: 'Items list not found' });
+        }
+
+        const filePath = tender.items_list_path;
+        
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ message: 'Items list file not found' });
+        }
+
+        // Determine content type and filename based on file extension
+        const ext = path.extname(filePath).toLowerCase();
+        let contentType;
+        let filename;
+        
+        if (ext === '.csv') {
+            contentType = 'text/csv';
+            filename = `items-list-${tenderId}.csv`;
+        } else if (ext === '.xlsx') {
+            contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            filename = `items-list-${tenderId}.xlsx`;
+        } else if (ext === '.xls') {
+            contentType = 'application/vnd.ms-excel';
+            filename = `items-list-${tenderId}.xls`;
+        } else {
+            contentType = 'application/octet-stream';
+            filename = `items-list-${tenderId}${ext}`;
+        }
+
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', contentType);
+        
+        // Send file
+        res.sendFile(filePath);
+    } catch (error) {
+        console.error('Error downloading items list:', error);
+        res.status(500).json({ message: 'Failed to download items list' });
+    }
+});
+
 module.exports = router;
