@@ -423,7 +423,7 @@ const PurchaseDepartment = () => {
                                                         </div>
                                                         <div>
                                                             <span className="font-medium text-gray-700">Total Est. Cost:</span>
-                                                            <span className="ml-2">₹{demand.items ? getTotalEstimatedCost(demand.items) : demand.estimated_cost}</span>
+                                                            <span className="ml-2">Rs {demand.items ? getTotalEstimatedCost(demand.items) : demand.estimated_cost}</span>
                                                         </div>
                                                         <div>
                                                             <span className="font-medium text-gray-700">Required By:</span>
@@ -460,7 +460,7 @@ const PurchaseDepartment = () => {
                                                                             <span className="font-medium">Quantity:</span> {item.quantity}
                                                                         </div>
                                                                         <div>
-                                                                            <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                                            <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                                                         </div>
                                                                         {item.store_available_quantity !== undefined && (
                                                                             <div>
@@ -488,7 +488,7 @@ const PurchaseDepartment = () => {
                                                                     <span className="font-medium">Quantity:</span> {demand.quantity}
                                                                 </div>
                                                                 <div>
-                                                                    <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
+                                                                    <span className="font-medium">Est. Cost:</span> Rs {demand.estimated_cost}
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -544,7 +544,7 @@ const PurchaseDepartment = () => {
                                                             <span className="mx-2">•</span>
                                                             <span>Fulfilled: {tender.total_fulfilled_quantity} ({tender.fulfillment_percentage}%)</span>
                                                             <span className="mx-2">•</span>
-                                                            <span>Total Cost: ${tender.total_cost}</span>
+                                                            <span>Total Cost: Rs {tender.total_cost}</span>
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center">
@@ -606,10 +606,10 @@ const PurchaseDepartment = () => {
                                                                         {order.quantity}
                                                                     </td>
                                                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                                                        ${order.unit_price}
+                                                                        Rs {order.unit_price}
                                                                     </td>
                                                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                                                        ${order.total_cost}
+                                                                        Rs {order.total_cost}
                                                                     </td>
                                                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                                                                         {new Date(order.expected_delivery_date).toLocaleDateString()}
@@ -678,7 +678,7 @@ const PurchaseDepartment = () => {
                                                         <span className="font-medium">Requested:</span> {item.quantity}
                                                     </div>
                                                     <div>
-                                                        <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                        <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                                     </div>
                                                     {item.store_available_quantity !== undefined && (
                                                         <div>
@@ -706,7 +706,7 @@ const PurchaseDepartment = () => {
                                                 <span className="font-medium">Quantity:</span> {selectedDemand?.quantity}
                                             </div>
                                             <div>
-                                                <span className="font-medium">Est. Cost:</span> ₹{selectedDemand?.estimated_cost}
+                                                <span className="font-medium">Est. Cost:</span> Rs {selectedDemand?.estimated_cost}
                                             </div>
                                         </div>
                                     </div>

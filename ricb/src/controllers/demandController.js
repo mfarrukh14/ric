@@ -1024,7 +1024,7 @@ const processExpiredTenders = async (req, res) => {
                         );
                     });
 
-                    console.log(`Tender ${tender.id} awarded to supplier ${winningBid.supplier_id} (${winningBid.company_name}) for $${winningBid.total_cost}`);
+                    console.log(`Tender ${tender.id} awarded to supplier ${winningBid.supplier_id} (${winningBid.company_name}) for Rs ${winningBid.total_cost}`);
                     
                     // Generate PDF and send email notification
                     try {                        // Prepare order data for PDF and email with defensive programming

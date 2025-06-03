@@ -177,7 +177,7 @@ const DemandManagement = () => {
                                                     </div>
                                                     <div>
                                                         <span className="font-medium text-gray-700">Total Est. Cost:</span>
-                                                        <span className="ml-2">₹{demand.items ? getTotalEstimatedCost(demand.items) : demand.estimated_cost}</span>
+                                                        <span className="ml-2">Rs {demand.items ? getTotalEstimatedCost(demand.items) : demand.estimated_cost}</span>
                                                     </div>
                                                     <div>
                                                         <span className="font-medium text-gray-700">Required By:</span>
@@ -224,7 +224,7 @@ const DemandManagement = () => {
                                                                         <span className="font-medium">Quantity:</span> {item.quantity}
                                                                     </div>
                                                                     <div>
-                                                                        <span className="font-medium">Est. Cost:</span> ₹{item.estimated_cost}
+                                                                        <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                                                     </div>
                                                                     {item.store_available_quantity !== undefined && (
                                                                         <div>
@@ -257,7 +257,7 @@ const DemandManagement = () => {
                                                                 <span className="font-medium">Quantity:</span> {demand.quantity}
                                                             </div>
                                                             <div>
-                                                                <span className="font-medium">Est. Cost:</span> ₹{demand.estimated_cost}
+                                                                <span className="font-medium">Est. Cost:</span> Rs {demand.estimated_cost}
                                                             </div>
                                                         </div>
                                                     </div>

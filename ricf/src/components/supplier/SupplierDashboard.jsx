@@ -516,7 +516,7 @@ const SupplierDashboard = () => {
                                                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
                                         <div className="bg-green-50 p-3 rounded-lg">
                                             <p className="text-sm font-medium text-green-800">Your Bid</p>
-                                            <p className="text-xl font-bold text-green-900">₹{bid.total_cost?.toLocaleString()}</p>
+                                            <p className="text-xl font-bold text-green-900">Rs {bid.total_cost?.toLocaleString()}</p>
                                         </div>
                                         
                                         <div className="bg-blue-50 p-3 rounded-lg">
@@ -602,7 +602,7 @@ const SupplierDashboard = () => {
                                 
                                 <div>
                                     <label htmlFor="totalCost" className="block text-sm font-medium text-gray-700 mb-1">
-                                        Total Cost (₹) *
+                                        Total Cost (Rs) *
                                     </label>
                                     <input
                                         type="number"
