@@ -1146,6 +1146,14 @@ const approveDemand = async (req, res) => {
         return res.status(400).json({ message: 'Bidding expiry date is required for approval' });
     }
 
+    // Validate required files
+    if (!req.files || !req.files.tenderDocument || !req.files.itemsList) {
+        return res.status(400).json({ message: 'Both tender document (PDF) and items list (Excel/CSV) are required' });
+    }
+
+    const tenderDocPath = req.files.tenderDocument[0].path;
+    const itemsListPath = req.files.itemsList[0].path;
+
     try {
         // Start transaction
         await new Promise((resolve, reject) => {
@@ -1174,12 +1182,12 @@ const approveDemand = async (req, res) => {
                 );
             });
 
-            // Create a tender automatically
+            // Create a tender automatically with file paths
             await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO demand_tenders (demand_id, bidding_end_time, tender_status, created_by)
-                     VALUES (?, ?, 'active', ?)`,
-                    [id, expiryDate, user.id],
+                    `INSERT INTO demand_tenders (demand_id, bidding_end_time, tender_status, created_by, tender_document_path, items_list_path)
+                     VALUES (?, ?, 'active', ?, ?, ?)`,
+                    [id, expiryDate, user.id, tenderDocPath, itemsListPath],
                     function(err) {
                         if (err) reject(err);
                         else resolve({ id: this.lastID });

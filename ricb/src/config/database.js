@@ -203,6 +203,8 @@ const initializeDatabase = async () => {
                 awarded_supplier_id INTEGER,
                 awarded_bid_amount DECIMAL(10,2),
                 awarded_at DATETIME,
+                tender_document_path TEXT, -- path to uploaded tender document PDF
+                items_list_path TEXT, -- path to uploaded items list Excel/CSV
                 created_by INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,

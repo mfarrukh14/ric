@@ -13,6 +13,8 @@ const PurchaseDepartment = () => {
         status: '',
         comments: '',
         biddingExpiryTime: '',
+        tenderDocument: null,
+        itemsList: null,
         updatedDemand: {
             description: '',
             urgency: '',
@@ -79,6 +81,8 @@ const PurchaseDepartment = () => {
             status: '',
             comments: '',
             biddingExpiryTime: '',
+            tenderDocument: null,
+            itemsList: null,
             updatedDemand: {
                 description: demand.description,
                 urgency: demand.urgency,
@@ -105,7 +109,19 @@ const PurchaseDepartment = () => {
         if (evaluationForm.status === 'approved' && !evaluationForm.biddingExpiryTime) {
             setError('Bidding expiry date and time is required for approval');
             return;
-        }        // Validate that expiry time is at least 1 minute from now (for testing)
+        }
+
+        if (evaluationForm.status === 'approved' && !evaluationForm.tenderDocument) {
+            setError('Tender document (PDF) is required for approval');
+            return;
+        }
+
+        if (evaluationForm.status === 'approved' && !evaluationForm.itemsList) {
+            setError('Items list (Excel/CSV) is required for approval');
+            return;
+        }
+
+        // Validate that expiry time is at least 1 minute from now (for testing)
         if (evaluationForm.status === 'approved' && evaluationForm.biddingExpiryTime) {
             const expiryTime = new Date(evaluationForm.biddingExpiryTime);
             const minTime = new Date(Date.now() + 1 * 60 * 1000); // 1 minute from now
@@ -114,40 +130,59 @@ const PurchaseDepartment = () => {
                 setError('Bidding expiry must be at least 1 minute from now');
                 return;
             }
-        }        try {
+        }
+
+        try {
             const token = localStorage.getItem('token');
-            let endpoint, method, bodyData;
+            let endpoint, method;
             
             if (evaluationForm.status === 'approved') {
-                // Use the approve endpoint that creates tenders
+                // Use FormData for file uploads
+                const formData = new FormData();
+                formData.append('expiryDate', evaluationForm.biddingExpiryTime);
+                formData.append('tenderDocument', evaluationForm.tenderDocument);
+                formData.append('itemsList', evaluationForm.itemsList);
+                
                 endpoint = `${apiUrl}/demands/${selectedDemand.id}/approve`;
                 method = 'PUT';
-                bodyData = {
-                    expiryDate: evaluationForm.biddingExpiryTime
-                };
+                
+                const response = await fetch(endpoint, {
+                    method: method,
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to submit evaluation');
+                }
             } else {
                 // Use the purchase evaluation endpoint for rejections
                 endpoint = `${apiUrl}/demands/${selectedDemand.id}/purchase`;
                 method = 'PUT';
-                bodyData = {
+                const bodyData = {
                     action: 'reject',
                     remarks: evaluationForm.comments
                 };
-            }
-            
-            const response = await fetch(endpoint, {
-                method: method,
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(bodyData)
-            });
+                
+                const response = await fetch(endpoint, {
+                    method: method,
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(bodyData)
+                });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to submit evaluation');
-            }            setShowEvaluationModal(false);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to submit evaluation');
+                }
+            }
+
+            setShowEvaluationModal(false);
             fetchPurchaseDemands(); // Refresh the list
             fetchSupplyOrders(); // Refresh supply orders in case new ones were created
             
@@ -156,7 +191,8 @@ const PurchaseDepartment = () => {
             setTimeout(() => {
                 setShowSuccessModal(false);
             }, 2000);
-        } catch (err) {            setError(err.message);
+        } catch (err) {
+            setError(err.message);
         }
     };
 
@@ -204,6 +240,43 @@ const PurchaseDepartment = () => {
                 ...prev,
                 [name]: value
             }));
+        }
+    };
+
+    const handleFileChange = (e) => {
+        const { name, files } = e.target;
+        if (files && files[0]) {
+            const file = files[0];
+            
+            // Validate file types
+            if (name === 'tenderDocument') {
+                if (file.type !== 'application/pdf') {
+                    setError('Tender document must be a PDF file');
+                    return;
+                }
+            } else if (name === 'itemsList') {
+                const allowedTypes = [
+                    'application/vnd.ms-excel',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'text/csv'
+                ];
+                if (!allowedTypes.includes(file.type)) {
+                    setError('Items list must be an Excel (.xls, .xlsx) or CSV file');
+                    return;
+                }
+            }
+            
+            // Validate file size (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                setError('File size must be less than 10MB');
+                return;
+            }
+            
+            setEvaluationForm(prev => ({
+                ...prev,
+                [name]: file
+            }));
+            setError('');
         }
     };
 
@@ -738,6 +811,47 @@ const PurchaseDepartment = () => {
                                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                                 />
                             </div>
+
+                            {/* File Uploads (only for approved) */}
+                            {evaluationForm.status === 'approved' && (
+                                <div className="mb-6">
+                                    <h4 className="font-medium text-gray-900 mb-3">Required Documents:</h4>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">
+                                                Tender Document (PDF) <span className="text-red-500">*</span>
+                                            </label>
+                                            <input
+                                                type="file"
+                                                name="tenderDocument"
+                                                accept=".pdf"
+                                                onChange={handleFileChange}
+                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                required
+                                            />
+                                            <p className="mt-1 text-sm text-gray-500">
+                                                Upload the tender document as a PDF file.
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">
+                                                Items List (Excel/CSV) <span className="text-red-500">*</span>
+                                            </label>
+                                            <input
+                                                type="file"
+                                                name="itemsList"
+                                                accept=".xls,.xlsx,.csv"
+                                                onChange={handleFileChange}
+                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                required
+                                            />
+                                            <p className="mt-1 text-sm text-gray-500">
+                                                Upload the items list as an Excel (.xls, .xlsx) or CSV file.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="flex justify-end space-x-3">
                                 <button

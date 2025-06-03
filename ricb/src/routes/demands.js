@@ -1,4 +1,7 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const {
@@ -23,6 +26,59 @@ const {
     getAllDemandsWithItems,
     updateItemStatuses
 } = require('../controllers/demandController');
+
+// Create tender documents directory if it doesn't exist
+const tenderDocsDir = path.join(__dirname, '../../tender-documents');
+if (!fs.existsSync(tenderDocsDir)) {
+    fs.mkdirSync(tenderDocsDir, { recursive: true });
+}
+
+// Configure multer for tender document uploads
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, tenderDocsDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    if (file.fieldname === 'tenderDocument') {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Tender document must be a PDF file'), false);
+        }
+    } else if (file.fieldname === 'itemsList') {
+        const allowedTypes = [
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/csv'
+        ];
+        if (allowedTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Items list must be an Excel or CSV file'), false);
+        }
+    } else {
+        cb(new Error('Unexpected file field'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    }
+});
+
+const uploadTenderFiles = upload.fields([
+    { name: 'tenderDocument', maxCount: 1 },
+    { name: 'itemsList', maxCount: 1 }
+]);
 
 // Create a new demand
 router.post('/', auth, createDemand);
@@ -81,7 +137,7 @@ router.post('/process-expired', auth, processExpiredTenders);
 router.post('/:id/supply-order', auth, generateSupplyOrderPDF);
 
 // Approve demand (for superadmin)
-router.put('/:id/approve', auth, approveDemand);
+router.put('/:id/approve', auth, uploadTenderFiles, approveDemand);
 
 // Set expiry for tender
 router.put('/:id/set-expiry', auth, setExpiryForTender);
