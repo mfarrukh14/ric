@@ -1,0 +1,662 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { apiUrl } from '../../config/api';
+
+const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
+    const [currentStep, setCurrentStep] = useState(1);
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [tender, setTender] = useState(propTender || null);
+    const [fetchingTender, setFetchingTender] = useState(!propTender);
+    const navigate = useNavigate();
+    const { tenderId } = useParams();
+
+    // Fetch tender data when component mounts (only if not provided as prop)
+    useEffect(() => {
+        if (propTender) {
+            setTender(propTender);
+            setFetchingTender(false);
+            return;
+        }
+
+        const fetchTenderData = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch(`${apiUrl}/suppliers/tenders/active`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch tender data');
+                }
+
+                const data = await response.json();
+                const foundTender = data.find(t => t.id === parseInt(tenderId));
+                
+                if (!foundTender) {
+                    throw new Error('Tender not found');
+                }
+
+                setTender(foundTender);
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setFetchingTender(false);
+            }
+        };
+
+        if (tenderId) {
+            fetchTenderData();
+        }
+    }, [tenderId, propTender]);
+
+    // Form data for all steps
+    const [bidData, setBidData] = useState({
+        items: [],
+        technicalBid: null,
+        financialBid: null,
+        deliveryTime: '',
+        comments: '',
+        companyName: '',
+        registeredNumber: '',
+        agreeToTerms: false
+    });
+
+    // Update bidData when tender is loaded
+    useEffect(() => {
+        if (tender?.items) {
+            setBidData(prev => ({
+                ...prev,
+                items: tender.items.map(item => ({
+                    id: item.id,
+                    item_name: item.item_name,
+                    required_quantity: item.quantity,
+                    unit: item.unit || 'pieces',
+                    can_provide: '',
+                    total_cost: '',
+                    remarks: item.remarks || ''
+                }))
+            }));
+        }
+    }, [tender]);
+
+    // Handle cancel - navigate back to supplier dashboard if no onCancel prop
+    const handleCancel = () => {
+        if (onCancel) {
+            onCancel();
+        } else {
+            navigate('/supplier-dashboard');
+        }
+    };
+
+    // Handle success - navigate back to supplier dashboard if no onSuccess prop
+    const handleSuccess = () => {
+        if (onSuccess) {
+            onSuccess();
+        } else {
+            navigate('/supplier-dashboard');
+        }
+    };
+
+    // Show loading state while fetching tender
+    if (fetchingTender) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading tender details...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Show error if tender not found or failed to load
+    if (error && !tender) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
+                        <h2 className="text-lg font-medium text-red-800 mb-2">Error Loading Tender</h2>
+                        <p className="text-red-700 mb-4">{error}</p>
+                        <button
+                            onClick={() => navigate('/supplier-dashboard')}
+                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                        >
+                            Return to Dashboard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const handleItemChange = (index, field, value) => {
+        setBidData(prev => ({
+            ...prev,
+            items: prev.items.map((item, i) => 
+                i === index ? { ...item, [field]: value } : item
+            )
+        }));
+    };
+
+    const handleInputChange = (field, value) => {
+        setBidData(prev => ({
+            ...prev,
+            [field]: value
+        }));
+    };
+
+    const handleFileChange = (field, file) => {
+        setBidData(prev => ({
+            ...prev,
+            [field]: file
+        }));
+    };
+
+    const validateStep1 = () => {
+        const hasValidItems = bidData.items.some(item => 
+            item.can_provide && parseInt(item.can_provide) > 0 && 
+            item.total_cost && parseFloat(item.total_cost) > 0
+        );
+        
+        if (!hasValidItems) {
+            setError('Please provide quantity and cost for at least one item');
+            return false;
+        }
+
+        const invalidItems = bidData.items.filter(item => 
+            (item.can_provide && !item.total_cost) || 
+            (!item.can_provide && item.total_cost) ||
+            (item.can_provide && parseInt(item.can_provide) <= 0) ||
+            (item.total_cost && parseFloat(item.total_cost) <= 0)
+        );
+
+        if (invalidItems.length > 0) {
+            setError('All items must have valid quantity (> 0) and cost (> 0) if filled');
+            return false;
+        }
+
+        return true;
+    };
+
+    const validateStep2 = () => {
+        if (!bidData.technicalBid || !bidData.financialBid) {
+            setError('Both technical bid and financial bid documents are required');
+            return false;
+        }
+
+        if (!bidData.deliveryTime || parseInt(bidData.deliveryTime) <= 0) {
+            setError('Valid delivery time is required');
+            return false;
+        }
+
+        const allowedTypes = ['application/pdf'];
+        if (!allowedTypes.includes(bidData.technicalBid.type) || 
+            !allowedTypes.includes(bidData.financialBid.type)) {
+            setError('Only PDF files are allowed for bid documents');
+            return false;
+        }
+
+        return true;
+    };
+
+    const validateStep3 = () => {
+        if (!bidData.companyName.trim() || !bidData.registeredNumber.trim()) {
+            setError('Company name and registered number are required');
+            return false;
+        }
+
+        if (!bidData.agreeToTerms) {
+            setError('You must agree to the terms and conditions');
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleNext = () => {
+        setError('');
+        
+        if (currentStep === 1 && !validateStep1()) return;
+        if (currentStep === 2 && !validateStep2()) return;
+        
+        setCurrentStep(prev => prev + 1);
+    };
+
+    const handlePrevious = () => {
+        setError('');
+        setCurrentStep(prev => prev - 1);
+    };
+
+    const calculateTotalBidAmount = () => {
+        return bidData.items
+            .filter(item => item.can_provide && item.total_cost)
+            .reduce((total, item) => total + parseFloat(item.total_cost), 0);
+    };
+
+    const calculateTotalQuantity = () => {
+        return bidData.items
+            .filter(item => item.can_provide)
+            .reduce((total, item) => total + parseInt(item.can_provide), 0);
+    };
+
+    const handleSubmit = async () => {
+        setError('');
+        
+        if (!validateStep3()) return;
+        
+        setLoading(true);
+        
+        try {
+            const token = localStorage.getItem('token');
+            const formData = new FormData();
+            
+            const totalCost = calculateTotalBidAmount();
+            const totalQuantity = calculateTotalQuantity();
+            
+            formData.append('proposedQuantity', totalQuantity);
+            formData.append('totalCost', totalCost);
+            formData.append('deliveryDays', parseInt(bidData.deliveryTime));
+            formData.append('comments', bidData.comments || '');
+            formData.append('technicalBid', bidData.technicalBid);
+            formData.append('financialBid', bidData.financialBid);
+            
+            const itemsData = bidData.items
+                .filter(item => item.can_provide && item.total_cost)
+                .map(item => ({
+                    item_id: item.id,
+                    item_name: item.item_name,
+                    required_quantity: item.required_quantity,
+                    can_provide: parseInt(item.can_provide),
+                    total_cost: parseFloat(item.total_cost),
+                    unit: item.unit
+                }));
+            
+            formData.append('items', JSON.stringify(itemsData));
+            formData.append('companyName', bidData.companyName);
+            formData.append('registeredNumber', bidData.registeredNumber);
+            formData.append('agreeToTerms', bidData.agreeToTerms);
+
+            const response = await fetch(`${apiUrl}/suppliers/tenders/${tender.id}/bid`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to submit bid');
+            }
+
+            handleSuccess();
+            
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const renderStep1 = () => (
+        <div className="space-y-6">
+            <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-medium text-gray-900">Step 1: Item Details</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                    Fill in the quantity you can provide and your cost for each item
+                </p>
+            </div>
+
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <h4 className="font-semibold text-blue-900 mb-2">{tender?.item_name}</h4>
+                <div className="text-sm text-blue-800 space-y-1">
+                    <p><span className="font-medium">Description:</span> {tender?.description}</p>
+                    <p><span className="font-medium">Urgency:</span> {tender?.urgency?.toUpperCase()}</p>
+                    <p><span className="font-medium">Required By:</span> {new Date(tender?.required_by).toLocaleDateString()}</p>
+                </div>
+            </div>
+
+            <div className="space-y-4">
+                {bidData.items.map((item, index) => (
+                    <div key={item.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Item Name
+                                </label>
+                                <p className="text-sm text-gray-900 bg-white p-2 rounded border">
+                                    {item.item_name}
+                                </p>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Required Quantity
+                                </label>
+                                <p className="text-sm text-gray-900 bg-white p-2 rounded border">
+                                    {item.required_quantity} {item.unit}
+                                </p>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Quantity You Can Provide
+                                </label>
+                                <input
+                                    type="number"
+                                    value={item.can_provide}
+                                    onChange={(e) => handleItemChange(index, 'can_provide', e.target.value)}
+                                    min="0"
+                                    max={item.required_quantity}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    placeholder="0"
+                                />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Total Cost (Rs)
+                                </label>
+                                <input
+                                    type="number"
+                                    value={item.total_cost}
+                                    onChange={(e) => handleItemChange(index, 'total_cost', e.target.value)}
+                                    min="0"
+                                    step="0.01"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    placeholder="0.00"
+                                />
+                            </div>
+                        </div>
+                        
+                        {item.remarks && (
+                            <div className="mt-3">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Remarks
+                                </label>
+                                <p className="text-sm text-gray-600 bg-white p-2 rounded border">
+                                    {item.remarks}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                <h4 className="font-semibold text-green-900 mb-2">Bid Summary</h4>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <span className="font-medium text-green-800">Total Quantity:</span> {calculateTotalQuantity()}
+                    </div>
+                    <div>
+                        <span className="font-medium text-green-800">Total Amount:</span> Rs {calculateTotalBidAmount().toLocaleString()}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+
+    const renderStep2 = () => (
+        <div className="space-y-6">
+            <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-medium text-gray-900">Step 2: Technical & Financial Documents</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                    Upload your technical and financial bid documents
+                </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Technical Bid Document *
+                    </label>
+                    <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={(e) => handleFileChange('technicalBid', e.target.files[0])}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Upload your technical bid document (PDF only)</p>
+                    {bidData.technicalBid && (
+                        <p className="text-sm text-green-600 mt-1">✓ {bidData.technicalBid.name}</p>
+                    )}
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Financial Bid Document *
+                    </label>
+                    <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={(e) => handleFileChange('financialBid', e.target.files[0])}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Upload your financial bid document (PDF only)</p>
+                    {bidData.financialBid && (
+                        <p className="text-sm text-green-600 mt-1">✓ {bidData.financialBid.name}</p>
+                    )}
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Delivery Time (Days) *
+                </label>
+                <input
+                    type="number"
+                    value={bidData.deliveryTime}
+                    onChange={(e) => handleInputChange('deliveryTime', e.target.value)}
+                    min="1"
+                    className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Enter delivery time in days"
+                />
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Additional Comments
+                </label>
+                <textarea
+                    value={bidData.comments}
+                    onChange={(e) => handleInputChange('comments', e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Any additional information or terms..."
+                />
+            </div>
+        </div>
+    );
+
+    const renderStep3 = () => (
+        <div className="space-y-6">
+            <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-medium text-gray-900">Step 3: Letter of Guarantee</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                    Complete your company information and agree to terms
+                </p>
+            </div>
+
+            <div className="bg-blue-50 p-6 rounded-lg border border-blue-200">
+                <h4 className="font-semibold text-blue-900 mb-4">Letter of Guarantee</h4>
+                
+                <div className="bg-white p-4 rounded border text-sm text-gray-700 leading-relaxed mb-4">
+                    <p className="mb-3">
+                        <strong>To: Regional Innovation Center (RIC)</strong><br/>
+                        <strong>Subject: Letter of Guarantee for Tender Bid</strong>
+                    </p>
+                    
+                    <p className="mb-3">
+                        We, <span className="font-semibold underline">[COMPANY_NAME]</span>, 
+                        with registration number <span className="font-semibold underline">[REGISTRATION_NUMBER]</span>, 
+                        hereby guarantee that:
+                    </p>
+                    
+                    <ul className="list-disc list-inside space-y-2 mb-3">
+                        <li>All information provided in our bid is accurate and complete</li>
+                        <li>We have the capability to fulfill the requirements as specified</li>
+                        <li>We will deliver the goods/services within the agreed timeframe</li>
+                        <li>We will honor all terms and conditions of the tender</li>
+                        <li>Our bid prices are final and will remain valid for the bid evaluation period</li>
+                    </ul>
+                    
+                    <p className="mb-3">
+                        We understand that any false information or failure to comply with the terms 
+                        may result in disqualification and potential legal action.
+                    </p>
+                    
+                    <p>
+                        This guarantee is valid from the date of submission until the completion 
+                        of the tender process.
+                    </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Company Name *
+                        </label>
+                        <input
+                            type="text"
+                            value={bidData.companyName}
+                            onChange={(e) => handleInputChange('companyName', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            placeholder="Enter your company name"
+                        />
+                    </div>
+                    
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Registered Number *
+                        </label>
+                        <input
+                            type="text"
+                            value={bidData.registeredNumber}
+                            onChange={(e) => handleInputChange('registeredNumber', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            placeholder="Enter your registration number"
+                        />
+                    </div>
+                </div>
+
+                <div className="flex items-center">
+                    <input
+                        type="checkbox"
+                        id="agreeToTerms"
+                        checked={bidData.agreeToTerms}
+                        onChange={(e) => handleInputChange('agreeToTerms', e.target.checked)}
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="agreeToTerms" className="ml-2 block text-sm text-gray-700">
+                        I agree to all terms and conditions mentioned above and guarantee the accuracy of all information provided *
+                    </label>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="min-h-screen bg-gray-50 py-8">
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="bg-white shadow rounded-lg">
+                    <div className="px-6 py-4 border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                            <h1 className="text-2xl font-bold text-gray-900">Apply for Tender</h1>
+                            <button
+                                onClick={handleCancel}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        
+                        {/* Progress Steps */}
+                        <div className="mt-4">
+                            <div className="flex items-center">
+                                {[1, 2, 3].map((step) => (
+                                    <React.Fragment key={step}>
+                                        <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
+                                            currentStep >= step 
+                                                ? 'bg-indigo-600 text-white' 
+                                                : 'bg-gray-200 text-gray-600'
+                                        }`}>
+                                            {step}
+                                        </div>
+                                        {step < 3 && (
+                                            <div className={`flex-1 h-1 mx-2 ${
+                                                currentStep > step ? 'bg-indigo-600' : 'bg-gray-200'
+                                            }`} />
+                                        )}
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                            <div className="flex justify-between text-xs text-gray-600 mt-2">
+                                <span>Item Details</span>
+                                <span>Documents</span>
+                                <span>Guarantee</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="px-6 py-6">
+                        {error && (
+                            <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                                {error}
+                            </div>
+                        )}
+
+                        {currentStep === 1 && renderStep1()}
+                        {currentStep === 2 && renderStep2()}
+                        {currentStep === 3 && renderStep3()}
+                    </div>
+
+                    <div className="px-6 py-4 border-t border-gray-200 flex justify-between">
+                        <button
+                            onClick={handlePrevious}
+                            disabled={currentStep === 1}
+                            className={`px-4 py-2 text-sm font-medium rounded-md ${
+                                currentStep === 1
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                        >
+                            Previous
+                        </button>
+
+                        <div className="flex space-x-3">
+                            <button
+                                onClick={handleCancel}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                            
+                            {currentStep < 3 ? (
+                                <button
+                                    onClick={handleNext}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+                                >
+                                    Next
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleSubmit}
+                                    disabled={loading}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50"
+                                >
+                                    {loading ? 'Submitting...' : 'Submit Bid'}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default BidApplication;
