@@ -267,22 +267,18 @@ class PDFService {
                         </tr>
                     </thead>
                     <tbody>
-                        <tr>
-                            <td>
-                                <strong>${orderData.item_name}</strong><br>
-                                <small style="color: #6b7280;">${orderData.description}</small>
-                            </td>
-                            <td>${orderData.quantity}</td>
-                            <td>$${(orderData.awarded_bid_amount / orderData.quantity).toFixed(2)}</td>
-                            <td>$${orderData.awarded_bid_amount.toFixed(2)}</td>
+                        <tr>                            <td>
+                                <strong>${orderData.item_name || 'N/A'}</strong><br>
+                                <small style="color: #6b7280;">${orderData.description || 'No description'}</small>
+                            </td>                            <td>${orderData.quantity || 0}</td>
+                            <td>$${(orderData.awarded_bid_amount && orderData.quantity && orderData.awarded_bid_amount > 0 && orderData.quantity > 0) ? (orderData.awarded_bid_amount / orderData.quantity).toFixed(2) : '0.00'}</td>
+                            <td>$${(orderData.awarded_bid_amount || 0).toFixed(2)}</td>
                         </tr>
                     </tbody>
-                </table>
-
-                <div class="total-section">
+                </table>                <div class="total-section">
                     <div class="total-row">
                         <span class="total-label">Subtotal:</span>
-                        <span class="total-value">$${orderData.awarded_bid_amount.toFixed(2)}</span>
+                        <span class="total-value">$${(orderData.awarded_bid_amount || 0).toFixed(2)}</span>
                     </div>
                     <div class="total-row">
                         <span class="total-label">Tax (0%):</span>
@@ -290,7 +286,7 @@ class PDFService {
                     </div>
                     <div class="total-row final-total">
                         <span class="total-label">Total Amount:</span>
-                        <span class="total-value">$${orderData.awarded_bid_amount.toFixed(2)}</span>
+                        <span class="total-value">$${(orderData.awarded_bid_amount || 0).toFixed(2)}</span>
                     </div>
                 </div>
 

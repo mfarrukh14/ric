@@ -1027,19 +1027,18 @@ const processExpiredTenders = async (req, res) => {
                     console.log(`Tender ${tender.id} awarded to supplier ${winningBid.supplier_id} (${winningBid.company_name}) for $${winningBid.total_cost}`);
                     
                     // Generate PDF and send email notification
-                    try {
-                        // Prepare order data for PDF and email
+                    try {                        // Prepare order data for PDF and email with defensive programming
                         const orderData = {
                             tender_id: tender.id,
                             demand_id: tender.demand_id,
-                            item_name: tender.item_name,
-                            description: tender.description,
-                            quantity: winningBid.proposed_quantity,
-                            awarded_bid_amount: winningBid.total_cost,
-                            delivery_time_days: winningBid.delivery_days,
-                            urgency: tender.urgency,
-                            company_name: winningBid.company_name,
-                            company_email: winningBid.company_email,
+                            item_name: tender.item_name || 'N/A',
+                            description: tender.description || 'No description',
+                            quantity: winningBid.proposed_quantity || 0,
+                            awarded_bid_amount: winningBid.total_cost || 0,
+                            delivery_time_days: winningBid.delivery_days || 0,
+                            urgency: tender.urgency || 'normal',
+                            company_name: winningBid.company_name || 'N/A',
+                            company_email: winningBid.company_email || '',
                             bid_comments: winningBid.comments || ''
                         };
 
@@ -1225,25 +1224,194 @@ const setExpiryForTender = async (req, res) => {
     }
 };
 
-// Get supply orders (placeholder)
+// Get supply orders
 const getSupplyOrders = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is from purchase department or superadmin
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to view supply orders' });
+    }
+
     try {
-        // Placeholder for supply orders
-        res.json([]);
+        // Get all supply orders with related information
+        const supplyOrders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT 
+                    so.id as order_id,
+                    so.order_number,
+                    so.quantity as fulfilled_quantity,
+                    so.unit_price,
+                    so.total_amount,
+                    so.delivery_date,
+                    so.order_status,
+                    so.created_at as order_date,
+                    dt.id as tender_id,
+                    dt.demand_id,
+                    d.item_name,
+                    d.description,
+                    d.quantity as original_quantity,
+                    d.urgency,
+                    s.company_name as supplier_name,
+                    s.company_email as supplier_email,
+                    sb.delivery_days
+                FROM supply_orders so
+                JOIN demand_tenders dt ON so.tender_id = dt.id
+                JOIN demands d ON so.demand_id = d.id
+                JOIN suppliers s ON so.supplier_id = s.id
+                JOIN supplier_bids sb ON so.bid_id = sb.id
+                ORDER BY so.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Group orders by tender to match frontend structure
+        const groupedOrders = {};
+        
+        supplyOrders.forEach(order => {
+            if (!groupedOrders[order.tender_id]) {
+                groupedOrders[order.tender_id] = {
+                    tender_id: order.tender_id,
+                    demand_id: order.demand_id,
+                    item_name: order.item_name,
+                    description: order.description,
+                    total_quantity: order.original_quantity,
+                    total_fulfilled_quantity: 0,
+                    total_cost: 0,
+                    fulfillment_percentage: 0,
+                    orders: []
+                };
+            }
+
+            // Add individual order details
+            groupedOrders[order.tender_id].orders.push({
+                id: order.order_id,
+                order_number: order.order_number,
+                supplier_name: order.supplier_name,
+                supplier_email: order.supplier_email,
+                quantity: order.fulfilled_quantity,
+                unit_price: order.unit_price,
+                total_cost: order.total_amount,
+                expected_delivery_date: order.delivery_date,
+                status: order.order_status,
+                order_date: order.order_date,
+                delivery_days: order.delivery_days
+            });
+
+            // Update totals
+            groupedOrders[order.tender_id].total_fulfilled_quantity += order.fulfilled_quantity;
+            groupedOrders[order.tender_id].total_cost += order.total_amount;
+        });
+
+        // Calculate fulfillment percentage for each tender
+        Object.values(groupedOrders).forEach(tender => {
+            tender.fulfillment_percentage = Math.round(
+                (tender.total_fulfilled_quantity / tender.total_quantity) * 100
+            );
+        });
+
+        // Convert to array format expected by frontend
+        const result = Object.values(groupedOrders);
+
+        console.log(`Fetched ${result.length} supply order groups containing ${supplyOrders.length} individual orders`);
+        res.json(result);
     } catch (error) {
         console.error('Error fetching supply orders:', error);
         res.status(500).json({ message: 'Internal server error' });
     }
 };
 
-// Generate supply order PDF by ID (placeholder)
+// Generate supply order PDF by ID
 const generateSupplyOrderPDFById = async (req, res) => {
+    const db = getDatabase();
+    const { id } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department or superadmin
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to generate supply order PDFs' });
+    }
+
     try {
-        // Placeholder for PDF generation by ID
-        res.json({ message: 'Supply order PDF generated' });
+        // Get supply order details
+        const supplyOrder = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT 
+                    so.*,
+                    dt.id as tender_id,
+                    d.item_name,
+                    d.description,
+                    d.urgency,
+                    d.required_by,
+                    s.company_name,
+                    s.company_email,
+                    sb.delivery_days,
+                    sb.bid_comments
+                FROM supply_orders so
+                JOIN demand_tenders dt ON so.tender_id = dt.id
+                JOIN demands d ON so.demand_id = d.id
+                JOIN suppliers s ON so.supplier_id = s.id
+                JOIN supplier_bids sb ON so.bid_id = sb.id
+                WHERE so.id = ?`,
+                [id],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!supplyOrder) {
+            return res.status(404).json({ message: 'Supply order not found' });
+        }        // Prepare order data for PDF generation with defensive programming
+        const orderData = {
+            order_id: supplyOrder.id,
+            order_number: supplyOrder.order_number,
+            tender_id: supplyOrder.tender_id,
+            demand_id: supplyOrder.demand_id,
+            item_name: supplyOrder.item_name || 'N/A',
+            description: supplyOrder.description || 'No description',
+            quantity: supplyOrder.quantity || 0,
+            unit_price: supplyOrder.unit_price || 0,
+            awarded_bid_amount: supplyOrder.total_amount || 0, // Map total_amount to awarded_bid_amount for PDF service with default value
+            delivery_date: supplyOrder.delivery_date,
+            order_status: supplyOrder.order_status || 'pending',
+            urgency: supplyOrder.urgency || 'normal',
+            required_by: supplyOrder.required_by,
+            company_name: supplyOrder.company_name || 'N/A',
+            company_email: supplyOrder.company_email || '',
+            delivery_time_days: supplyOrder.delivery_days || 0,
+            bid_comments: supplyOrder.bid_comments || '',
+            order_date: supplyOrder.created_at
+        };console.log(`Generating PDF for supply order ${id}...`);
+        console.log('Order data for PDF:', JSON.stringify(orderData, null, 2));
+        
+        // Generate PDF using the PDF service
+        const pdfBuffer = await pdfService.generateSupplyOrderPDF(orderData);
+        
+        // Set response headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="supply-order-${supplyOrder.order_number}.pdf"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+        
+        // Send the PDF buffer
+        res.send(pdfBuffer);
+        
+        console.log(`PDF generated successfully for supply order ${id}`);
     } catch (error) {
         console.error('Error generating supply order PDF:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: 'Failed to generate PDF', error: error.message });
     }
 };
 

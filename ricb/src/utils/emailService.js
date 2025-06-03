@@ -578,10 +578,9 @@ class EmailService {
                         <div class="detail-row">
                             <span class="detail-label">Delivery Timeline:</span>
                             <span class="detail-value">${orderData.delivery_time_days} days</span>
-                        </div>
-                        <div class="detail-row">
+                        </div>                        <div class="detail-row">
                             <span class="detail-label">Award Amount:</span>
-                            <span class="detail-value amount">$${orderData.awarded_bid_amount.toLocaleString()}</span>
+                            <span class="detail-value amount">$${(orderData.awarded_bid_amount || 0).toLocaleString()}</span>
                         </div>
                     </div>
 
