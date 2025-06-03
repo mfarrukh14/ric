@@ -4,6 +4,7 @@ import CreateDemandModal from '../modals/CreateDemandModal';
 import DemandManagement from '../admin/DemandManagement';
 import SupplierEvaluation from '../admin/SupplierEvaluation';
 import VettingCommittee from '../committee/VettingCommittee';
+import TechnicalEvaluation from '../committee/TechnicalEvaluation';
 import PurchaseDepartment from '../department/PurchaseDepartment';
 import { apiUrl } from '../../config/api';
 
@@ -23,6 +24,8 @@ export default function UserDashboard() {
   
   // Check if user is Purchase Department member
   const isPurchaseDepartment = user?.departmentName && user.departmentName.toLowerCase() === 'purchase';
+  // Check if user is Technical Evaluation Committee member
+  const isTechnicalEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('technical evaluation');
   // Initialize user from localStorage once
   useEffect(() => {
     const stored = localStorage.getItem('user');
@@ -213,6 +216,36 @@ export default function UserDashboard() {
         </div>
       )}
 
+      {/* Tab Navigation for Technical Evaluation Committee Users */}
+      {isTechnicalEvaluationCommittee && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('technical-evaluation')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'technical-evaluation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Technical Evaluation
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}
+
       {/* Tab Navigation for Purchase Department Users */}
       {isPurchaseDepartment && (
         <div className="mb-6">
@@ -241,7 +274,7 @@ export default function UserDashboard() {
             </nav>
           </div>
         </div>
-      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment) || (activeTab === 'my-demands')) && (
+      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment && !isTechnicalEvaluationCommittee) || (activeTab === 'my-demands')) && (
         <div>
           <div className="mb-8">
             <p className="text-gray-600">Welcome back, {user?.name || 'User'}!</p>
@@ -287,7 +320,7 @@ export default function UserDashboard() {
             )}
           </div>
 
-          {(user?.eligibleForDemandCreation || isStoreDepartmentUser || isEvaluationCommittee || isVettingCommittee || isPurchaseDepartment) && (
+          {(user?.eligibleForDemandCreation) && (
             <div className="bg-white rounded-lg shadow">
               <div className="px-6 py-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900">My Demands</h2>
@@ -437,6 +470,10 @@ export default function UserDashboard() {
 
       {isVettingCommittee && activeTab === 'vetting-evaluation' && (
         <VettingCommittee />
+      )}
+
+      {isTechnicalEvaluationCommittee && activeTab === 'technical-evaluation' && (
+        <TechnicalEvaluation />
       )}
 
       {isPurchaseDepartment && activeTab === 'purchase-review' && (
