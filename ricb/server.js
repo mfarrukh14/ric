@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-require('./src/config/database'); // Initialize database
+const { connectDatabase } = require('./src/config/database'); // Import the connectDatabase function
 const authRoutes = require('./src/routes/auth');
 const adminRoutes = require('./src/routes/admin');
 const demandRoutes = require('./src/routes/demands');
@@ -44,6 +44,14 @@ setInterval(async () => {
 
 console.log('Automatic tender expiry processing started (checks every minute)');
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+// Connect to the database and then start the server
+connectDatabase()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Server is running on port ${PORT}`);
+        });
+    })
+    .catch(err => {
+        console.error('Failed to connect to the database:', err);
+        process.exit(1);
+    });

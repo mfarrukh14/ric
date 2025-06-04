@@ -6,6 +6,7 @@ import SupplierEvaluation from '../admin/SupplierEvaluation';
 import VettingCommittee from '../committee/VettingCommittee';
 import TechnicalEvaluation from '../committee/TechnicalEvaluation';
 import PurchaseDepartment from '../department/PurchaseDepartment';
+import GrievanceCommittee from '../admin/GrievanceCommittee';
 import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
@@ -30,6 +31,9 @@ export default function UserDashboard() {
   
   // Check if user is Purchase Department member
   const isPurchaseDepartment = user?.departmentName && user.departmentName.toLowerCase() === 'purchase';
+  
+  // Check if user is Grievance Committee member
+  const isGrievanceCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('grievance');
 
   // Initialize user from localStorage once
   useEffect(() => {
@@ -121,7 +125,8 @@ export default function UserDashboard() {
           {isStoreDepartmentUser ? 'Store Department Dashboard' : 
            isEvaluationCommittee ? 'Evaluation Committee Dashboard' :
            isVettingCommittee ? 'Vetting Committee Dashboard' :
-           isPurchaseDepartment ? 'Purchase Department Dashboard' : 'User Dashboard'}
+           isPurchaseDepartment ? 'Purchase Department Dashboard' :
+           isGrievanceCommittee ? 'Grievance Committee Dashboard' : 'User Dashboard'}
         </h1>
         {user?.eligibleForDemandCreation && (
           <button
@@ -279,7 +284,37 @@ export default function UserDashboard() {
             </nav>
           </div>
         </div>
-      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment && !isTechnicalEvaluationCommittee) || (activeTab === 'my-demands')) && (
+      )}
+
+      {/* Tab Navigation for Grievance Committee Users */}
+      {isGrievanceCommittee && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('grievance-evaluation')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'grievance-evaluation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Grievance Evaluation
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isVettingCommittee && !isPurchaseDepartment && !isTechnicalEvaluationCommittee && !isGrievanceCommittee) || (activeTab === 'my-demands')) && (
         <div>
           <div className="mb-8">
             <p className="text-gray-600">Welcome back, {user?.name || 'User'}!</p>
@@ -320,6 +355,13 @@ export default function UserDashboard() {
               <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
                 <p className="text-orange-800">
                   As a Purchase Department member, you can review and approve demands that have been vetted by the committee. Use the tabs above to switch between your personal demands and purchase reviews.
+                </p>
+              </div>
+            )}
+            {isGrievanceCommittee && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-800">
+                  As a Grievance Committee member, you can review and address grievances raised by users. Use the tabs above to switch between your personal demands and grievance evaluation.
                 </p>
               </div>
             )}
@@ -483,6 +525,10 @@ export default function UserDashboard() {
 
       {isPurchaseDepartment && activeTab === 'purchase-review' && (
         <PurchaseDepartment />
+      )}
+
+      {isGrievanceCommittee && activeTab === 'grievance-evaluation' && (
+        <GrievanceCommittee />
       )}
 
       <CreateDemandModal

@@ -139,32 +139,7 @@ const initializeDatabase = async () => {
                 else resolve();
             });
         });
-
-        // Add contact_person column if it doesn't exist (for existing databases)
-        await new Promise((resolve, reject) => {
-            db.run(`ALTER TABLE suppliers ADD COLUMN contact_person TEXT`, (err) => {
-                if (err && !err.message.includes('duplicate column name')) {
-                    console.error('Error adding contact_person column:', err);
-                    reject(err);
-                } else {
-                    if (!err) console.log('Added contact_person column to suppliers table');
-                    resolve();
-                }
-            });
-        });
-
-        // Add contact_number column if it doesn't exist (for existing databases)
-        await new Promise((resolve, reject) => {
-            db.run(`ALTER TABLE suppliers ADD COLUMN contact_number TEXT`, (err) => {
-                if (err && !err.message.includes('duplicate column name')) {
-                    console.error('Error adding contact_number column:', err);
-                    reject(err);
-                } else {
-                    if (!err) console.log('Added contact_number column to suppliers table');
-                    resolve();
-                }
-            });
-        });        // Create demand_items table (for multiple items per demand)
+      // Create demand_items table (for multiple items per demand)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS demand_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,67 +206,53 @@ const initializeDatabase = async () => {
                 awarded_supplier_id INTEGER,
                 awarded_bid_amount DECIMAL(10,2),
                 awarded_at DATETIME,
+                technical_evaluation_completed_at DATETIME,
+                technical_evaluation_completed_by INTEGER,
+                evaluation_remarks TEXT,
                 tender_document_path TEXT, -- path to uploaded tender document PDF
                 items_list_path TEXT, -- path to uploaded items list Excel/CSV
                 created_by INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
                 FOREIGN KEY (awarded_supplier_id) REFERENCES suppliers (id) ON DELETE SET NULL,
+                FOREIGN KEY (technical_evaluation_completed_by) REFERENCES users (id) ON DELETE SET NULL,
                 FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE CASCADE,
                 UNIQUE(demand_id)
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
             });
-        });        // Create supplier bids table (confidential bids from suppliers)
+        });
+
+        // Create grievance_applications table
         await new Promise((resolve, reject) => {
-            db.run(`CREATE TABLE IF NOT EXISTS supplier_bids (
+            db.run(`CREATE TABLE IF NOT EXISTS grievance_applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tender_id INTEGER NOT NULL,
-                supplier_id INTEGER NOT NULL,
-                bid_amount DECIMAL(10,2),
-                proposed_quantity INTEGER NOT NULL,
-                delivery_days INTEGER NOT NULL,
-                total_cost DECIMAL(10,2),
-                bid_comments TEXT,
-                technical_bid_document TEXT, -- path to technical bid PDF
-                financial_bid_document TEXT, -- path to financial bid PDF
-                bid_status TEXT DEFAULT 'submitted', -- submitted, won, lost
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
-                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
-                UNIQUE(tender_id, supplier_id)
-            )`, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });// Create supply orders table (awarded contracts)
-        await new Promise((resolve, reject) => {
-            db.run(`CREATE TABLE IF NOT EXISTS supply_orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_number TEXT UNIQUE NOT NULL,
-                demand_id INTEGER NOT NULL,
+                technical_evaluation_id INTEGER NOT NULL,
                 supplier_id INTEGER NOT NULL,
                 tender_id INTEGER NOT NULL,
-                bid_id INTEGER NOT NULL,
-                item_name TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                unit_price DECIMAL(10,2) NOT NULL,
-                total_amount DECIMAL(10,2) NOT NULL,
-                delivery_date DATE NOT NULL,
-                order_status TEXT DEFAULT 'pending', -- pending, delivered, cancelled
-                pdf_path TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
-                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
-                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
-                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE
+                item_id INTEGER NOT NULL,
+                grievance_reason TEXT NOT NULL,
+                supporting_documents TEXT,
+                requested_action TEXT NOT NULL,
+                additional_comments TEXT,
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'under_review', 'meeting_scheduled', 'resolved', 'rejected')),
+                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_by INTEGER,
+                reviewed_at DATETIME,
+                meeting_scheduled_date DATETIME,
+                meeting_details TEXT,
+                resolution TEXT,
+                FOREIGN KEY (technical_evaluation_id) REFERENCES technical_evaluations(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (reviewed_by) REFERENCES users(id),
+                UNIQUE(technical_evaluation_id, supplier_id)
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
             });
         });
-
         // Check if superadmin exists
         const row = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM users WHERE role = 'superadmin'", (err, row) => {
@@ -384,19 +345,85 @@ const initializeDatabase = async () => {
                 );
             });
         }
+        
+        // Check if Store Department exists
+        const storeDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'Store'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!storeDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['Store'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Store Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Grievance Committee exists
+        const grievanceCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Grievance Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!grievanceCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Grievance Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Grievance Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Technical Evaluation Committee exists
+        const technicalCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Technical Evaluation Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!technicalCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Technical Evaluation Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Technical Evaluation Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
     } catch (err) {
         console.error('Error initializing database:', err);
-        throw err;
     }
 };
 
-// Initialize the database connection
-connectDatabase().catch(err => {
-    console.error('Failed to initialize database:', err);
-    process.exit(1);
-});
-
 module.exports = {
+    connectDatabase,
     getDatabase,
     generateCredentials
 };

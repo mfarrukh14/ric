@@ -5,6 +5,7 @@ import Login from '../components/auth/Login';
 import AdminDashboard from '../components/admin/AdminDashboard';
 import UserDashboard from '../components/user/UserDashboard';
 import SupplierDashboard from '../components/supplier/SupplierDashboard';
+import BidApplication from '../components/supplier/BidApplication';
 import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
 import Header from '../components/layout/header/Header';
@@ -92,6 +93,14 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['supplier']}>
                 <SupplierDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/supplier/apply-bid/:tenderId"
+            element={
+              <ProtectedRoute allowedRoles={['supplier']}>
+                <BidApplication />
               </ProtectedRoute>
             }
           />

@@ -1,4 +1,6 @@
 const { getDatabase } = require('../config/database');
+const fs = require('fs');
+const path = require('path');
 
 // Get demands for purchase department
 const getPurchaseDemands = async (req, res) => {
@@ -173,6 +175,13 @@ const approveDemand = async (req, res) => {
     // Validate required files
     if (!req.files || !req.files.tenderDocument || !req.files.itemsList) {
         return res.status(400).json({ message: 'Both tender document (PDF) and items list (Excel/CSV) are required' });
+    }
+
+    // Check if tender-documents directory exists, create if it doesn't
+    const tenderDocsDir = path.join(__dirname, '../../tender-documents');
+    if (!fs.existsSync(tenderDocsDir)) {
+        fs.mkdirSync(tenderDocsDir, { recursive: true });
+        console.log('Created tender-documents directory:', tenderDocsDir);
     }
 
     const tenderDocPath = req.files.tenderDocument[0].path;
