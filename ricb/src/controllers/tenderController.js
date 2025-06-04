@@ -5,7 +5,61 @@ const EmailService = require('../utils/emailService');
 // Initialize email service
 const emailService = new EmailService();
 
-// Process expired tenders
+// Mark expired tenders for technical evaluation (new function)
+const markExpiredTendersForEvaluation = async () => {
+    const db = getDatabase();
+    
+    try {
+        // Get all expired tenders that are still active
+        const expiredTenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.urgency
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE dt.tender_status = 'active' 
+                 AND datetime(dt.bidding_end_time) <= datetime('now', 'localtime')
+                 ORDER BY dt.bidding_end_time ASC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        if (expiredTenders.length === 0) {
+            return 0; // No expired tenders to process
+        }
+
+        console.log(`Found ${expiredTenders.length} expired tenders to mark for evaluation`);
+
+        // Update status to 'expired' for technical evaluation
+        for (const tender of expiredTenders) {
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'UPDATE demand_tenders SET tender_status = ? WHERE id = ?',
+                        ['expired', tender.id],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+                console.log(`Tender ${tender.id} marked as expired for technical evaluation`);
+            } catch (error) {
+                console.error(`Error marking tender ${tender.id} as expired:`, error);
+            }
+        }
+
+        return expiredTenders.length;
+    } catch (error) {
+        console.error('Error marking expired tenders for evaluation:', error);
+        throw error;
+    }
+};
+
+// Process expired tenders (keep existing function but modify for auto-awarding after TEC evaluation)
 const processExpiredTenders = async (req, res) => {
     const db = getDatabase();
     let processedCount = 0;
@@ -33,7 +87,7 @@ const processExpiredTenders = async (req, res) => {
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  WHERE dt.tender_status = 'active' 
-                 AND dt.bidding_end_time <= datetime('now', 'localtime')
+                 AND datetime(dt.bidding_end_time) <= datetime('now', 'localtime')
                  ORDER BY dt.bidding_end_time ASC`,
                 [],
                 (err, rows) => {
@@ -334,5 +388,6 @@ module.exports = {
     processExpiredTenders,
     getAwardedTenders,
     generateSupplyOrderPDF,
-    generateSupplyOrderPDFById
+    generateSupplyOrderPDFById,
+    markExpiredTendersForEvaluation // Export new function
 };

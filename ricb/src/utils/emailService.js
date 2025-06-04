@@ -636,6 +636,351 @@ class EmailService {
             return false;
         }
     }
+
+    // Send grievance meeting notification email
+    async sendGrievanceMeetingNotification(supplierEmail, companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails) {
+        const htmlContent = this.generateGrievanceMeetingEmailHTML(companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails);
+        
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `📅 Grievance Meeting Scheduled - ${itemName}`,
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Grievance meeting notification sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending grievance meeting notification:', error);
+            throw error;
+        }
+    }
+
+    generateGrievanceMeetingEmailHTML(companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Grievance Meeting Scheduled</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background-color: #f4f7fa;
+                }
+                
+                .email-container {
+                    max-width: 600px;
+                    margin: 20px auto;
+                    background: #ffffff;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                    overflow: hidden;
+                }
+                
+                .header {
+                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    color: white;
+                    padding: 40px 30px;
+                    text-align: center;
+                    position: relative;
+                }
+                
+                .header h1 {
+                    font-size: 28px;
+                    font-weight: 700;
+                    margin-bottom: 10px;
+                    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                
+                .header p {
+                    font-size: 16px;
+                    opacity: 0.9;
+                    margin-bottom: 0;
+                }
+                
+                .meeting-badge {
+                    display: inline-block;
+                    background: rgba(255, 255, 255, 0.2);
+                    padding: 8px 20px;
+                    border-radius: 50px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 15px;
+                    backdrop-filter: blur(10px);
+                }
+                
+                .content {
+                    padding: 40px 30px;
+                }
+                
+                .company-name {
+                    color: #f59e0b;
+                    font-weight: 700;
+                    font-size: 20px;
+                }
+                
+                .message {
+                    font-size: 16px;
+                    margin: 25px 0;
+                    line-height: 1.8;
+                }
+                
+                .meeting-details {
+                    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #f59e0b;
+                }
+                
+                .meeting-details h3 {
+                    color: #92400e;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .detail-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 10px 0;
+                    border-bottom: 1px solid #fbbf24;
+                }
+                
+                .detail-row:last-child {
+                    border-bottom: none;
+                }
+                
+                .detail-label {
+                    font-weight: 600;
+                    color: #92400e;
+                    min-width: 120px;
+                }
+                
+                .detail-value {
+                    color: #451a03;
+                    font-weight: 500;
+                    text-align: right;
+                    flex: 1;
+                }
+                
+                .item-info {
+                    background: #f3f4f6;
+                    border-left: 4px solid #6b7280;
+                    padding: 20px;
+                    margin: 25px 0;
+                    border-radius: 0 8px 8px 0;
+                }
+                
+                .item-info h4 {
+                    color: #374151;
+                    margin-bottom: 10px;
+                }
+                
+                .instructions {
+                    background: #fef2f2;
+                    border-left: 4px solid #ef4444;
+                    padding: 25px;
+                    margin: 30px 0;
+                    border-radius: 0 8px 8px 0;
+                }
+                
+                .instructions h3 {
+                    color: #dc2626;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .instructions ul {
+                    list-style: none;
+                    padding-left: 0;
+                }
+                
+                .instructions li {
+                    margin: 10px 0;
+                    padding-left: 25px;
+                    position: relative;
+                    color: #7f1d1d;
+                }
+                
+                .instructions li::before {
+                    content: '⚠️';
+                    position: absolute;
+                    left: 0;
+                    font-size: 16px;
+                }
+                
+                .contact-info {
+                    margin: 20px 0;
+                    padding: 20px;
+                    background: rgba(59, 130, 246, 0.05);
+                    border-radius: 8px;
+                    border: 1px solid rgba(59, 130, 246, 0.1);
+                }
+                
+                .contact-info h4 {
+                    color: #3b82f6;
+                    margin-bottom: 10px;
+                }
+                
+                .footer {
+                    background: #1f2937;
+                    color: #d1d5db;
+                    padding: 30px;
+                    text-align: center;
+                }
+                
+                .footer p {
+                    margin: 5px 0;
+                    font-size: 14px;
+                }
+                
+                .emoji {
+                    font-size: 20px;
+                    margin-right: 8px;
+                }
+                
+                @media (max-width: 600px) {
+                    .email-container {
+                        margin: 10px;
+                        border-radius: 8px;
+                    }
+                    
+                    .header {
+                        padding: 30px 20px;
+                    }
+                    
+                    .content {
+                        padding: 30px 20px;
+                    }
+                    
+                    .detail-row {
+                        flex-direction: column;
+                        align-items: flex-start;
+                    }
+                    
+                    .detail-value {
+                        text-align: left;
+                        margin-top: 5px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="email-container">
+                <div class="header">
+                    <div class="meeting-badge">
+                        <span class="emoji">📅</span> MEETING SCHEDULED
+                    </div>
+                    <h1>Grievance Meeting Scheduled</h1>
+                    <p>Your grievance application has been reviewed</p>
+                </div>
+                
+                <div class="content">
+                    <p>Dear <span class="company-name">${companyName}</span> Team,</p>
+                    
+                    <div class="message">
+                        Your grievance application has been reviewed by the <strong>Grievance Committee</strong>. We have scheduled a meeting to discuss your concerns regarding the technical evaluation decision.
+                    </div>
+                    
+                    <div class="item-info">
+                        <h4><span class="emoji">📦</span> Regarding Item:</h4>
+                        <p><strong>${itemName}</strong></p>
+                    </div>
+                    
+                    <div class="meeting-details">
+                        <h3><span class="emoji">📋</span> Meeting Details</h3>
+                        <div class="detail-row">
+                            <span class="detail-label">Date:</span>
+                            <span class="detail-value">${meetingDate}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Time:</span>
+                            <span class="detail-value">${meetingTime}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Location:</span>
+                            <span class="detail-value">${meetingLocation}</span>
+                        </div>
+                        ${meetingDetails ? `
+                        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #fbbf24;">
+                            <p style="color: #92400e; font-weight: 600; margin-bottom: 8px;">Additional Details:</p>
+                            <p style="color: #451a03;">${meetingDetails}</p>
+                        </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="instructions">
+                        <h3><span class="emoji">⚠️</span> Important Instructions</h3>
+                        <ul>
+                            <li>Please confirm your attendance by responding to this email</li>
+                            <li>Bring all relevant documentation and evidence to support your case</li>
+                            <li>Arrive 15 minutes before the scheduled time</li>
+                            <li>If you cannot attend, contact us immediately to reschedule</li>
+                            <li>Be prepared to present your grievance clearly and concisely</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="contact-info">
+                        <h4><span class="emoji">📞</span> Contact Information</h4>
+                        <p>If you have any questions or need to reschedule, please contact:</p>
+                        <p><strong>Grievance Committee Secretary</strong></p>
+                        <p>Email: grievance@rics.edu.pk</p>
+                        <p>Phone: +92-XXX-XXXXXXX</p>
+                    </div>
+                    
+                    <p style="margin-top: 30px;">
+                        We are committed to ensuring a fair and transparent grievance process. Your concerns will be thoroughly reviewed during the meeting.
+                    </p>
+                    
+                    <p style="margin-top: 20px;">
+                        <strong>Best regards,</strong><br>
+                        <span style="color: #f59e0b; font-weight: 600;">The Grievance Committee</span><br>
+                        ${process.env.COMPANY_NAME || 'Research & Innovation Center'}
+                    </p>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>Grievance Committee</strong></p>
+                    <p>${process.env.COMPANY_NAME || 'Research & Innovation Center'}</p>
+                    <p>Email: grievance@rics.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+                    <p style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
+                        This is an automated message regarding your grievance application.
+                    </p>
+                    <p style="font-size: 12px; opacity: 0.8;">
+                        © ${new Date().getFullYear()} ${process.env.COMPANY_NAME || 'Company Name'}. All rights reserved.
+                    </p>
+                    <p style="font-size: 11px; margin-top: 10px; opacity: 0.6;">
+                        Sent on ${currentDate}
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+    }
 }
 
 module.exports = EmailService;

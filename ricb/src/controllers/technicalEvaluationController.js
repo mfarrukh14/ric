@@ -14,7 +14,7 @@ const getExpiredTenders = async (req, res) => {
     }
 
     try {
-        // Get expired tenders that haven't been processed yet
+        // Get expired tenders that are ready for technical evaluation
         const expiredTenders = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
@@ -23,8 +23,7 @@ const getExpiredTenders = async (req, res) => {
                  JOIN demands d ON dt.demand_id = d.id
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
-                 WHERE dt.tender_status = 'active' 
-                 AND dt.bidding_end_time <= datetime('now', 'localtime')
+                 WHERE dt.tender_status = 'expired'
                  ORDER BY dt.bidding_end_time ASC`,
                 [],
                 (err, rows) => {
@@ -222,6 +221,225 @@ const downloadTechnicalBid = async (req, res) => {
     }
 };
 
+// Submit item-wise technical evaluation
+const submitItemWiseEvaluation = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const { evaluations } = req.body;
+    const user = req.user;
+
+    // Check if user is from technical evaluation committee
+    const canEvaluate = user.role === 'superadmin' || 
+                       (user.committee_name && user.committee_name.toLowerCase().includes('technical evaluation'));
+
+    if (!canEvaluate) {
+        return res.status(403).json({ message: 'Only technical evaluation committee members can evaluate tenders' });
+    }
+
+    if (!evaluations || Object.keys(evaluations).length === 0) {
+        return res.status(400).json({ message: 'Evaluation data is required' });
+    }
+
+    try {
+        // Start transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Create technical_evaluations table if it doesn't exist
+            await new Promise((resolve, reject) => {
+                db.run(`
+                    CREATE TABLE IF NOT EXISTS technical_evaluations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        item_id INTEGER NOT NULL,
+                        bid_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('approved', 'rejected')),
+                        rejection_reason TEXT,
+                        evaluated_by INTEGER NOT NULL,
+                        evaluated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (evaluated_by) REFERENCES users(id),
+                        UNIQUE(tender_id, item_id, bid_id)
+                    )
+                `, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            // Create temporary approved pools table
+            await new Promise((resolve, reject) => {
+                db.run(`
+                    CREATE TABLE IF NOT EXISTS temporary_approved_pools (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        item_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        bid_id INTEGER NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                        UNIQUE(tender_id, item_id, supplier_id)
+                    )
+                `, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            // Delete existing evaluations and temporary pools for this tender
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'DELETE FROM technical_evaluations WHERE tender_id = ?',
+                    [tenderId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'DELETE FROM temporary_approved_pools WHERE tender_id = ?',
+                    [tenderId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Insert new evaluations and temporary pools
+            for (const [itemId, itemEval] of Object.entries(evaluations)) {
+                // Insert approved companies into temporary pools
+                for (const approved of itemEval.approvedCompanies) {
+                    // Get supplier_id from bid
+                    const bid = await new Promise((resolve, reject) => {
+                        db.get(
+                            'SELECT supplier_id FROM supplier_bids WHERE id = ?',
+                            [approved.bidId],
+                            (err, row) => {
+                                if (err) reject(err);
+                                else resolve(row);
+                            }
+                        );
+                    });
+
+                    if (bid) {
+                        // Insert into technical evaluations
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                `INSERT INTO technical_evaluations 
+                                 (tender_id, item_id, bid_id, supplier_id, status, evaluated_by)
+                                 VALUES (?, ?, ?, ?, 'approved', ?)`,
+                                [tenderId, itemId, approved.bidId, bid.supplier_id, user.id],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+
+                        // Insert into temporary approved pools
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                `INSERT INTO temporary_approved_pools 
+                                 (tender_id, item_id, supplier_id, bid_id)
+                                 VALUES (?, ?, ?, ?)`,
+                                [tenderId, itemId, bid.supplier_id, approved.bidId],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                    }
+                }
+
+                // Insert rejected companies
+                for (const rejected of itemEval.rejectedCompanies) {
+                    // Get supplier_id from bid
+                    const bid = await new Promise((resolve, reject) => {
+                        db.get(
+                            'SELECT supplier_id FROM supplier_bids WHERE id = ?',
+                            [rejected.bidId],
+                            (err, row) => {
+                                if (err) reject(err);
+                                else resolve(row);
+                            }
+                        );
+                    });
+
+                    if (bid) {
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                `INSERT INTO technical_evaluations 
+                                 (tender_id, item_id, bid_id, supplier_id, status, rejection_reason, evaluated_by)
+                                 VALUES (?, ?, ?, ?, 'rejected', ?, ?)`,
+                                [tenderId, itemId, rejected.bidId, bid.supplier_id, rejected.reason, user.id],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                    }
+                }
+            }
+
+            // Update tender status to indicate technical evaluation is complete
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE demand_tenders SET 
+                     tender_status = 'technically_evaluated',
+                     technical_evaluation_completed_at = CURRENT_TIMESTAMP,
+                     technical_evaluation_completed_by = ?
+                     WHERE id = ?`,
+                    [user.id, tenderId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            res.json({ 
+                message: 'Technical evaluation completed successfully. Approved companies have been added to temporary pools for each item. Rejected companies can now apply for grievance.',
+                tenderId: tenderId
+            });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('Error submitting technical evaluation:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
 // Award tender to selected supplier
 const awardTender = async (req, res) => {
     const db = getDatabase();
@@ -349,5 +567,6 @@ module.exports = {
     getExpiredTenders,
     getTenderDetails,
     downloadTechnicalBid,
+    submitItemWiseEvaluation,
     awardTender
 };

@@ -12,20 +12,25 @@ export default function UserDashboard() {
   const navigate = useNavigate();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [demands, setDemands] = useState([]);
-  const [loading, setLoading] = useState(false);  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('my-demands');  // Check if user is Store department user
+  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('my-demands');
+
+  // Check if user is Store department user
   const isStoreDepartmentUser = user?.departmentName && user.departmentName.toLowerCase() === 'store';
   
   // Check if user is Evaluation Committee member
   const isEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'evaluation committee';
+  
+  // Check if user is Technical Evaluation Committee member
+  const isTechnicalEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('technical evaluation');
   
   // Check if user is Vetting Committee member
   const isVettingCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'vetting committee';
   
   // Check if user is Purchase Department member
   const isPurchaseDepartment = user?.departmentName && user.departmentName.toLowerCase() === 'purchase';
-  // Check if user is Technical Evaluation Committee member
-  const isTechnicalEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('technical evaluation');
+
   // Initialize user from localStorage once
   useEffect(() => {
     const stored = localStorage.getItem('user');

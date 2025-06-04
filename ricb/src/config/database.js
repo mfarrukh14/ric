@@ -119,6 +119,8 @@ const initializeDatabase = async () => {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 company_name TEXT NOT NULL,
                 company_email TEXT UNIQUE NOT NULL,
+                contact_person TEXT,
+                contact_number TEXT,
                 password TEXT NOT NULL,
                 company_statement TEXT NOT NULL,
                 company_mission TEXT NOT NULL,
@@ -135,6 +137,32 @@ const initializeDatabase = async () => {
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
+            });
+        });
+
+        // Add contact_person column if it doesn't exist (for existing databases)
+        await new Promise((resolve, reject) => {
+            db.run(`ALTER TABLE suppliers ADD COLUMN contact_person TEXT`, (err) => {
+                if (err && !err.message.includes('duplicate column name')) {
+                    console.error('Error adding contact_person column:', err);
+                    reject(err);
+                } else {
+                    if (!err) console.log('Added contact_person column to suppliers table');
+                    resolve();
+                }
+            });
+        });
+
+        // Add contact_number column if it doesn't exist (for existing databases)
+        await new Promise((resolve, reject) => {
+            db.run(`ALTER TABLE suppliers ADD COLUMN contact_number TEXT`, (err) => {
+                if (err && !err.message.includes('duplicate column name')) {
+                    console.error('Error adding contact_number column:', err);
+                    reject(err);
+                } else {
+                    if (!err) console.log('Added contact_number column to suppliers table');
+                    resolve();
+                }
             });
         });        // Create demand_items table (for multiple items per demand)
         await new Promise((resolve, reject) => {
