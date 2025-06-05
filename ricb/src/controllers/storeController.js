@@ -233,7 +233,7 @@ const updateItemStatuses = async (req, res) => {
                     });
                 });
 
-                // If partially fulfilled, create new item for remaining quantity
+                // If partially fulfilled, handle the split properly
                 if (update.status === 'partial' && update.availableQuantity < update.requestedQuantity) {
                     const remainingQty = update.requestedQuantity - update.availableQuantity;
                     
@@ -245,11 +245,27 @@ const updateItemStatuses = async (req, res) => {
                         });
                     });
 
-                    // Create new item for remaining quantity
+                    // Mark the original item as fulfilled (store_fulfilled = true) with available quantity
+                    await new Promise((resolve, reject) => {
+                        db.run(`UPDATE demand_items 
+                                SET quantity = ?, 
+                                    store_fulfilled = 1,
+                                    store_status = 'available'
+                                WHERE id = ?`, [
+                            update.availableQuantity,
+                            update.itemId
+                        ], (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
+
+                    // Create new item for remaining quantity that needs tender
                     const insertItemQuery = `
                         INSERT INTO demand_items (
-                            demand_id, item_name, quantity, estimated_cost, unit
-                        ) VALUES (?, ?, ?, ?, ?)
+                            demand_id, item_name, quantity, estimated_cost, unit, 
+                            store_status, store_fulfilled
+                        ) VALUES (?, ?, ?, ?, ?, 'not_available', 0)
                     `;
                     
                     const remainingCost = (parseFloat(originalItem.estimated_cost) / originalItem.quantity) * remainingQty;
@@ -266,11 +282,10 @@ const updateItemStatuses = async (req, res) => {
                             else resolve();
                         });
                     });
-
-                    // Update original item quantity to available quantity
+                } else if (update.status === 'available') {
+                    // Mark as fulfilled by store
                     await new Promise((resolve, reject) => {
-                        db.run('UPDATE demand_items SET quantity = ? WHERE id = ?', [
-                            update.availableQuantity,
+                        db.run('UPDATE demand_items SET store_fulfilled = 1 WHERE id = ?', [
                             update.itemId
                         ], (err) => {
                             if (err) reject(err);

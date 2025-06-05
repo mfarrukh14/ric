@@ -507,6 +507,8 @@ exports.getActiveTenders = async (req, res) => {
                     `SELECT id, item_name, quantity, estimated_cost, unit, remarks
                      FROM demand_items 
                      WHERE demand_id = ? 
+                     AND (store_fulfilled IS NULL OR store_fulfilled = 0)
+                     AND (store_status != 'available' OR store_status IS NULL)
                      ORDER BY id`,
                     [tender.demand_id],
                     (err, rows) => {
@@ -549,7 +551,7 @@ exports.getActiveTenders = async (req, res) => {
 exports.submitBid = async (req, res) => {
     const db = getDatabase();
     const { tenderId } = req.params;
-    const { proposedQuantity, totalCost, deliveryDays, comments } = req.body;
+    const { proposedQuantity, totalCost, deliveryDays, comments, items } = req.body;
     const supplierId = req.user.id;
 
     try {
@@ -565,7 +567,33 @@ exports.submitBid = async (req, res) => {
 
         if (parseFloat(totalCost) <= 0 || parseInt(proposedQuantity) <= 0 || parseInt(deliveryDays) <= 0) {
             return res.status(400).json({ message: 'All numeric values must be greater than 0' });
-        }        // Validate tender exists and is active (using Pakistan timezone)
+        }
+
+        // Parse items data if provided
+        let itemsData = [];
+        if (items) {
+            try {
+                itemsData = typeof items === 'string' ? JSON.parse(items) : items;
+            } catch (error) {
+                return res.status(400).json({ message: 'Invalid items data format' });
+            }
+        }
+
+        // Validate that at least one item has a valid bid
+        if (itemsData.length === 0) {
+            return res.status(400).json({ message: 'At least one item with quantity and cost is required' });
+        }
+
+        // Validate each item
+        for (const item of itemsData) {
+            if (!item.can_provide || !item.total_cost || item.can_provide <= 0 || item.total_cost <= 0) {
+                return res.status(400).json({ 
+                    message: `Invalid bid data for item "${item.item_name}". Quantity and cost must be greater than 0.` 
+                });
+            }
+        }
+
+        // Validate tender exists and is active (using Pakistan timezone)
         const tender = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT * FROM demand_tenders 
@@ -598,24 +626,79 @@ exports.submitBid = async (req, res) => {
             return res.status(400).json({ message: 'You have already submitted a bid for this tender. Bids cannot be modified once submitted.' });
         }
 
-        // Get uploaded file paths
-        const technicalBidPath = req.files.technicalBid[0].path;
-        const financialBidPath = req.files.financialBid[0].path;
-
-        // Insert new bid with document paths
+        // Start transaction
         await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO supplier_bids (tender_id, supplier_id, total_cost, proposed_quantity, delivery_days, bid_comments, technical_bid_document, financial_bid_document)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [tenderId, supplierId, totalCost, proposedQuantity, deliveryDays, comments, technicalBidPath, financialBidPath],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve({ id: this.lastID });
-                }
-            );
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
         });
 
-        res.status(201).json({ message: 'Bid submitted successfully with required documents' });
+        try {
+            // Get uploaded file paths
+            const technicalBidPath = req.files.technicalBid[0].path;
+            const financialBidPath = req.files.financialBid[0].path;
+
+            // Insert main bid record
+            const bidResult = await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO supplier_bids (tender_id, supplier_id, total_cost, proposed_quantity, delivery_days, bid_comments, technical_bid_document, financial_bid_document)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [tenderId, supplierId, totalCost, proposedQuantity, deliveryDays, comments, technicalBidPath, financialBidPath],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve({ id: this.lastID });
+                    }
+                );
+            });
+
+            const bidId = bidResult.id;
+
+            // Insert item-specific bid data
+            for (const item of itemsData) {
+                const unitPrice = parseFloat(item.total_cost) / parseInt(item.can_provide);
+                
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO supplier_bid_items 
+                         (bid_id, item_id, item_name, required_quantity, proposed_quantity, unit_price, total_cost, unit)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            bidId,
+                            item.item_id,
+                            item.item_name,
+                            item.required_quantity,
+                            item.can_provide,
+                            unitPrice.toFixed(2),
+                            item.total_cost,
+                            item.unit || 'pieces'
+                        ],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            res.status(201).json({ message: 'Bid submitted successfully with item details' });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
+        }
+
     } catch (error) {
         console.error('Error submitting bid:', error);
         res.status(500).json({ message: 'Internal server error' });

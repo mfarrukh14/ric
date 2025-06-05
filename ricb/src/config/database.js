@@ -139,6 +139,76 @@ const initializeDatabase = async () => {
                 else resolve();
             });
         });
+
+        // Create supplier_bids table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                total_cost DECIMAL(10,2) NOT NULL,
+                proposed_quantity INTEGER NOT NULL,
+                delivery_days INTEGER NOT NULL,
+                bid_comments TEXT,
+                technical_bid_document TEXT, -- file path
+                financial_bid_document TEXT, -- file path
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_bid_items table (for item-specific bid data)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_bid_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bid_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                required_quantity INTEGER NOT NULL,
+                proposed_quantity INTEGER NOT NULL,
+                unit_price DECIMAL(10,2) NOT NULL,
+                total_cost DECIMAL(10,2) NOT NULL,
+                unit TEXT DEFAULT 'pieces',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
+                UNIQUE(bid_id, item_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supply_orders table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supply_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT UNIQUE NOT NULL,
+                demand_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                tender_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                unit_price DECIMAL(10,2) NOT NULL,
+                total_amount DECIMAL(10,2) NOT NULL,
+                delivery_date DATE NOT NULL,
+                order_status TEXT DEFAULT 'pending', -- pending, confirmed, delivered, cancelled
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
       // Create demand_items table (for multiple items per demand)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS demand_items (
@@ -151,6 +221,7 @@ const initializeDatabase = async () => {
                 unit TEXT DEFAULT 'pieces',
                 store_available_quantity INTEGER DEFAULT 0,
                 store_status TEXT DEFAULT 'pending', -- pending, available, partial, not_available
+                store_fulfilled INTEGER DEFAULT 0, -- 0 = not fulfilled by store, 1 = fulfilled by store
                 store_response_at DATETIME,
                 store_response_by INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -253,6 +324,9 @@ const initializeDatabase = async () => {
                 else resolve();
             });
         });
+        // Run database migrations
+        await runMigrations();
+
         // Check if superadmin exists
         const row = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM users WHERE role = 'superadmin'", (err, row) => {
@@ -419,6 +493,87 @@ const initializeDatabase = async () => {
         }
     } catch (err) {
         console.error('Error initializing database:', err);
+    }
+};
+
+// Database migrations
+const runMigrations = async () => {
+    try {
+        console.log('Running database migrations...');
+        
+        // Migration 1: Add store_fulfilled column to demand_items table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demand_items)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                // Check if store_fulfilled column exists
+                const hasStoreFulfilledColumn = columns.some(col => col.name === 'store_fulfilled');
+                
+                if (!hasStoreFulfilledColumn) {
+                    console.log('Adding store_fulfilled column to demand_items table...');
+                    db.run("ALTER TABLE demand_items ADD COLUMN store_fulfilled INTEGER DEFAULT 0", (err) => {
+                        if (err) {
+                            console.error('Error adding store_fulfilled column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added store_fulfilled column');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('store_fulfilled column already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 2: Create supplier_bid_items table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_bid_items'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating supplier_bid_items table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_bid_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bid_id INTEGER NOT NULL,
+                        item_id INTEGER NOT NULL,
+                        item_name TEXT NOT NULL,
+                        required_quantity INTEGER NOT NULL,
+                        proposed_quantity INTEGER NOT NULL,
+                        unit_price DECIMAL(10,2) NOT NULL,
+                        total_cost DECIMAL(10,2) NOT NULL,
+                        unit TEXT DEFAULT 'pieces',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE,
+                        FOREIGN KEY (item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
+                        UNIQUE(bid_id, item_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating supplier_bid_items table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created supplier_bid_items table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('supplier_bid_items table already exists');
+                    resolve();
+                }
+            });
+        });
+        
+        console.log('Database migrations completed successfully');
+    } catch (error) {
+        console.error('Error running database migrations:', error);
+        throw error;
     }
 };
 

@@ -38,7 +38,11 @@ const getExpiredTenders = async (req, res) => {
             // Get demand items
             const items = await new Promise((resolve, reject) => {
                 db.all(
-                    `SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id`,
+                    `SELECT * FROM demand_items 
+                     WHERE demand_id = ? 
+                     AND (store_fulfilled IS NULL OR store_fulfilled = 0)
+                     AND (store_status != 'available' OR store_status IS NULL)
+                     ORDER BY id`,
                     [tender.demand_id],
                     (err, rows) => {
                         if (err) reject(err);
@@ -126,7 +130,11 @@ const getTenderDetails = async (req, res) => {
         // Get demand items
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id`,
+                `SELECT * FROM demand_items 
+                 WHERE demand_id = ? 
+                 AND (store_fulfilled IS NULL OR store_fulfilled = 0)
+                 AND (store_status != 'available' OR store_status IS NULL)
+                 ORDER BY id`,
                 [tender.demand_id],
                 (err, rows) => {
                     if (err) reject(err);
@@ -148,7 +156,7 @@ const getTenderDetails = async (req, res) => {
             tender.items = items;
         }
 
-        // Get all bids with supplier details
+        // Get all bids with supplier details and their item-specific bids
         const bids = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT sb.*, s.company_name, s.company_email, s.contact_person, s.contact_number
@@ -156,13 +164,28 @@ const getTenderDetails = async (req, res) => {
                  JOIN suppliers s ON sb.supplier_id = s.id
                  WHERE sb.tender_id = ? AND s.status = 'approved'
                  ORDER BY sb.total_cost ASC, sb.created_at ASC`,
-                [tenderId],
+                [tender.id],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
                 }
             );
         });
+
+        // For each bid, get the item-specific bid details
+        for (const bid of bids) {
+            const bidItems = await new Promise((resolve, reject) => {
+                db.all(
+                    `SELECT * FROM supplier_bid_items WHERE bid_id = ? ORDER BY item_id`,
+                    [bid.id],
+                    (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows);
+                    }
+                );
+            });
+            bid.bidItems = bidItems;
+        }
 
         tender.bids = bids;
 
