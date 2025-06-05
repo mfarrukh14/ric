@@ -8,6 +8,7 @@ import SupplierDashboard from '../components/supplier/SupplierDashboard';
 import BidApplication from '../components/supplier/BidApplication';
 import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
+import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
 import Header from '../components/layout/header/Header';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -85,6 +86,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ItemWiseEvaluation />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/committee/grievance"
+            element={
+              <ProtectedRoute>
+                <GrievanceCommitteeNew />
               </ProtectedRoute>
             }
           />

@@ -981,6 +981,549 @@ class EmailService {
         </html>
         `;
     }
+
+    // Send grievance approval email
+    async sendGrievanceApprovalEmail(supplierEmail, companyName, itemName, contactPerson) {
+        const htmlContent = this.generateGrievanceApprovalEmailHTML(companyName, itemName, contactPerson);
+        
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `✅ Grievance Approved - ${itemName}`,
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Grievance approval notification sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending grievance approval notification:', error);
+            throw error;
+        }
+    }
+
+    generateGrievanceApprovalEmailHTML(companyName, itemName, contactPerson) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Grievance Approved</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background-color: #f4f7fa;
+                }
+                
+                .email-container {
+                    max-width: 600px;
+                    margin: 20px auto;
+                    background: #ffffff;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                    overflow: hidden;
+                }
+                
+                .header {
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    color: white;
+                    padding: 40px 30px;
+                    text-align: center;
+                    position: relative;
+                }
+                
+                .header h1 {
+                    font-size: 28px;
+                    font-weight: 700;
+                    margin-bottom: 10px;
+                    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                
+                .header p {
+                    font-size: 16px;
+                    opacity: 0.9;
+                    margin-bottom: 0;
+                }
+                
+                .approval-badge {
+                    display: inline-block;
+                    background: rgba(255, 255, 255, 0.2);
+                    padding: 8px 20px;
+                    border-radius: 50px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 15px;
+                    backdrop-filter: blur(10px);
+                }
+                
+                .content {
+                    padding: 40px 30px;
+                }
+                
+                .company-name {
+                    color: #10b981;
+                    font-weight: 700;
+                    font-size: 20px;
+                }
+                
+                .message {
+                    font-size: 16px;
+                    margin: 25px 0;
+                    line-height: 1.8;
+                }
+                
+                .item-info {
+                    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #10b981;
+                }
+                
+                .item-info h4 {
+                    color: #047857;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .next-steps {
+                    background: #f0f9ff;
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #0ea5e9;
+                }
+                
+                .next-steps h4 {
+                    color: #0c4a6e;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .next-steps ul {
+                    margin-left: 20px;
+                    color: #0c4a6e;
+                }
+                
+                .next-steps li {
+                    margin-bottom: 8px;
+                }
+                
+                .contact-info {
+                    background: #fef3c7;
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #f59e0b;
+                }
+                
+                .contact-info h4 {
+                    color: #92400e;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .footer {
+                    background: #f8fafc;
+                    padding: 30px;
+                    text-align: center;
+                    border-top: 1px solid #e2e8f0;
+                    color: #64748b;
+                    font-size: 14px;
+                }
+                
+                .emoji {
+                    font-size: 18px;
+                    margin-right: 8px;
+                }
+                
+                @media (max-width: 600px) {
+                    .email-container {
+                        margin: 10px;
+                        border-radius: 8px;
+                    }
+                    
+                    .header {
+                        padding: 30px 20px;
+                    }
+                    
+                    .content {
+                        padding: 30px 20px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="email-container">
+                <div class="header">
+                    <div class="approval-badge">
+                        <span class="emoji">✅</span> GRIEVANCE APPROVED
+                    </div>
+                    <h1>Congratulations!</h1>
+                    <p>Your grievance has been approved by the committee</p>
+                </div>
+                
+                <div class="content">
+                    <p>Dear <span class="company-name">${companyName}</span> Team,</p>
+                    
+                    <div class="message">
+                        We are pleased to inform you that your grievance application has been <strong>approved</strong> by the Grievance Committee after thorough review and consideration.
+                    </div>
+                    
+                    <div class="item-info">
+                        <h4><span class="emoji">📦</span> Approved Item</h4>
+                        <p><strong>${itemName}</strong></p>
+                        <p style="margin-top: 10px; font-size: 14px; color: #047857;">Your company has been added to the temporary approval pool for this item.</p>
+                    </div>
+                    
+                    <div class="next-steps">
+                        <h4><span class="emoji">📋</span> Next Steps</h4>
+                        <ul>
+                            <li>Your company is now eligible for consideration in the tender process for this item</li>
+                            <li>You will be included in the temporary approval pool for relevant tenders</li>
+                            <li>Please monitor your email for future tender notifications</li>
+                            <li>Ensure all your company documentation remains up to date</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="contact-info">
+                        <h4><span class="emoji">📞</span> Contact Information</h4>
+                        <p>If you have any questions regarding this decision, please contact:</p>
+                        <p><strong>Grievance Committee Secretary</strong></p>
+                        <p>Email: grievance@rics.edu.pk</p>
+                        <p>Phone: +92-XXX-XXXXXXX</p>
+                    </div>
+                    
+                    <p style="margin-top: 30px;">
+                        Thank you for your patience during the grievance review process. We look forward to your continued participation in our tender processes.
+                    </p>
+                    
+                    <p style="margin-top: 20px;">
+                        <strong>Best regards,</strong><br>
+                        <span style="color: #10b981; font-weight: 600;">The Grievance Committee</span><br>
+                        ${process.env.COMPANY_NAME || 'Research & Innovation Center'}
+                    </p>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>Grievance Committee</strong></p>
+                    <p>${process.env.COMPANY_NAME || 'Research & Innovation Center'}</p>
+                    <p>Email: grievance@rics.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+                    <p style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
+                        This is an automated message regarding your grievance application.
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+    }
+
+    // Send grievance rejection email
+    async sendGrievanceRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, contactPerson) {
+        const htmlContent = this.generateGrievanceRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson);
+        
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `❌ Grievance Decision - ${itemName}`,
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Grievance rejection notification sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending grievance rejection notification:', error);
+            throw error;
+        }
+    }
+
+    generateGrievanceRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Grievance Decision</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background-color: #f4f7fa;
+                }
+                
+                .email-container {
+                    max-width: 600px;
+                    margin: 20px auto;
+                    background: #ffffff;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                    overflow: hidden;
+                }
+                
+                .header {
+                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    color: white;
+                    padding: 40px 30px;
+                    text-align: center;
+                    position: relative;
+                }
+                
+                .header h1 {
+                    font-size: 28px;
+                    font-weight: 700;
+                    margin-bottom: 10px;
+                    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                
+                .header p {
+                    font-size: 16px;
+                    opacity: 0.9;
+                    margin-bottom: 0;
+                }
+                
+                .rejection-badge {
+                    display: inline-block;
+                    background: rgba(255, 255, 255, 0.2);
+                    padding: 8px 20px;
+                    border-radius: 50px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 15px;
+                    backdrop-filter: blur(10px);
+                }
+                
+                .content {
+                    padding: 40px 30px;
+                }
+                
+                .company-name {
+                    color: #ef4444;
+                    font-weight: 700;
+                    font-size: 20px;
+                }
+                
+                .message {
+                    font-size: 16px;
+                    margin: 25px 0;
+                    line-height: 1.8;
+                }
+                
+                .item-info {
+                    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #ef4444;
+                }
+                
+                .item-info h4 {
+                    color: #991b1b;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .reason-details {
+                    background: #fff7ed;
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #f97316;
+                }
+                
+                .reason-details h4 {
+                    color: #9a3412;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .reason-text {
+                    background: white;
+                    padding: 15px;
+                    border-radius: 8px;
+                    border: 1px solid #fed7aa;
+                    color: #9a3412;
+                    font-style: italic;
+                }
+                
+                .next-steps {
+                    background: #f0f9ff;
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #0ea5e9;
+                }
+                
+                .next-steps h4 {
+                    color: #0c4a6e;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .next-steps ul {
+                    margin-left: 20px;
+                    color: #0c4a6e;
+                }
+                
+                .next-steps li {
+                    margin-bottom: 8px;
+                }
+                
+                .contact-info {
+                    background: #fef3c7;
+                    padding: 25px;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                    border-left: 4px solid #f59e0b;
+                }
+                
+                .contact-info h4 {
+                    color: #92400e;
+                    font-size: 18px;
+                    margin-bottom: 15px;
+                }
+                
+                .footer {
+                    background: #f8fafc;
+                    padding: 30px;
+                    text-align: center;
+                    border-top: 1px solid #e2e8f0;
+                    color: #64748b;
+                    font-size: 14px;
+                }
+                
+                .emoji {
+                    font-size: 18px;
+                    margin-right: 8px;
+                }
+                
+                @media (max-width: 600px) {
+                    .email-container {
+                        margin: 10px;
+                        border-radius: 8px;
+                    }
+                    
+                    .header {
+                        padding: 30px 20px;
+                    }
+                    
+                    .content {
+                        padding: 30px 20px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="email-container">
+                <div class="header">
+                    <div class="rejection-badge">
+                        <span class="emoji">❌</span> GRIEVANCE DECISION
+                    </div>
+                    <h1>Grievance Review Complete</h1>
+                    <p>Your grievance application has been reviewed</p>
+                </div>
+                
+                <div class="content">
+                    <p>Dear <span class="company-name">${companyName}</span> Team,</p>
+                    
+                    <div class="message">
+                        We have completed our thorough review of your grievance application. After careful consideration by the Grievance Committee, we regret to inform you that your grievance has been <strong>rejected</strong>.
+                    </div>
+                    
+                    <div class="item-info">
+                        <h4><span class="emoji">📦</span> Regarding Item</h4>
+                        <p><strong>${itemName}</strong></p>
+                    </div>
+                    
+                    <div class="reason-details">
+                        <h4><span class="emoji">📝</span> Committee Decision</h4>
+                        <div class="reason-text">
+                            ${rejectionReason}
+                        </div>
+                    </div>
+                    
+                    <div class="next-steps">
+                        <h4><span class="emoji">📋</span> Next Steps</h4>
+                        <ul>
+                            <li>You may address the concerns raised and apply for future tenders</li>
+                            <li>Consider improving your technical specifications or documentation</li>
+                            <li>Contact us if you need clarification on the decision</li>
+                            <li>Monitor our portal for new tender opportunities</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="contact-info">
+                        <h4><span class="emoji">📞</span> Contact Information</h4>
+                        <p>If you have any questions regarding this decision, please contact:</p>
+                        <p><strong>Grievance Committee Secretary</strong></p>
+                        <p>Email: grievance@rics.edu.pk</p>
+                        <p>Phone: +92-XXX-XXXXXXX</p>
+                    </div>
+                    
+                    <p style="margin-top: 30px;">
+                        We appreciate your understanding and encourage you to continue participating in our tender processes. We are committed to maintaining fairness and transparency in all our evaluations.
+                    </p>
+                    
+                    <p style="margin-top: 20px;">
+                        <strong>Best regards,</strong><br>
+                        <span style="color: #ef4444; font-weight: 600;">The Grievance Committee</span><br>
+                        ${process.env.COMPANY_NAME || 'Research & Innovation Center'}
+                    </p>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>Grievance Committee</strong></p>
+                    <p>${process.env.COMPANY_NAME || 'Research & Innovation Center'}</p>
+                    <p>Email: grievance@rics.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+                    <p style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
+                        This is an automated message regarding your grievance application.
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+    }
 }
 
 module.exports = EmailService;

@@ -391,11 +391,213 @@ const updateGrievanceStatus = async (req, res) => {
     }
 };
 
+// Approve grievance application
+const approveGrievance = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    const { grievanceId } = req.params;
+
+    // Check if user is from grievance committee
+    const canApprove = user.role === 'superadmin' || 
+                      (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));
+
+    if (!canApprove) {
+        return res.status(403).json({ message: 'Only Grievance Committee members can approve grievances' });
+    }
+
+    try {
+        // Get grievance details
+        const grievance = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
+                        di.item_name, te.*, dt.id as tender_id
+                 FROM grievance_applications ga
+                 JOIN suppliers s ON ga.supplier_id = s.id
+                 JOIN demand_items di ON ga.item_id = di.id
+                 JOIN technical_evaluations te ON ga.technical_evaluation_id = te.id
+                 JOIN demand_tenders dt ON ga.tender_id = dt.id
+                 WHERE ga.id = ?`,
+                [grievanceId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!grievance) {
+            return res.status(404).json({ message: 'Grievance application not found' });
+        }
+
+        // Update grievance status to approved (resolved)
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE grievance_applications SET 
+                 status = 'resolved',
+                 resolution = 'Grievance approved by committee. Company added to temporary approval pool.',
+                 reviewed_by = ?,
+                 reviewed_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [user.id, grievanceId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Add company to temporary approval pool
+        await new Promise((resolve, reject) => {
+            db.run(`
+                CREATE TABLE IF NOT EXISTS temporary_approvals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    supplier_id INTEGER NOT NULL,
+                    tender_id INTEGER NOT NULL,
+                    item_id INTEGER NOT NULL,
+                    grievance_id INTEGER NOT NULL,
+                    approved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    approved_by INTEGER NOT NULL,
+                    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'used', 'expired')),
+                    FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                    FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                    FOREIGN KEY (item_id) REFERENCES demand_items(id),
+                    FOREIGN KEY (grievance_id) REFERENCES grievance_applications(id),
+                    FOREIGN KEY (approved_by) REFERENCES users(id),
+                    UNIQUE(supplier_id, tender_id, item_id, grievance_id)
+                )
+            `, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT OR REPLACE INTO temporary_approvals 
+                 (supplier_id, tender_id, item_id, grievance_id, approved_by)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [grievance.supplier_id, grievance.tender_id, grievance.item_id, grievanceId, user.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Send approval email to supplier
+        try {
+            const emailService = new EmailService();
+            await emailService.sendGrievanceApprovalEmail(
+                grievance.company_email,
+                grievance.company_name,
+                grievance.item_name,
+                grievance.contact_person
+            );
+        } catch (emailError) {
+            console.error('Failed to send approval email:', emailError);
+            // Don't fail the request if email fails
+        }
+
+        res.json({ 
+            message: 'Grievance approved successfully. Company added to temporary approval pool and email notification sent.'
+        });
+
+    } catch (error) {
+        console.error('Error approving grievance:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Reject grievance application
+const rejectGrievance = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    const { grievanceId } = req.params;
+    const { rejectionReason } = req.body;
+
+    // Check if user is from grievance committee
+    const canReject = user.role === 'superadmin' || 
+                     (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));
+
+    if (!canReject) {
+        return res.status(403).json({ message: 'Only Grievance Committee members can reject grievances' });
+    }
+
+    if (!rejectionReason || !rejectionReason.trim()) {
+        return res.status(400).json({ message: 'Rejection reason is required' });
+    }
+
+    try {
+        // Get grievance details
+        const grievance = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
+                        di.item_name
+                 FROM grievance_applications ga
+                 JOIN suppliers s ON ga.supplier_id = s.id
+                 JOIN demand_items di ON ga.item_id = di.id
+                 WHERE ga.id = ?`,
+                [grievanceId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!grievance) {
+            return res.status(404).json({ message: 'Grievance application not found' });
+        }
+
+        // Update grievance status to rejected
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE grievance_applications SET 
+                 status = 'rejected',
+                 resolution = ?,
+                 reviewed_by = ?,
+                 reviewed_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [rejectionReason, user.id, grievanceId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Send rejection email to supplier
+        try {
+            const emailService = new EmailService();
+            await emailService.sendGrievanceRejectionEmail(
+                grievance.company_email,
+                grievance.company_name,
+                grievance.item_name,
+                rejectionReason,
+                grievance.contact_person
+            );
+        } catch (emailError) {
+            console.error('Failed to send rejection email:', emailError);
+            // Don't fail the request if email fails
+        }
+
+        res.json({ 
+            message: 'Grievance rejected successfully. Email notification sent to supplier.'
+        });
+
+    } catch (error) {
+        console.error('Error rejecting grievance:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
 module.exports = {
     getSupplierRejectedItems,
     submitGrievanceApplication,
     getSupplierGrievances,
     getAllGrievances,
     scheduleGrievanceMeeting,
-    updateGrievanceStatus
+    updateGrievanceStatus,
+    approveGrievance,
+    rejectGrievance
 };

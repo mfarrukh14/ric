@@ -127,9 +127,19 @@ const ItemWiseEvaluation = () => {
     const getItemBids = (itemId) => {
         if (!tender?.bids) return [];
         
-        // For now, return all bids since we don't have item-specific bidding
-        // In a real system, you'd filter bids by item
-        return tender.bids;
+        // Filter bids to only show companies that actually bid for this specific item
+        return tender.bids.filter(bid => {
+            // Check if this bid has item-specific data for the current item
+            if (bid.bidItems && bid.bidItems.length > 0) {
+                return bid.bidItems.some(bidItem => 
+                    bidItem.item_id === itemId && 
+                    bidItem.proposed_quantity > 0 && 
+                    bidItem.total_cost > 0
+                );
+            }
+            // For legacy single-item tenders (where itemId is 0), show all bids
+            return itemId === 0;
+        });
     };
 
     const nextStep = () => {
@@ -313,8 +323,50 @@ const ItemWiseEvaluation = () => {
                                                 <div className="grid grid-cols-3 gap-4 text-sm mb-4">
                                                     <div>
                                                         <span className="font-medium">Proposed Quantity:</span>
-                                                        <div>{bid.proposed_quantity}</div>
+                                                        <div>{
+                                                            (() => {
+                                                                // Show item-specific quantity if available
+                                                                if (bid.bidItems && bid.bidItems.length > 0) {
+                                                                    const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
+                                                                    return itemBid ? `${itemBid.proposed_quantity} ${itemBid.unit || 'units'}` : 'No bid for this item';
+                                                                }
+                                                                // Fallback for legacy single-item tenders
+                                                                return `${bid.proposed_quantity} units`;
+                                                            })()
+                                                        }</div>
                                                     </div>
+                                                    <div>
+                                                        <span className="font-medium">Unit Price:</span>
+                                                        <div>{
+                                                            (() => {
+                                                                // Show item-specific unit price if available
+                                                                if (bid.bidItems && bid.bidItems.length > 0) {
+                                                                    const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
+                                                                    return itemBid ? `Rs ${parseFloat(itemBid.unit_price).toLocaleString()}` : 'N/A';
+                                                                }
+                                                                // Fallback for legacy single-item tenders
+                                                                const unitPrice = bid.total_cost / bid.proposed_quantity;
+                                                                return `Rs ${unitPrice.toLocaleString()}`;
+                                                            })()
+                                                        }</div>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-medium">Total Cost:</span>
+                                                        <div>{
+                                                            (() => {
+                                                                // Show item-specific total cost if available
+                                                                if (bid.bidItems && bid.bidItems.length > 0) {
+                                                                    const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
+                                                                    return itemBid ? `Rs ${parseFloat(itemBid.total_cost).toLocaleString()}` : 'N/A';
+                                                                }
+                                                                // Fallback for legacy single-item tenders
+                                                                return `Rs ${parseFloat(bid.total_cost).toLocaleString()}`;
+                                                            })()
+                                                        }</div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                                                     <div>
                                                         <span className="font-medium">Delivery Time:</span>
                                                         <div>{bid.delivery_days} days</div>
