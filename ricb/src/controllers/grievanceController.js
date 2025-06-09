@@ -395,9 +395,7 @@ const updateGrievanceStatus = async (req, res) => {
 const approveGrievance = async (req, res) => {
     const db = getDatabase();
     const user = req.user;
-    const { grievanceId } = req.params;
-
-    // Check if user is from grievance committee
+    const { grievanceId } = req.params;    // Check if user is from grievance committee
     const canApprove = user.role === 'superadmin' || 
                       (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));
 
@@ -406,11 +404,12 @@ const approveGrievance = async (req, res) => {
     }
 
     try {
-        // Get grievance details
+        // Get grievance details with meeting information
         const grievance = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
-                        di.item_name, te.*, dt.id as tender_id
+                        di.item_name, te.*, dt.id as tender_id,
+                        ga.meeting_scheduled_date as meeting_date_time
                  FROM grievance_applications ga
                  JOIN suppliers s ON ga.supplier_id = s.id
                  JOIN demand_items di ON ga.item_id = di.id
@@ -427,6 +426,31 @@ const approveGrievance = async (req, res) => {
 
         if (!grievance) {
             return res.status(404).json({ message: 'Grievance application not found' });
+        }
+
+     // Check if meeting was scheduled and has passed (Pakistan UTC+5 time)
+        if (!grievance.meeting_date_time) {
+            return res.status(400).json({ 
+                message: 'Grievance cannot be approved without a scheduled meeting.' 
+            });
+        }        // Convert to Pakistan time (UTC+5) properly
+        const now = new Date();
+        // Pakistan is UTC+5, calculate from UTC properly
+        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
+        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
+        
+        const meetingDateTime = new Date(grievance.meeting_date_time);
+        
+        console.log('Debug - Current local time:', now.toISOString());
+        console.log('Debug - Current Pakistan time:', pakistanTime.toISOString());
+        console.log('Debug - Meeting scheduled time:', meetingDateTime.toISOString());
+        console.log('Debug - Meeting has passed:', meetingDateTime < pakistanTime);
+        console.log('Debug - Grievance status:', grievance.status);
+        
+        if (meetingDateTime > pakistanTime) {
+            return res.status(400).json({ 
+                message: 'Grievance cannot be approved before the scheduled meeting time has passed.' 
+            });
         }
 
         // Update grievance status to approved (resolved)
@@ -517,9 +541,7 @@ const rejectGrievance = async (req, res) => {
 
     // Check if user is from grievance committee
     const canReject = user.role === 'superadmin' || 
-                     (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));
-
-    if (!canReject) {
+                     (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));    if (!canReject) {
         return res.status(403).json({ message: 'Only Grievance Committee members can reject grievances' });
     }
 
@@ -528,11 +550,11 @@ const rejectGrievance = async (req, res) => {
     }
 
     try {
-        // Get grievance details
+        // Get grievance details with meeting information
         const grievance = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
-                        di.item_name
+                        di.item_name, ga.meeting_scheduled_date as meeting_date_time
                  FROM grievance_applications ga
                  JOIN suppliers s ON ga.supplier_id = s.id
                  JOIN demand_items di ON ga.item_id = di.id
@@ -547,6 +569,30 @@ const rejectGrievance = async (req, res) => {
 
         if (!grievance) {
             return res.status(404).json({ message: 'Grievance application not found' });
+        }
+
+        // Check if grievance is already resolved or rejected (irreversible)
+        if (grievance.status === 'resolved' || grievance.status === 'rejected') {
+            return res.status(400).json({ 
+                message: `Grievance has already been ${grievance.status}. This decision is irreversible.` 
+            });
+        }        // Check if meeting was scheduled and has passed (Pakistan UTC+5 time)
+        if (!grievance.meeting_date_time) {
+            return res.status(400).json({ 
+                message: 'Grievance cannot be rejected without a scheduled meeting.' 
+            });
+        }        // Convert to Pakistan time (UTC+5) properly
+        const now = new Date();
+        // Pakistan is UTC+5, calculate from UTC properly
+        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
+        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
+        
+        const meetingDateTime = new Date(grievance.meeting_date_time);
+        
+        if (meetingDateTime > pakistanTime) {
+            return res.status(400).json({ 
+                message: 'Grievance cannot be rejected before the scheduled meeting time has passed.' 
+            });
         }
 
         // Update grievance status to rejected

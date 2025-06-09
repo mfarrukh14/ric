@@ -6,7 +6,7 @@ import SupplierEvaluation from '../admin/SupplierEvaluation';
 import VettingCommittee from '../committee/VettingCommittee';
 import TechnicalEvaluation from '../committee/TechnicalEvaluation';
 import PurchaseDepartment from '../department/PurchaseDepartment';
-import GrievanceCommittee from '../admin/GrievanceCommittee';
+import GrievanceCommitteeNew from '../committee/GrievanceCommitteeNew';
 import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
@@ -528,7 +528,7 @@ export default function UserDashboard() {
       )}
 
       {isGrievanceCommittee && activeTab === 'grievance-evaluation' && (
-        <GrievanceCommittee />
+        <GrievanceCommitteeNew />
       )}
 
       <CreateDemandModal

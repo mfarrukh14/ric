@@ -1,4 +1,7 @@
 const { getDatabase } = require('../config/database');
+const ExcelJS = require('exceljs');
+const path = require('path');
+const fs = require('fs');
 
 // Get expired tenders for technical evaluation committee
 const getExpiredTenders = async (req, res) => {
@@ -434,9 +437,7 @@ const submitItemWiseEvaluation = async (req, res) => {
                         else resolve();
                     }
                 );
-            });
-
-            // Commit transaction
+            });            // Commit transaction
             await new Promise((resolve, reject) => {
                 db.run('COMMIT', (err) => {
                     if (err) reject(err);
@@ -444,9 +445,13 @@ const submitItemWiseEvaluation = async (req, res) => {
                 });
             });
 
+            // Generate Excel report after successful evaluation
+            const excelFilePath = await generateTechnicalEvaluationReport(db, tenderId, evaluations);
+
             res.json({ 
                 message: 'Technical evaluation completed successfully. Approved companies have been added to temporary pools for each item. Rejected companies can now apply for grievance.',
-                tenderId: tenderId
+                tenderId: tenderId,
+                reportFile: excelFilePath
             });
 
         } catch (error) {
@@ -586,10 +591,317 @@ const awardTender = async (req, res) => {
     }
 };
 
+// Download generated evaluation report
+const downloadEvaluationReport = async (req, res) => {
+    const { fileName } = req.params;
+    const user = req.user;
+
+    // Check if user is from technical evaluation committee
+    const canDownload = user.role === 'superadmin' || 
+                       (user.committee_name && user.committee_name.toLowerCase().includes('technical evaluation'));
+
+    if (!canDownload) {
+        return res.status(403).json({ message: 'You do not have permission to download evaluation reports' });
+    }
+
+    try {
+        const filePath = path.join(__dirname, '../../reports', fileName);
+        
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ message: 'Report file not found' });
+        }
+
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        
+        // Send file
+        res.sendFile(path.resolve(filePath));
+    } catch (error) {
+        console.error('Error downloading evaluation report:', error);
+        res.status(500).json({ message: 'Failed to download evaluation report' });
+    }
+};
+
+// Generate Excel report for technical evaluation
+const generateTechnicalEvaluationReport = async (db, tenderId, evaluations) => {
+    try {
+        // Get tender details
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT dt.*, d.item_name, d.description
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE dt.id = ?`,
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        // Get demand items
+        const items = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT * FROM demand_items 
+                 WHERE demand_id = ? 
+                 AND (store_fulfilled IS NULL OR store_fulfilled = 0)
+                 AND (store_status != 'available' OR store_status IS NULL)
+                 ORDER BY id`,
+                [tender.demand_id],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // If no items found (legacy single-item demand), create from main demand
+        const finalItems = items.length === 0 ? [{
+            id: 0,
+            item_name: tender.item_name,
+            quantity: tender.quantity || 0,
+            estimated_cost: tender.estimated_cost || 0,
+            unit: 'pieces'
+        }] : items;
+
+        // Get all bids with supplier details
+        const allBids = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT sb.*, s.company_name, s.company_email, s.contact_person
+                 FROM supplier_bids sb
+                 JOIN suppliers s ON sb.supplier_id = s.id
+                 WHERE sb.tender_id = ? AND s.status = 'approved'
+                 ORDER BY sb.total_cost ASC, sb.created_at ASC`,
+                [tenderId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // For each bid, get the item-specific bid details
+        for (const bid of allBids) {
+            const bidItems = await new Promise((resolve, reject) => {
+                db.all(
+                    `SELECT * FROM supplier_bid_items WHERE bid_id = ? ORDER BY item_id`,
+                    [bid.id],
+                    (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows);
+                    }
+                );
+            });
+            bid.bidItems = bidItems;
+        }
+
+        // Create workbook and worksheet
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Technical Evaluation Report');
+
+        // Set worksheet properties
+        worksheet.properties.defaultRowHeight = 20;
+
+        // Add title
+        worksheet.mergeCells('A1:E1');
+        const titleCell = worksheet.getCell('A1');
+        titleCell.value = `Technical Evaluation Report - Tender ID: ${tenderId}`;
+        titleCell.font = { bold: true, size: 16 };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        titleCell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE0E0E0' }
+        };
+
+        // Add tender information
+        worksheet.getCell('A3').value = 'Tender Description:';
+        worksheet.getCell('A3').font = { bold: true };
+        worksheet.getCell('B3').value = tender.description || tender.item_name;
+
+        worksheet.getCell('A4').value = 'Evaluation Date:';
+        worksheet.getCell('A4').font = { bold: true };
+        worksheet.getCell('B4').value = new Date().toLocaleDateString();
+
+        // Add headers for the evaluation table
+        const headerRow = 6;
+        const headers = ['Sr. No.', 'Name of Item', 'Supplier Name', 'Bid Amount', 'Status'];
+        
+        headers.forEach((header, index) => {
+            const cell = worksheet.getCell(headerRow, index + 1);
+            cell.value = header;
+            cell.font = { bold: true };
+            cell.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFD0D0D0' }
+            };
+            cell.border = {
+                top: { style: 'thin' },
+                left: { style: 'thin' },
+                bottom: { style: 'thin' },
+                right: { style: 'thin' }
+            };
+        });
+
+        // Set column widths
+        worksheet.getColumn(1).width = 8;   // Sr. No.
+        worksheet.getColumn(2).width = 30;  // Name of Item
+        worksheet.getColumn(3).width = 25;  // Supplier Name
+        worksheet.getColumn(4).width = 15;  // Bid Amount
+        worksheet.getColumn(5).width = 15;  // Status
+
+        let currentRow = headerRow + 1;
+        let srNo = 1;
+
+        // Process each item
+        for (const item of finalItems) {
+            const itemId = item.id || 0;
+            
+            // Get bids for this item
+            const itemBids = allBids.filter(bid => {
+                if (item.id === 0) {
+                    // Legacy single-item tender
+                    return true;
+                } else {
+                    // Multi-item tender - check if supplier bid for this item
+                    return bid.bidItems.some(bidItem => bidItem.item_id === item.id);
+                }
+            });
+
+            if (itemBids.length === 0) {
+                // No bids for this item
+                worksheet.getCell(currentRow, 1).value = srNo++;
+                worksheet.getCell(currentRow, 2).value = item.item_name;
+                worksheet.getCell(currentRow, 3).value = 'No bids received';
+                worksheet.getCell(currentRow, 4).value = '-';
+                worksheet.getCell(currentRow, 5).value = 'N/A';
+                
+                // Add borders
+                for (let col = 1; col <= 5; col++) {
+                    const cell = worksheet.getCell(currentRow, col);
+                    cell.border = {
+                        top: { style: 'thin' },
+                        left: { style: 'thin' },
+                        bottom: { style: 'thin' },
+                        right: { style: 'thin' }
+                    };
+                }
+                currentRow++;
+                continue;
+            }
+
+            // Add row for each supplier that bid for this item
+            for (const bid of itemBids) {
+                worksheet.getCell(currentRow, 1).value = srNo++;
+                worksheet.getCell(currentRow, 2).value = item.item_name;
+                worksheet.getCell(currentRow, 3).value = bid.company_name;
+                
+                // Get bid amount for this specific item
+                let bidAmount = bid.total_cost;
+                if (item.id !== 0 && bid.bidItems.length > 0) {
+                    const itemBid = bid.bidItems.find(bidItem => bidItem.item_id === item.id);
+                    if (itemBid) {
+                        bidAmount = itemBid.unit_price * itemBid.quantity;
+                    }
+                }
+                worksheet.getCell(currentRow, 4).value = `Rs. ${bidAmount.toLocaleString()}`;
+
+                // Determine status from evaluations
+                let status = 'Not Evaluated';
+                const itemEvaluation = evaluations[itemId];
+                if (itemEvaluation) {
+                    const approvedBid = itemEvaluation.approvedCompanies.find(app => app.bidId === bid.id);
+                    const rejectedBid = itemEvaluation.rejectedCompanies.find(rej => rej.bidId === bid.id);
+                    
+                    if (approvedBid) {
+                        status = 'Approved';
+                    } else if (rejectedBid) {
+                        status = `Rejected - ${rejectedBid.reason}`;
+                    }
+                }
+                
+                worksheet.getCell(currentRow, 5).value = status;
+                
+                // Add colors based on status
+                const statusCell = worksheet.getCell(currentRow, 5);
+                if (status === 'Approved') {
+                    statusCell.fill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFD4FFDD' }
+                    };
+                } else if (status.startsWith('Rejected')) {
+                    statusCell.fill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFFFD4D4' }
+                    };
+                }
+
+                // Add borders
+                for (let col = 1; col <= 5; col++) {
+                    const cell = worksheet.getCell(currentRow, col);
+                    cell.border = {
+                        top: { style: 'thin' },
+                        left: { style: 'thin' },
+                        bottom: { style: 'thin' },
+                        right: { style: 'thin' }
+                    };
+                }
+                currentRow++;
+            }
+        }
+
+        // Add summary section
+        currentRow += 2;
+        worksheet.getCell(currentRow, 1).value = 'Evaluation Summary:';
+        worksheet.getCell(currentRow, 1).font = { bold: true, size: 12 };
+        currentRow++;
+
+        // Count approved and rejected suppliers
+        let totalApproved = 0;
+        let totalRejected = 0;
+        Object.values(evaluations).forEach(itemEval => {
+            totalApproved += itemEval.approvedCompanies.length;
+            totalRejected += itemEval.rejectedCompanies.length;
+        });
+
+        worksheet.getCell(currentRow, 1).value = `Total Suppliers Approved: ${totalApproved}`;
+        currentRow++;
+        worksheet.getCell(currentRow, 1).value = `Total Suppliers Rejected: ${totalRejected}`;
+        currentRow++;
+        worksheet.getCell(currentRow, 1).value = `Total Items Evaluated: ${finalItems.length}`;
+
+        // Save the file
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const fileName = `Technical_Evaluation_Report_${tenderId}_${timestamp}.xlsx`;
+        const filePath = path.join(__dirname, '../../reports', fileName);
+
+        // Ensure reports directory exists
+        const reportsDir = path.join(__dirname, '../../reports');
+        if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+        }
+
+        await workbook.xlsx.writeFile(filePath);
+        
+        console.log(`Technical evaluation report generated: ${fileName}`);
+        return fileName;
+
+    } catch (error) {
+        console.error('Error generating technical evaluation report:', error);
+        throw error;
+    }
+};
+
 module.exports = {
     getExpiredTenders,
     getTenderDetails,
     downloadTechnicalBid,
     submitItemWiseEvaluation,
-    awardTender
+    awardTender,
+    downloadEvaluationReport
 };

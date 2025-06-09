@@ -4,26 +4,43 @@ import { Calendar, Clock, MapPin, Eye, CheckCircle, XCircle, AlertCircle, FileTe
 const GrievanceCommitteeNew = () => {
     const [grievances, setGrievances] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [selectedGrievance, setSelectedGrievance] = useState(null);
-    const [showScheduleModal, setShowScheduleModal] = useState(false);
+    const [selectedGrievance, setSelectedGrievance] = useState(null);    const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [showMeetingDetails, setShowMeetingDetails] = useState(false);
     const [showRejectModal, setShowRejectModal] = useState(false);
+    const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [rejectionReason, setRejectionReason] = useState('');
     const [meetingForm, setMeetingForm] = useState({
         date: '',
         time: '',
         location: '',
         details: ''
-    });
-
-    useEffect(() => {
+    });    useEffect(() => {
         fetchGrievances();
     }, []);
 
-    const fetchGrievances = async () => {
+    // Helper function to parse meeting details from database format
+    const parseMeetingDetails = (grievance) => {
+        if (!grievance.meeting_details || !grievance.meeting_scheduled_date) {
+            return null;
+        }
+        
+        try {
+            const meetingInfo = JSON.parse(grievance.meeting_details);
+            return {
+                date: meetingInfo.date,
+                time: meetingInfo.time,
+                location: meetingInfo.location,
+                details: meetingInfo.details,
+                datetime: grievance.meeting_scheduled_date
+            };
+        } catch (error) {
+            console.error('Error parsing meeting details:', error);
+            return null;
+        }
+    };const fetchGrievances = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch('/api/grievances/committee/all', {
+            const response = await fetch('http://localhost:5000/api/grievances/committee/all', {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
@@ -35,19 +52,35 @@ const GrievanceCommitteeNew = () => {
                 setGrievances(data);
             } else {
                 console.error('Failed to fetch grievances');
-            }
-        } catch (error) {
+            }        } catch (error) {
             console.error('Error fetching grievances:', error);
         } finally {
             setLoading(false);
         }
     };
 
-    const getGrievanceActions = (grievance) => {
+    const getGrievanceActions = (grievance) => {        // Get current time in Pakistan timezone (UTC+5)
         const now = new Date();
-        const meetingDate = grievance.meeting_date ? new Date(grievance.meeting_date + ' ' + grievance.meeting_time) : null;
-        const hasMeeting = grievance.meeting_date && grievance.meeting_time;
-        const meetingPassed = meetingDate && now > meetingDate;
+        // Pakistan is UTC+5, calculate from UTC properly
+        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
+        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
+        
+        // Parse meeting data from database format
+        const hasMeeting = grievance.meeting_scheduled_date && grievance.meeting_scheduled_date !== 'undefined undefined';
+        let meetingPassed = false;
+        
+        if (hasMeeting) {
+            // Parse the meeting date/time from the stored format
+            const meetingDateTime = new Date(grievance.meeting_scheduled_date);
+            meetingPassed = pakistanTime > meetingDateTime;
+        }
+
+        // Check if decision is already made (irreversible)
+        if (grievance.status === 'resolved' || grievance.status === 'rejected') {
+            return [
+                { key: 'view', label: 'View Details', icon: Eye, color: 'blue' }
+            ];
+        }
 
         if (!hasMeeting) {
             return [
@@ -62,18 +95,17 @@ const GrievanceCommitteeNew = () => {
         } else {
             return [
                 { key: 'view', label: 'View Details', icon: Eye, color: 'blue' },
-                { key: 'approve', label: 'Approve', icon: CheckCircle, color: 'green' },
-                { key: 'reject', label: 'Reject', icon: XCircle, color: 'red' }
+                { key: 'approve', label: 'Approve Grievance', icon: CheckCircle, color: 'green' },
+                { key: 'reject', label: 'Reject Grievance', icon: XCircle, color: 'red' }
             ];
         }
     };
 
     const handleAction = (grievance, action) => {
         setSelectedGrievance(grievance);
-        
-        switch (action) {
+          switch (action) {
             case 'view':
-                // Show grievance details modal or navigate to details page
+                setShowDetailsModal(true);
                 break;
             case 'schedule':
                 setShowScheduleModal(true);
@@ -93,13 +125,17 @@ const GrievanceCommitteeNew = () => {
     const handleScheduleMeeting = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`/api/grievances/committee/${selectedGrievance.id}/schedule-meeting`, {
+            const response = await fetch(`http://localhost:5000/api/grievances/committee/${selectedGrievance.id}/schedule-meeting`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(meetingForm)
+                    'Content-Type': 'application/json',                },
+                body: JSON.stringify({
+                    meetingDate: meetingForm.date,
+                    meetingTime: meetingForm.time,
+                    meetingLocation: meetingForm.location,
+                    meetingDetails: meetingForm.details
+                })
             });
 
             if (response.ok) {
@@ -115,16 +151,14 @@ const GrievanceCommitteeNew = () => {
             console.error('Error scheduling meeting:', error);
             alert('Failed to schedule meeting');
         }
-    };
-
-    const handleApprove = async (grievanceId) => {
-        if (!confirm('Are you sure you want to approve this grievance? The company will be added to the temporary approval pool.')) {
+    };    const handleApprove = async (grievanceId) => {
+        if (!confirm('Are you sure you want to approve this grievance? This decision is irreversible and the company will be added to the temporary approval pool.')) {
             return;
         }
 
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`/api/grievances/committee/${grievanceId}/approve`, {
+            const response = await fetch(`http://localhost:5000/api/grievances/committee/${grievanceId}/approve`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -143,17 +177,19 @@ const GrievanceCommitteeNew = () => {
             console.error('Error approving grievance:', error);
             alert('Failed to approve grievance');
         }
-    };
-
-    const handleReject = async () => {
+    };    const handleReject = async () => {
         if (!rejectionReason.trim()) {
             alert('Please provide a rejection reason');
             return;
         }
 
+        if (!confirm('Are you sure you want to reject this grievance? This decision is irreversible.')) {
+            return;
+        }
+
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`/api/grievances/committee/${selectedGrievance.id}/reject`, {
+            const response = await fetch(`http://localhost:5000/api/grievances/committee/${selectedGrievance.id}/reject`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -207,10 +243,22 @@ const GrievanceCommitteeNew = () => {
 
     return (
         <div className="min-h-screen bg-gray-50 py-8">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="mb-8">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">                <div className="mb-8">
                     <h1 className="text-3xl font-bold text-gray-900">Grievance Committee Dashboard</h1>
                     <p className="mt-2 text-gray-600">Review and manage supplier grievance applications</p>
+                    <div className="mt-2 text-sm text-gray-500">                        Current Pakistan Time (UTC+5): {(() => {
+                            const now = new Date();
+                            const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
+                            const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
+                            return pakistanTime.toLocaleString('en-PK', { 
+                                year: 'numeric', 
+                                month: 'short', 
+                                day: 'numeric', 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                            });
+                        })()}
+                    </div>
                 </div>
 
                 {grievances.length === 0 ? (
@@ -240,14 +288,16 @@ const GrievanceCommitteeNew = () => {
                                                         </div>
                                                         <div className="mt-1 flex items-center text-sm text-gray-500">
                                                             <User className="flex-shrink-0 mr-1.5 h-4 w-4" />
-                                                            <span className="truncate">{grievance.contact_person}</span>
-                                                        </div>
-                                                        {grievance.meeting_date && (
-                                                            <div className="mt-1 flex items-center text-sm text-gray-500">
-                                                                <Calendar className="flex-shrink-0 mr-1.5 h-4 w-4" />
-                                                                <span>Meeting: {grievance.meeting_date} at {grievance.meeting_time}</span>
-                                                            </div>
-                                                        )}
+                                                            <span className="truncate">{grievance.contact_person}</span>                                                        </div>
+                                                        {(() => {
+                                                            const meeting = parseMeetingDetails(grievance);
+                                                            return meeting && (
+                                                                <div className="mt-1 flex items-center text-sm text-gray-500">
+                                                                    <Calendar className="flex-shrink-0 mr-1.5 h-4 w-4" />
+                                                                    <span>Meeting: {meeting.date} at {meeting.time}</span>
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </div>
                                                     <div className="flex flex-col items-end space-y-2">
                                                         {getStatusBadge(grievance.status)}
@@ -351,40 +401,185 @@ const GrievanceCommitteeNew = () => {
                         </div>
                     </div>
                 </div>
-            )}
-
-            {/* Meeting Details Modal */}
-            {showMeetingDetails && selectedGrievance && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-                        <h3 className="text-lg font-bold text-gray-900 mb-4">Meeting Details</h3>
-                        <div className="space-y-3">
-                            <div className="flex items-center">
-                                <Calendar className="w-5 h-5 mr-2 text-gray-500" />
-                                <span className="font-medium">Date:</span>
-                                <span className="ml-2">{selectedGrievance.meeting_date}</span>
-                            </div>
-                            <div className="flex items-center">
-                                <Clock className="w-5 h-5 mr-2 text-gray-500" />
-                                <span className="font-medium">Time:</span>
-                                <span className="ml-2">{selectedGrievance.meeting_time}</span>
-                            </div>
-                            <div className="flex items-center">
-                                <MapPin className="w-5 h-5 mr-2 text-gray-500" />
-                                <span className="font-medium">Location:</span>
-                                <span className="ml-2">{selectedGrievance.meeting_location}</span>
-                            </div>
-                            {selectedGrievance.meeting_details && (
-                                <div className="mt-4">
-                                    <span className="font-medium">Additional Details:</span>
-                                    <p className="mt-1 text-gray-600">{selectedGrievance.meeting_details}</p>
+            )}            {/* Meeting Details Modal */}
+            {showMeetingDetails && selectedGrievance && (() => {
+                const meeting = parseMeetingDetails(selectedGrievance);
+                return meeting && (
+                    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                        <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                            <h3 className="text-lg font-bold text-gray-900 mb-4">Meeting Details</h3>
+                            <div className="space-y-3">
+                                <div className="flex items-center">
+                                    <Calendar className="w-5 h-5 mr-2 text-gray-500" />
+                                    <span className="font-medium">Date:</span>
+                                    <span className="ml-2">{meeting.date}</span>
                                 </div>
-                            )}
+                                <div className="flex items-center">
+                                    <Clock className="w-5 h-5 mr-2 text-gray-500" />
+                                    <span className="font-medium">Time:</span>
+                                    <span className="ml-2">{meeting.time}</span>
+                                </div>
+                                <div className="flex items-center">
+                                    <MapPin className="w-5 h-5 mr-2 text-gray-500" />
+                                    <span className="font-medium">Location:</span>
+                                    <span className="ml-2">{meeting.location}</span>
+                                </div>
+                                {meeting.details && (
+                                    <div className="mt-4">
+                                        <span className="font-medium">Additional Details:</span>
+                                        <p className="mt-1 text-gray-600">{meeting.details}</p>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex justify-end mt-6">
+                                <button
+                                    onClick={() => setShowMeetingDetails(false)}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                >
+                                    Close
+                                </button>
+                            </div>
                         </div>
-                        <div className="flex justify-end mt-6">
+                    </div>
+                );            })()}
+
+            {/* Grievance Details Modal */}
+            {showDetailsModal && selectedGrievance && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-10 mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-lg font-bold text-gray-900">Grievance Details</h3>
                             <button
-                                onClick={() => setShowMeetingDetails(false)}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                onClick={() => setShowDetailsModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <XCircle className="w-6 h-6" />
+                            </button>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Company Information */}
+                            <div className="space-y-4">
+                                <h4 className="text-md font-semibold text-gray-800 border-b pb-2">Company Information</h4>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Company Name:</label>
+                                        <p className="text-gray-900">{selectedGrievance.company_name}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Contact Person:</label>
+                                        <p className="text-gray-900">{selectedGrievance.contact_person}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Contact Email:</label>
+                                        <p className="text-gray-900">{selectedGrievance.contact_email}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Contact Phone:</label>
+                                        <p className="text-gray-900">{selectedGrievance.contact_phone}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Company Address:</label>
+                                        <p className="text-gray-900">{selectedGrievance.company_address}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Grievance Information */}
+                            <div className="space-y-4">
+                                <h4 className="text-md font-semibold text-gray-800 border-b pb-2">Grievance Information</h4>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Item/Service:</label>
+                                        <p className="text-gray-900">{selectedGrievance.item_name}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Tender Reference:</label>
+                                        <p className="text-gray-900">{selectedGrievance.tender_reference}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Status:</label>
+                                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                            selectedGrievance.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                            selectedGrievance.status === 'meeting_scheduled' ? 'bg-blue-100 text-blue-800' :
+                                            selectedGrievance.status === 'resolved' ? 'bg-green-100 text-green-800' :
+                                            selectedGrievance.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                            'bg-gray-100 text-gray-800'
+                                        }`}>
+                                            {selectedGrievance.status.replace('_', ' ').toUpperCase()}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-600">Submitted:</label>
+                                        <p className="text-gray-900">
+                                            {new Date(selectedGrievance.created_at).toLocaleString('en-PK', {
+                                                year: 'numeric',
+                                                month: 'long',
+                                                day: 'numeric',
+                                                hour: '2-digit',
+                                                minute: '2-digit'
+                                            })}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Grievance Details */}
+                        <div className="mt-6">
+                            <h4 className="text-md font-semibold text-gray-800 border-b pb-2 mb-4">Grievance Details</h4>
+                            <div className="bg-gray-50 p-4 rounded-md">
+                                <p className="text-gray-900 whitespace-pre-wrap">{selectedGrievance.grievance_details}</p>
+                            </div>
+                        </div>
+
+                        {/* Meeting Information (if exists) */}
+                        {(() => {
+                            const meeting = parseMeetingDetails(selectedGrievance);
+                            return meeting && (
+                                <div className="mt-6">
+                                    <h4 className="text-md font-semibold text-gray-800 border-b pb-2 mb-4">Meeting Information</h4>
+                                    <div className="bg-blue-50 p-4 rounded-md space-y-2">
+                                        <div className="flex items-center">
+                                            <Calendar className="w-5 h-5 mr-2 text-blue-600" />
+                                            <span className="font-medium">Date:</span>
+                                            <span className="ml-2">{meeting.date}</span>
+                                        </div>
+                                        <div className="flex items-center">
+                                            <Clock className="w-5 h-5 mr-2 text-blue-600" />
+                                            <span className="font-medium">Time:</span>
+                                            <span className="ml-2">{meeting.time}</span>
+                                        </div>
+                                        <div className="flex items-center">
+                                            <MapPin className="w-5 h-5 mr-2 text-blue-600" />
+                                            <span className="font-medium">Location:</span>
+                                            <span className="ml-2">{meeting.location}</span>
+                                        </div>
+                                        {meeting.details && (
+                                            <div className="mt-2">
+                                                <span className="font-medium">Additional Details:</span>
+                                                <p className="mt-1 text-gray-700">{meeting.details}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Rejection Reason (if rejected) */}
+                        {selectedGrievance.status === 'rejected' && selectedGrievance.rejection_reason && (
+                            <div className="mt-6">
+                                <h4 className="text-md font-semibold text-gray-800 border-b pb-2 mb-4">Rejection Reason</h4>
+                                <div className="bg-red-50 p-4 rounded-md">
+                                    <p className="text-gray-900">{selectedGrievance.rejection_reason}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex justify-end mt-8">
+                            <button
+                                onClick={() => setShowDetailsModal(false)}
+                                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
                             >
                                 Close
                             </button>

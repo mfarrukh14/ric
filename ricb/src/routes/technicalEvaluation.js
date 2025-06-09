@@ -6,7 +6,8 @@ const {
     getTenderDetails,
     downloadTechnicalBid,
     submitItemWiseEvaluation,
-    awardTender
+    awardTender,
+    downloadEvaluationReport
 } = require('../controllers/technicalEvaluationController');
 
 // Get expired tenders for technical evaluation
@@ -23,5 +24,8 @@ router.post('/tenders/:tenderId/item-wise-evaluation', auth, submitItemWiseEvalu
 
 // Award tender to selected supplier
 router.post('/tenders/:tenderId/award', auth, awardTender);
+
+// Download evaluation report
+router.get('/reports/:fileName', auth, downloadEvaluationReport);
 
 module.exports = router;
