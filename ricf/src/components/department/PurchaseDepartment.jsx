@@ -4,7 +4,10 @@ import { apiUrl } from '../../config/api';
 const PurchaseDepartment = () => {
     const [demands, setDemands] = useState([]);
     const [supplyOrders, setSupplyOrders] = useState([]);
+    const [readyTenders, setReadyTenders] = useState([]);
+    const [scheduledOpenings, setScheduledOpenings] = useState([]);
     const [selectedDemand, setSelectedDemand] = useState(null);
+    const [selectedTender, setSelectedTender] = useState(null);
     const [activeTab, setActiveTab] = useState('demands');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -20,14 +23,20 @@ const PurchaseDepartment = () => {
             urgency: '',
             required_by: ''
         }
-    });
-
-    const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+    });    const [showEvaluationModal, setShowEvaluationModal] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
-
-    useEffect(() => {
+    const [showFinancialScheduleModal, setShowFinancialScheduleModal] = useState(false);
+    const [showFinancialOpeningModal, setShowFinancialOpeningModal] = useState(false);
+    const [financialOpeningData, setFinancialOpeningData] = useState(null);
+    const [scheduleForm, setScheduleForm] = useState({
+        openingDateTime: ''
+    });    useEffect(() => {
+        console.log('🏢 Purchase Department component loaded');
+        console.log('🔑 Token:', localStorage.getItem('token') ? 'Present' : 'Missing');
         fetchPurchaseDemands();
         fetchSupplyOrders();
+        fetchReadyTenders();
+        fetchScheduledOpenings();
     }, []);
 
     const fetchPurchaseDemands = async () => {
@@ -51,9 +60,7 @@ const PurchaseDepartment = () => {
         } finally {
             setLoading(false);
         }
-    };
-
-    const fetchSupplyOrders = async () => {
+    };    const fetchSupplyOrders = async () => {
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/demands/supply-orders/all`, {
@@ -72,6 +79,51 @@ const PurchaseDepartment = () => {
         } catch (err) {
             console.error('Error fetching supply orders:', err);
             // Don't set error for supply orders as it's secondary functionality
+        }
+    };    const fetchReadyTenders = async () => {
+        try {
+            console.log('🔍 Fetching ready tenders...');
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/ready-tenders`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            console.log('📡 Response status:', response.status);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('❌ API Error:', errorText);
+                throw new Error('Failed to fetch ready tenders');
+            }
+
+            const data = await response.json();
+            console.log('✅ Ready tenders data:', data);
+            setReadyTenders(data);
+        } catch (err) {
+            console.error('Error fetching ready tenders:', err);
+        }
+    };    const fetchScheduledOpenings = async () => {
+        try {
+            console.log('🗓️ Fetching scheduled openings...');
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/scheduled`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch scheduled openings');
+            }
+
+            const data = await response.json();
+            console.log('✅ Scheduled openings data:', data);
+            setScheduledOpenings(data);
+        } catch (err) {
+            console.error('Error fetching scheduled openings:', err);
         }
     };
 
@@ -224,6 +276,144 @@ const PurchaseDepartment = () => {
         }
     };
 
+    // Financial Opening Handlers
+    const handleScheduleFinancialOpening = (tender) => {
+        setSelectedTender(tender);
+        setScheduleForm({
+            openingDateTime: ''
+        });
+        setShowFinancialScheduleModal(true);
+    };
+
+    const handleScheduleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        if (!scheduleForm.openingDateTime) {
+            setError('Opening date and time is required');
+            return;
+        }
+
+        // Validate that opening time is in future (Pakistan time UTC+5)
+        const now = new Date();
+        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
+        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
+        const scheduledTime = new Date(scheduleForm.openingDateTime);
+
+        if (scheduledTime <= pakistanTime) {
+            setError('Opening time must be in the future (Pakistan time UTC+5)');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/schedule/${selectedTender.id}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    openingDateTime: scheduleForm.openingDateTime
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to schedule financial opening');
+            }
+
+            setShowFinancialScheduleModal(false);
+            fetchReadyTenders();
+            fetchScheduledOpenings();
+            
+            // Show success message
+            alert('Financial opening scheduled successfully!');
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const handleOpenFinancialBids = async (tenderId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/open/${tenderId}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to open financial bids');
+            }
+
+            const data = await response.json();
+            setFinancialOpeningData(data);
+            setShowFinancialOpeningModal(true);
+            fetchScheduledOpenings();
+        } catch (err) {
+            setError(err.message);
+            alert(`Error: ${err.message}`);
+        }
+    };
+
+    const downloadFinancialBid = async (bidId, companyName) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/bids/${bidId}/financial-document`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download financial bid');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `financial-bid-${companyName}-${bidId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            alert(`Error downloading financial bid: ${err.message}`);
+        }
+    };
+
+    const downloadFinancialOpeningReport = async (fileName) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/reports/${fileName}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download report');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            alert(`Error downloading report: ${err.message}`);
+        }
+    };
+
     const handleFormChange = (e) => {
         const { name, value } = e.target;
         if (name.startsWith('demand_')) {
@@ -367,8 +557,7 @@ const PurchaseDepartment = () => {
                                         {demands.length}
                                     </span>
                                 )}
-                            </button>
-                            <button
+                            </button>                            <button
                                 onClick={() => setActiveTab('supply-orders')}
                                 className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
                                     activeTab === 'supply-orders'
@@ -380,6 +569,21 @@ const PurchaseDepartment = () => {
                                 {supplyOrders.length > 0 && (
                                     <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                                         {supplyOrders.length}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('financial-opening')}
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                                    activeTab === 'financial-opening'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                }`}
+                            >
+                                Financial Opening
+                                {(readyTenders.length + scheduledOpenings.ready_to_open?.length + scheduledOpenings.scheduled_future?.length) > 0 && (
+                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                        {readyTenders.length + (scheduledOpenings.ready_to_open?.length || 0) + (scheduledOpenings.scheduled_future?.length || 0)}
                                     </span>
                                 )}
                             </button>
@@ -637,9 +841,193 @@ const PurchaseDepartment = () => {
                                                 </div>
                                             </div>
                                         ))}
-                                    </div>
-                                )}
+                                    </div>                                )}
                             </div>
+                        </div>
+                    )}
+
+                    {/* Financial Opening Tab */}
+                    {activeTab === 'financial-opening' && (
+                        <div className="space-y-6">
+                            {/* Ready for Financial Opening */}
+                            {readyTenders.length > 0 && (
+                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                    <div className="px-4 py-5 sm:p-6">
+                                        <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                                            <i className="fas fa-clipboard-check mr-2 text-green-600"></i>
+                                            All Suppliers Finalized - Ready for Financial Opening
+                                        </h2>
+                                        
+                                        <div className="space-y-4">
+                                            {readyTenders.map((tender) => (
+                                                <div key={tender.id} className="border border-green-200 rounded-lg p-4 bg-green-50">
+                                                    <div className="flex justify-between items-start">
+                                                        <div className="flex-1">
+                                                            <h3 className="text-lg font-semibold text-gray-900">
+                                                                All suppliers for tender {tender.id} finalized
+                                                            </h3>
+                                                            <p className="text-sm text-gray-600 mt-1">
+                                                                {tender.description || tender.item_name}
+                                                            </p>
+                                                            <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                                                <div>
+                                                                    <span className="font-medium text-gray-700">Total Grievances:</span>
+                                                                    <span className="ml-2">{tender.grievances_count}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="font-medium text-gray-700">Resolved:</span>
+                                                                    <span className="ml-2 text-green-600">{tender.resolved_grievances_count}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="font-medium text-gray-700">Rejected:</span>
+                                                                    <span className="ml-2 text-red-600">{tender.rejected_grievances_count}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="font-medium text-gray-700">Items:</span>
+                                                                    <span className="ml-2">{tender.items_with_suppliers?.length || 0}</span>
+                                                                </div>
+                                                            </div>
+                                                            {tender.financial_opening && (
+                                                                <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-200">
+                                                                    <p className="text-sm text-blue-800">
+                                                                        <i className="fas fa-clock mr-1"></i>
+                                                                        Financial opening scheduled for: {new Date(tender.financial_opening.scheduled_opening_time).toLocaleString('en-PK')}
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="ml-4">
+                                                            <button
+                                                                onClick={() => handleScheduleFinancialOpening(tender)}
+                                                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                            >
+                                                                <i className="fas fa-calendar-plus mr-2"></i>
+                                                                {tender.financial_opening ? 'Reschedule' : 'Schedule'} Financial Opening
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Scheduled Financial Openings */}
+                            {scheduledOpenings.ready_to_open?.length > 0 && (
+                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                    <div className="px-4 py-5 sm:p-6">
+                                        <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                                            <i className="fas fa-folder-open mr-2 text-red-600"></i>
+                                            Ready to Open - Time Passed
+                                        </h2>
+                                        
+                                        <div className="space-y-4">
+                                            {scheduledOpenings.ready_to_open.map((opening) => (
+                                                <div key={opening.id} className="border border-red-200 rounded-lg p-4 bg-red-50">
+                                                    <div className="flex justify-between items-start">
+                                                        <div className="flex-1">
+                                                            <h3 className="text-lg font-semibold text-gray-900">
+                                                                Tender {opening.tender_id} - {opening.description || opening.item_name}
+                                                            </h3>
+                                                            <p className="text-sm text-red-600 mt-1">
+                                                                <i className="fas fa-exclamation-triangle mr-1"></i>
+                                                                Scheduled time has passed: {new Date(opening.scheduled_opening_time).toLocaleString('en-PK')}
+                                                            </p>
+                                                        </div>
+                                                        <div className="ml-4">
+                                                            <button
+                                                                onClick={() => handleOpenFinancialBids(opening.tender_id)}
+                                                                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                                            >
+                                                                <i className="fas fa-unlock mr-2"></i>
+                                                                Open Financial Bids
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Future Scheduled Openings */}
+                            {scheduledOpenings.scheduled_future?.length > 0 && (
+                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                    <div className="px-4 py-5 sm:p-6">
+                                        <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
+                                            <i className="fas fa-clock mr-2 text-blue-600"></i>
+                                            Scheduled for Future
+                                        </h2>
+                                        
+                                        <div className="space-y-4">
+                                            {scheduledOpenings.scheduled_future.map((opening) => (
+                                                <div key={opening.id} className="border border-blue-200 rounded-lg p-4 bg-blue-50">
+                                                    <div className="flex justify-between items-start">
+                                                        <div className="flex-1">
+                                                            <h3 className="text-lg font-semibold text-gray-900">
+                                                                Tender {opening.tender_id} - {opening.description || opening.item_name}
+                                                            </h3>
+                                                            <p className="text-sm text-blue-600 mt-1">
+                                                                <i className="fas fa-calendar mr-1"></i>
+                                                                Scheduled for: {new Date(opening.scheduled_opening_time).toLocaleString('en-PK')}
+                                                            </p>
+                                                        </div>
+                                                        <div className="ml-4">
+                                                            <button
+                                                                onClick={() => handleScheduleFinancialOpening({id: opening.tender_id, ...opening})}
+                                                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                            >
+                                                                <i className="fas fa-edit mr-2"></i>
+                                                                Reschedule
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}                            {/* No Financial Openings Available */}
+                            {readyTenders.length === 0 && (!scheduledOpenings.ready_to_open || scheduledOpenings.ready_to_open.length === 0) && (!scheduledOpenings.scheduled_future || scheduledOpenings.scheduled_future.length === 0) && (
+                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                    <div className="px-4 py-12 text-center">
+                                        <i className="fas fa-folder-open text-4xl text-gray-400 mb-4"></i>
+                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Financial Openings Available</h3>
+                                        <p className="text-gray-600">All grievances must be resolved and suppliers finalized before financial openings can be scheduled.</p>
+                                          {/* Debug Information */}
+                                        <div className="mt-4 p-3 bg-gray-100 text-left text-xs">
+                                            <p><strong>Debug Info:</strong></p>
+                                            <p>Ready Tenders: {readyTenders.length}</p>
+                                            <p>Ready to Open: {scheduledOpenings.ready_to_open?.length || 0}</p>
+                                            <p>Scheduled Future: {scheduledOpenings.scheduled_future?.length || 0}</p>
+                                            <p>Token Available: {localStorage.getItem('token') ? 'Yes' : 'No'}</p>
+                                            
+                                            <div className="mt-2 space-x-2">
+                                                <button
+                                                    onClick={() => {
+                                                        console.log('🧪 Manual API test triggered');
+                                                        fetchReadyTenders();
+                                                    }}
+                                                    className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
+                                                >
+                                                    Test Ready Tenders API
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        console.log('🧪 Manual scheduled openings test triggered');
+                                                        fetchScheduledOpenings();
+                                                    }}
+                                                    className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600"
+                                                >
+                                                    Test Scheduled Openings API
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -884,7 +1272,242 @@ const PurchaseDepartment = () => {
                                 </svg>
                             </div>
                             <h3 className="text-lg font-bold text-gray-900 mb-2">Evaluation Submitted!</h3>
-                            <p className="text-gray-600">Your purchase review has been successfully submitted.</p>
+                            <p className="text-gray-600">Your purchase review has been successfully submitted.</p>                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Financial Opening Schedule Modal */}
+            {showFinancialScheduleModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                Schedule Financial Opening - Tender {selectedTender?.id}
+                            </h3>
+                            <button 
+                                onClick={() => setShowFinancialScheduleModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {selectedTender && (
+                            <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                                <h4 className="font-medium text-blue-900 mb-2">{selectedTender.description || selectedTender.item_name}</h4>
+                                <div className="grid grid-cols-2 gap-4 text-sm text-blue-800">
+                                    <div>
+                                        <span className="font-medium">Total Grievances:</span> {selectedTender.grievances_count}
+                                    </div>
+                                    <div>
+                                        <span className="font-medium">Resolved:</span> {selectedTender.resolved_grievances_count}
+                                    </div>
+                                    <div>
+                                        <span className="font-medium">Rejected:</span> {selectedTender.rejected_grievances_count}
+                                    </div>
+                                    <div>
+                                        <span className="font-medium">Items:</span> {selectedTender.items_with_suppliers?.length || 0}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleScheduleSubmit}>
+                            {error && (
+                                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    {error}
+                                </div>
+                            )}
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Financial Opening Date & Time (Pakistan Time UTC+5) *
+                                </label>
+                                <input
+                                    type="datetime-local"
+                                    value={scheduleForm.openingDateTime}
+                                    onChange={(e) => setScheduleForm({...scheduleForm, openingDateTime: e.target.value})}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                                    required
+                                />
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Select when the financial bids should be opened. This must be a future date and time.
+                                </p>
+                            </div>
+
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFinancialScheduleModal(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-orange-600 hover:bg-orange-700"
+                                >
+                                    <i className="fas fa-calendar-plus mr-2"></i>
+                                    Schedule Opening
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Financial Opening Results Modal */}
+            {showFinancialOpeningModal && financialOpeningData && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-5/6 lg:w-4/5 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                Financial Opening Results - Tender {financialOpeningData.tender?.id}
+                            </h3>
+                            <button 
+                                onClick={() => setShowFinancialOpeningModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        <div className="mb-6">
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                                <h4 className="text-green-800 font-medium mb-2">
+                                    <i className="fas fa-unlock mr-2"></i>
+                                    Financial Bids Opened Successfully!
+                                </h4>
+                                <p className="text-green-700 text-sm">
+                                    Opened at: {new Date(financialOpeningData.opened_at).toLocaleString('en-PK')}
+                                </p>
+                                {financialOpeningData.report_file && (
+                                    <button
+                                        onClick={() => downloadFinancialOpeningReport(financialOpeningData.report_file)}
+                                        className="mt-2 px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                                    >
+                                        <i className="fas fa-download mr-1"></i>
+                                        Download Full Report
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Optimal Combinations */}
+                        <div className="mb-6">
+                            <h4 className="text-lg font-medium text-gray-900 mb-4">
+                                <i className="fas fa-trophy mr-2 text-yellow-500"></i>
+                                Top Optimal Supplier Combinations
+                            </h4>
+                            <div className="space-y-3">
+                                {financialOpeningData.optimal_combinations?.slice(0, 5).map((combo, index) => (
+                                    <div key={index} className={`border rounded-lg p-4 ${
+                                        index === 0 ? 'border-yellow-300 bg-yellow-50' :
+                                        index === 1 ? 'border-gray-300 bg-gray-50' :
+                                        index === 2 ? 'border-orange-300 bg-orange-50' :
+                                        'border-gray-200'
+                                    }`}>
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <div className="flex items-center mb-2">
+                                                    <span className={`text-lg font-bold mr-2 ${
+                                                        index === 0 ? 'text-yellow-600' :
+                                                        index === 1 ? 'text-gray-600' :
+                                                        index === 2 ? 'text-orange-600' :
+                                                        'text-gray-500'
+                                                    }`}>
+                                                        #{index + 1}
+                                                    </span>
+                                                    {index === 0 && <i className="fas fa-crown text-yellow-500 mr-1"></i>}
+                                                    <span className="font-medium">
+                                                        Total Cost: Rs {combo.total_cost.toLocaleString()}
+                                                    </span>
+                                                    <span className="ml-4 text-sm text-gray-600">
+                                                        Avg Delivery: {combo.average_delivery_time} days
+                                                    </span>
+                                                </div>
+                                                <div className="text-sm text-gray-700">
+                                                    {combo.suppliers.map(supplier => 
+                                                        `${supplier.item_name}: ${supplier.company_name}`
+                                                    ).join(' | ')}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Item-wise Supplier Details */}
+                        <div className="mb-6">
+                            <h4 className="text-lg font-medium text-gray-900 mb-4">
+                                <i className="fas fa-list mr-2 text-blue-500"></i>
+                                Item-wise Approved Suppliers
+                            </h4>
+                            <div className="space-y-4">
+                                {financialOpeningData.items_with_suppliers?.map((itemCombo, index) => (
+                                    <div key={index} className="border rounded-lg p-4">
+                                        <h5 className="font-medium text-gray-900 mb-3">
+                                            {itemCombo.item.item_name}
+                                        </h5>
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className="bg-gray-50">
+                                                    <tr>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total Cost</th>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Delivery Days</th>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Contact</th>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Financial Bid</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                    {itemCombo.approved_suppliers.map((supplier, supplierIndex) => (
+                                                        <tr key={supplierIndex} className={supplierIndex === 0 ? 'bg-green-50' : ''}>
+                                                            <td className="px-4 py-2 text-sm">
+                                                                <div>
+                                                                    <div className="font-medium text-gray-900">{supplier.company_name}</div>
+                                                                    {supplierIndex === 0 && (
+                                                                        <span className="text-xs text-green-600 font-medium">LOWEST BID</span>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-2 text-sm text-gray-900">
+                                                                Rs {(supplier.item_total_cost || supplier.total_cost).toLocaleString()}
+                                                            </td>
+                                                            <td className="px-4 py-2 text-sm text-gray-900">
+                                                                {supplier.delivery_days} days
+                                                            </td>
+                                                            <td className="px-4 py-2 text-sm text-gray-900">
+                                                                {supplier.company_email}
+                                                            </td>
+                                                            <td className="px-4 py-2 text-sm">
+                                                                <button
+                                                                    onClick={() => downloadFinancialBid(supplier.bid_id, supplier.company_name)}
+                                                                    className="text-blue-600 hover:text-blue-800 text-sm"
+                                                                >
+                                                                    <i className="fas fa-download mr-1"></i>
+                                                                    Download
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => setShowFinancialOpeningModal(false)}
+                                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                                Close
+                            </button>
                         </div>
                     </div>
                 </div>

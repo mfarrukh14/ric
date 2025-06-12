@@ -8,10 +8,12 @@ const auth = async (req, res, next) => {
         const token = req.header('Authorization')?.replace('Bearer ', '');
         
         if (!token) {
+            console.log('❌ No token provided for:', req.path);
             throw new Error('No token provided');
         }
 
         const decoded = jwt.verify(token, JWT_SECRET);
+        console.log('🔍 Auth middleware - User ID:', decoded.id, 'Path:', req.path);
         
         const db = getDatabase();
         
@@ -57,19 +59,26 @@ const auth = async (req, res, next) => {
                         else resolve(row);
                     }
                 );
-            });
-
-            if (!user) {
+            });            if (!user) {
                 throw new Error('User not found');
             }
+
+            console.log('✅ User authenticated:', {
+                id: user.id,
+                name: user.name,
+                role: user.role,
+                department_name: user.department_name
+            });
 
             req.user = user;
         }
         
         next();
     } catch (error) {
+        console.log('❌ Auth failed:', error.message);
         res.status(401).json({ error: 'Please authenticate' });
     }
 };
 
 module.exports = auth;
+module.exports.authenticateToken = auth;

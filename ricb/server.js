@@ -8,6 +8,7 @@ const demandRoutes = require('./src/routes/demands');
 const supplierRoutes = require('./src/routes/suppliers');
 const technicalEvaluationRoutes = require('./src/routes/technicalEvaluation');
 const grievanceRoutes = require('./src/routes/grievanceRoutes');
+const financialOpeningRoutes = require('./src/routes/financialOpening');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -23,6 +24,7 @@ app.use('/api/demands', demandRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/technical-evaluation', technicalEvaluationRoutes);
 app.use('/api/grievances', grievanceRoutes);
+app.use('/api/financial-opening', financialOpeningRoutes);
 
 // Test route
 app.get('/', (req, res) => {
