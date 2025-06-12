@@ -81,9 +81,10 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
                     `SELECT 
                         COALESCE(di.id, 0) as item_id,
                         COALESCE(di.item_name, d.item_name) as item_name,
-                        COUNT(DISTINCT tap.supplier_id) as approved_suppliers_count
+                        COUNT(DISTINCT COALESCE(tap.supplier_id, ta.supplier_id)) as approved_suppliers_count
                      FROM demand_items di
                      LEFT JOIN temporary_approved_pools tap ON di.id = tap.item_id AND tap.tender_id = ?
+                     LEFT JOIN temporary_approvals ta ON di.id = ta.item_id AND ta.tender_id = ? AND ta.status = 'active'
                      JOIN demands d ON di.demand_id = d.id
                      WHERE di.demand_id = ?
                         AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
@@ -95,13 +96,14 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
                      SELECT 
                         0 as item_id,
                         d.item_name,
-                        COUNT(DISTINCT tap.supplier_id) as approved_suppliers_count
+                        COUNT(DISTINCT COALESCE(tap.supplier_id, ta.supplier_id)) as approved_suppliers_count
                      FROM demands d
                      LEFT JOIN temporary_approved_pools tap ON tap.item_id = 0 AND tap.tender_id = ?
+                     LEFT JOIN temporary_approvals ta ON ta.item_id = 0 AND ta.tender_id = ? AND ta.status = 'active'
                      LEFT JOIN demand_items di ON di.demand_id = d.id
                      WHERE d.id = ? AND di.id IS NULL
                      GROUP BY d.item_name`,
-                    [tender.id, tender.demand_id, tender.id, tender.demand_id],
+                    [tender.id, tender.id, tender.demand_id, tender.id, tender.id, tender.demand_id],
                     (err, rows) => {
                         if (err) reject(err);
                         else resolve(rows);
@@ -369,83 +371,55 @@ const openFinancialBids = async (req, res) => {
             });
         }
 
-        // Update financial opening status
+        // Start transaction for the entire process
         await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE financial_openings SET 
-                 status = 'opened',
-                 opened_at = CURRENT_TIMESTAMP,
-                 opened_by = ?
-                 WHERE tender_id = ?`,
-                [user.id, tenderId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
         });
 
-        // Get tender details
-        const tender = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by
-                 FROM demand_tenders dt
-                 JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.id = ?`,
-                [tenderId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        try {
+            // Update financial opening status
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE financial_openings SET 
+                     status = 'opened',
+                     opened_at = CURRENT_TIMESTAMP,
+                     opened_by = ?
+                     WHERE tender_id = ?`,
+                    [user.id, tenderId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
 
-        // Get demand items
-        const items = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT * FROM demand_items 
-                 WHERE demand_id = ? 
-                 AND (store_fulfilled IS NULL OR store_fulfilled = 0)
-                 AND (store_status != 'available' OR store_status IS NULL)
-                 ORDER BY id`,
-                [tender.demand_id],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+            // Get tender details
+            const tender = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by
+                     FROM demand_tenders dt
+                     JOIN demands d ON dt.demand_id = d.id
+                     WHERE dt.id = ?`,
+                    [tenderId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
 
-        // If no items found (legacy single-item demand), create from main demand
-        const finalItems = items.length === 0 ? [{
-            id: 0,
-            item_name: tender.item_name,
-            quantity: tender.quantity || 0,
-            estimated_cost: tender.estimated_cost || 0,
-            unit: 'pieces'
-        }] : items;
-
-        // Get approved suppliers for each item from temporary pools
-        const itemSupplierCombinations = [];
-
-        for (const item of finalItems) {
-            const approvedSuppliers = await new Promise((resolve, reject) => {
-                db.all(                    `SELECT DISTINCT tap.supplier_id, tap.bid_id, 
-                            s.company_name, s.company_email, s.contact_person,
-                            sb.total_cost, sb.proposed_quantity, sb.delivery_days,
-                            sb.financial_bid_document, sb.technical_bid_document,
-                            sbi.unit_price, sbi.proposed_quantity as item_quantity, sbi.total_cost as item_total_cost
-                     FROM temporary_approved_pools tap
-                     JOIN suppliers s ON tap.supplier_id = s.id
-                     JOIN supplier_bids sb ON tap.bid_id = sb.id
-                     LEFT JOIN supplier_bid_items sbi ON sb.id = sbi.bid_id AND sbi.item_id = ?
-                     WHERE tap.tender_id = ? AND tap.item_id = ?
-                     ORDER BY 
-                        CASE 
-                            WHEN sbi.total_cost IS NOT NULL THEN sbi.total_cost 
-                            ELSE sb.total_cost 
-                        END ASC`,
-                    [item.id, tenderId, item.id],
+            // Get demand items
+            const items = await new Promise((resolve, reject) => {
+                db.all(
+                    `SELECT * FROM demand_items 
+                     WHERE demand_id = ? 
+                     AND (store_fulfilled IS NULL OR store_fulfilled = 0)
+                     AND (store_status != 'available' OR store_status IS NULL)
+                     ORDER BY id`,
+                    [tender.demand_id],
                     (err, rows) => {
                         if (err) reject(err);
                         else resolve(rows);
@@ -453,26 +427,198 @@ const openFinancialBids = async (req, res) => {
                 );
             });
 
-            itemSupplierCombinations.push({
-                item: item,
-                approved_suppliers: approvedSuppliers
+            // If no items found (legacy single-item demand), create from main demand
+            const finalItems = items.length === 0 ? [{
+                id: 0,
+                item_name: tender.item_name,
+                quantity: tender.quantity || 0,
+                estimated_cost: tender.estimated_cost || 0,
+                unit: 'pieces'
+            }] : items;
+
+            // Get approved suppliers for each item from temporary pools
+            const itemSupplierCombinations = [];
+
+            for (const item of finalItems) {
+                const approvedSuppliers = await new Promise((resolve, reject) => {
+                    db.all(
+                        `SELECT DISTINCT 
+                            COALESCE(tap.supplier_id, ta.supplier_id) as supplier_id,
+                            COALESCE(tap.bid_id, ta.grievance_id) as bid_id,
+                            s.company_name, s.company_email, s.contact_person,
+                            sb.total_cost, sb.proposed_quantity, sb.delivery_days,
+                            sb.financial_bid_document, sb.technical_bid_document,
+                            sbi.unit_price, sbi.proposed_quantity as item_quantity, sbi.total_cost as item_total_cost,
+                            CASE WHEN tap.supplier_id IS NOT NULL THEN 'technical' ELSE 'grievance' END as approval_source
+                         FROM (
+                            SELECT supplier_id, bid_id FROM temporary_approved_pools WHERE tender_id = ? AND item_id = ?
+                            UNION
+                            SELECT supplier_id, grievance_id as bid_id FROM temporary_approvals WHERE tender_id = ? AND item_id = ? AND status = 'active'
+                         ) combined
+                         LEFT JOIN temporary_approved_pools tap ON combined.supplier_id = tap.supplier_id AND tap.tender_id = ? AND tap.item_id = ?
+                         LEFT JOIN temporary_approvals ta ON combined.supplier_id = ta.supplier_id AND ta.tender_id = ? AND ta.item_id = ? AND ta.status = 'active'
+                         JOIN suppliers s ON combined.supplier_id = s.id
+                         JOIN supplier_bids sb ON combined.bid_id = sb.id
+                         LEFT JOIN supplier_bid_items sbi ON sb.id = sbi.bid_id AND sbi.item_id = ?
+                         ORDER BY 
+                            CASE 
+                                WHEN sbi.total_cost IS NOT NULL THEN sbi.total_cost 
+                                ELSE sb.total_cost 
+                            END ASC`,
+                        [tenderId, item.id, tenderId, item.id, tenderId, item.id, tenderId, item.id, item.id],
+                        (err, rows) => {
+                            if (err) reject(err);
+                            else resolve(rows);
+                        }
+                    );
+                });
+
+                itemSupplierCombinations.push({
+                    item: item,
+                    approved_suppliers: approvedSuppliers
+                });
+            }
+
+            // Generate optimal combinations
+            const optimalCombinations = generateOptimalCombinations(itemSupplierCombinations);
+
+            if (optimalCombinations.length === 0) {
+                throw new Error('No valid supplier combinations found');
+            }
+
+            // Automatically award to the best combination (lowest cost, best delivery time)
+            const winningCombination = optimalCombinations[0];
+            
+            // Update tender status to awarded
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE demand_tenders SET 
+                     tender_status = 'awarded', 
+                     awarded_at = CURRENT_TIMESTAMP,
+                     evaluation_remarks = ?
+                     WHERE id = ?`,
+                    ['Automatically awarded based on financial opening - best cost and delivery combination', tenderId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
             });
+
+            // Create supply orders for each supplier in the winning combination
+            const supplyOrders = [];
+            const EmailService = require('../utils/emailService');
+            const pdfService = require('../utils/pdfService');
+            const emailService = new EmailService();
+
+            for (const supplierData of winningCombination.suppliers) {
+                const orderNumber = `SO-${Date.now()}-${tenderId}-${supplierData.supplier_id}`;
+                
+                // Create supply order
+                const supplyOrderResult = await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO supply_orders (
+                            order_number, demand_id, supplier_id, tender_id, bid_id,
+                            item_name, quantity, unit_price, total_amount, delivery_date, order_status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', '+' || ? || ' days'), 'pending')`,
+                        [
+                            orderNumber,
+                            tender.demand_id,
+                            supplierData.supplier_id,
+                            tenderId,
+                            supplierData.bid_id,
+                            supplierData.item_name,
+                            supplierData.item_quantity || supplierData.proposed_quantity,
+                            supplierData.unit_price || (supplierData.total_cost / supplierData.proposed_quantity),
+                            supplierData.item_total_cost || supplierData.total_cost,
+                            supplierData.delivery_days
+                        ],
+                        function(err) {
+                            if (err) reject(err);
+                            else resolve({ id: this.lastID });
+                        }
+                    );
+                });
+
+                const supplyOrderId = supplyOrderResult.id;
+
+                // Prepare order data for PDF and email
+                const orderData = {
+                    order_id: supplyOrderId,
+                    order_number: orderNumber,
+                    tender_id: tenderId,
+                    demand_id: tender.demand_id,
+                    item_name: supplierData.item_name,
+                    description: tender.description || 'No description',
+                    quantity: supplierData.item_quantity || supplierData.proposed_quantity,
+                    unit_price: supplierData.unit_price || (supplierData.total_cost / supplierData.proposed_quantity),
+                    awarded_bid_amount: supplierData.item_total_cost || supplierData.total_cost,
+                    delivery_time_days: supplierData.delivery_days,
+                    delivery_date: new Date(Date.now() + (supplierData.delivery_days * 24 * 60 * 60 * 1000)).toISOString().split('T')[0],
+                    order_status: 'pending',
+                    urgency: tender.urgency || 'normal',
+                    required_by: tender.required_by,
+                    company_name: supplierData.company_name,
+                    company_email: supplierData.company_email,
+                    bid_comments: '',
+                    order_date: new Date().toISOString()
+                };
+
+                supplyOrders.push({
+                    ...orderData,
+                    supplier_data: supplierData
+                });
+
+                // Generate PDF and send email notification (run in background)
+                try {
+                    console.log(`Generating PDF for supply order ${orderNumber}...`);
+                    const pdfBuffer = await pdfService.generateSupplyOrderPDF(orderData);
+                    
+                    console.log(`Sending email to ${supplierData.company_email}...`);
+                    await emailService.sendSupplyOrderEmail(
+                        supplierData.company_email,
+                        supplierData.company_name,
+                        orderData,
+                        pdfBuffer
+                    );
+                    
+                    console.log(`PDF generated and email sent successfully for order ${orderNumber}`);
+                } catch (emailError) {
+                    console.error(`Failed to send PDF/email for order ${orderNumber}:`, emailError);
+                    // Don't fail the entire process if email fails
+                }
+            }
+
+            // Generate Excel report
+            const reportFileName = await generateFinancialOpeningReport(db, tender, itemSupplierCombinations, optimalCombinations);
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            res.json({
+                message: 'Financial bids opened and tender automatically awarded successfully',
+                tender: tender,
+                items_with_suppliers: itemSupplierCombinations,
+                optimal_combinations: optimalCombinations,
+                winning_combination: winningCombination,
+                supply_orders: supplyOrders,
+                report_file: reportFileName,
+                opened_at: pakistanTime.toISOString(),
+                awarded: true
+            });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
         }
-
-        // Generate optimal combinations
-        const optimalCombinations = generateOptimalCombinations(itemSupplierCombinations);
-
-        // Generate Excel report
-        const reportFileName = await generateFinancialOpeningReport(db, tender, itemSupplierCombinations, optimalCombinations);
-
-        res.json({
-            message: 'Financial bids opened successfully',
-            tender: tender,
-            items_with_suppliers: itemSupplierCombinations,
-            optimal_combinations: optimalCombinations,
-            report_file: reportFileName,
-            opened_at: pakistanTime.toISOString()
-        });
 
     } catch (error) {
         console.error('Error opening financial bids:', error);

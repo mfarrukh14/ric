@@ -1298,16 +1298,16 @@ const PurchaseDepartment = () => {
                                 <h4 className="font-medium text-blue-900 mb-2">{selectedTender.description || selectedTender.item_name}</h4>
                                 <div className="grid grid-cols-2 gap-4 text-sm text-blue-800">
                                     <div>
-                                        <span className="font-medium">Total Grievances:</span> {selectedTender.grievances_count}
+                                        <span className="font-medium text-gray-700">Total Grievances:</span> {selectedTender.grievances_count}
                                     </div>
                                     <div>
-                                        <span className="font-medium">Resolved:</span> {selectedTender.resolved_grievances_count}
+                                        <span className="font-medium text-gray-700">Resolved:</span> {selectedTender.resolved_grievances_count}
                                     </div>
                                     <div>
-                                        <span className="font-medium">Rejected:</span> {selectedTender.rejected_grievances_count}
+                                        <span className="font-medium text-gray-700">Rejected:</span> {selectedTender.rejected_grievances_count}
                                     </div>
                                     <div>
-                                        <span className="font-medium">Items:</span> {selectedTender.items_with_suppliers?.length || 0}
+                                        <span className="font-medium text-gray-700">Items:</span> {selectedTender.items_with_suppliers?.length || 0}
                                     </div>
                                 </div>
                             </div>
@@ -1376,16 +1376,33 @@ const PurchaseDepartment = () => {
                         <div className="mb-6">
                             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                                 <h4 className="text-green-800 font-medium mb-2">
-                                    <i className="fas fa-unlock mr-2"></i>
-                                    Financial Bids Opened Successfully!
+                                    <i className="fas fa-trophy mr-2"></i>
+                                    Financial Bids Opened & Tender Automatically Awarded!
                                 </h4>
-                                <p className="text-green-700 text-sm">
+                                <p className="text-green-700 text-sm mb-2">
                                     Opened at: {new Date(financialOpeningData.opened_at).toLocaleString('en-PK')}
                                 </p>
+                                {financialOpeningData.awarded && (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3">
+                                        <h5 className="text-blue-800 font-medium mb-2">
+                                            <i className="fas fa-check-circle mr-2"></i>
+                                            Automatic Award Summary:
+                                        </h5>
+                                        <p className="text-blue-700 text-sm mb-2">
+                                            • Tender automatically awarded to optimal supplier combination (lowest cost + best delivery)
+                                        </p>
+                                        <p className="text-blue-700 text-sm mb-2">
+                                            • Supply orders created and emails sent to winning suppliers with PDF attachments
+                                        </p>
+                                        <p className="text-blue-700 text-sm">
+                                            • {financialOpeningData.supply_orders?.length || 0} supply order(s) generated - check Supply Orders tab
+                                        </p>
+                                    </div>
+                                )}
                                 {financialOpeningData.report_file && (
                                     <button
                                         onClick={() => downloadFinancialOpeningReport(financialOpeningData.report_file)}
-                                        className="mt-2 px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                                        className="mt-3 px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
                                     >
                                         <i className="fas fa-download mr-1"></i>
                                         Download Full Report
