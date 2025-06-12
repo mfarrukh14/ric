@@ -371,7 +371,7 @@ const SupplierAuth = ({ onBack, onLogin }) => {
                             <input
                                 id="contactNumber"
                                 name="contactNumber"
-                                type="text"
+                                type="number"
                                 required
                                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                                 value={registerData.contactNumber}

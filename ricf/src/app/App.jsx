@@ -9,6 +9,7 @@ import BidApplication from '../components/supplier/BidApplication';
 import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
 import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
+import CreateDemandForm from '../components/demand/CreateDemandForm';
 import Header from '../components/layout/header/Header';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -110,6 +111,14 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['supplier']}>
                 <BidApplication />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/create-demand"
+            element={
+              <ProtectedRoute>
+                <CreateDemandForm />
               </ProtectedRoute>
             }
           />

@@ -211,7 +211,7 @@ class PDFService {
         <body>
             <div class="container">
                 <div class="header">
-                    <div class="company-name">Regional Institute of Computer Sciences</div>
+                    <div class="company-name">Rawalpindi Institute of Cardiology</div>
                     <div class="document-title">SUPPLY ORDER</div>
                     <div class="order-number">Order No: ${orderNumber}</div>
                 </div>
@@ -322,7 +322,7 @@ class PDFService {
 
                 <div class="footer">
                     <p>This is a computer-generated document and does not require a physical signature.</p>
-                    <p>For any queries, please contact the Purchase Department at purchase@rics.edu.pk</p>
+                    <p>For any queries, please contact the Purchase Department at purchase department at RIC</p>
                 </div>
             </div>
         </body>

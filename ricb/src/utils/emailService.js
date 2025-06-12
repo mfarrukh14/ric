@@ -17,11 +17,11 @@ class EmailService {
         
         const mailOptions = {
             from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Tender System',
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
                 address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
             },
             to: supplierEmail,
-            subject: '🎉 Congratulations! Your Supplier Application Has Been Approved',
+            subject: 'Congratulations! Your Supplier Application Has Been Approved',
             html: htmlContent
         };
 
@@ -257,7 +257,7 @@ class EmailService {
                 <div class="header">
                     <div class="header-content">
                         <div class="success-badge">
-                            <span class="emoji">🎉</span> APPROVED
+                            <span class="emoji"></span>APPROVED
                         </div>
                         <h1>Congratulations!</h1>
                         <p>Your supplier application has been successfully approved</p>
@@ -272,7 +272,7 @@ class EmailService {
                     </div>
                     
                     <div class="highlight-box">
-                        <h3><span class="emoji">🚀</span> Welcome to Our Supplier Network!</h3>
+                        <h3><span class="emoji"></span> Welcome to Our Supplier Network!</h3>
                         <p>You are now an approved supplier in our tender system and can participate in upcoming procurement opportunities.</p>
                     </div>
                     
@@ -294,8 +294,8 @@ class EmailService {
                     </div>
                     
                     <div class="contact-info">
-                        <h4><span class="emoji">📞</span> Need Support?</h4>
-                        <p>Our procurement team is here to help you get started. If you have any questions or need assistance navigating the system, please don't hesitate to reach out to us.</p>
+                        <h4><span class="emoji">📞</span>Need Support?</h4>
+                        <p>Our Purchase team is here to help you get started. If you have any questions or need assistance navigating the system, Feel free to reach out to us.</p>
                     </div>
                     
                     <p style="margin-top: 30px;">
@@ -314,7 +314,7 @@ class EmailService {
                     <p>${process.env.COMPANY_ADDRESS || '123 Innovation Street, Tech City'}</p>
                     <p>Email: ${process.env.EMAIL_FROM_EMAIL || 'procurement@company.com'} | Website: ${process.env.COMPANY_WEBSITE || 'www.company.com'}</p>
                     <p style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
-                        This is an automated message. Please do not reply directly to this email.
+                        This is an automated system generated message. Please do not reply directly to this email.
                     </p>
                     <p style="font-size: 12px; opacity: 0.8;">
                         © ${new Date().getFullYear()} ${process.env.COMPANY_NAME || 'Company Name'}. All rights reserved.
@@ -335,11 +335,11 @@ class EmailService {
         
         const mailOptions = {
             from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Tender System',
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
                 address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
             },
             to: supplierEmail,
-            subject: `🏆 Congratulations! Supply Order Awarded - ${orderNumber}`,
+            subject: `Congratulations! Supply Order Awarded - ${orderNumber}`,
             html: htmlContent,
             attachments: [
                 {
@@ -541,8 +541,8 @@ class EmailService {
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>🏆 Supply Order Awarded!</h1>
-                    <p>Regional Institute of Computer Sciences</p>
+                    <h1>Supply Order Awarded!</h1>
+                    <p>Rawalpindi Institute of Cardiology</p>
                 </div>
                 
                 <div class="content">
@@ -614,8 +614,8 @@ class EmailService {
                 </div>
                 
                 <div class="footer">
-                    <p><strong>Regional Institute of Computer Sciences</strong></p>
-                    <p>Tender Management System | Automated Message</p>
+                    <p><strong>Rawalpindi Institute of Cardiology</strong></p>
+                    <p>RIC e-Tender System | Automated Message</p>
                     <p>This email was sent on ${currentDate}</p>
                     <p>Please do not reply to this automated email. For inquiries, contact our Purchase Department.</p>
                 </div>
@@ -647,7 +647,7 @@ class EmailService {
                 address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
             },
             to: supplierEmail,
-            subject: `📅 Grievance Meeting Scheduled - ${itemName}`,
+            subject: `Grievance Meeting Scheduled - ${itemName}`,
             html: htmlContent
         };
 
@@ -892,7 +892,7 @@ class EmailService {
             <div class="email-container">
                 <div class="header">
                     <div class="meeting-badge">
-                        <span class="emoji">📅</span> MEETING SCHEDULED
+                        <span class="emoji"></span>MEETING SCHEDULED
                     </div>
                     <h1>Grievance Meeting Scheduled</h1>
                     <p>Your grievance application has been reviewed</p>
@@ -1177,7 +1177,7 @@ class EmailService {
             <div class="email-container">
                 <div class="header">
                     <div class="approval-badge">
-                        <span class="emoji">✅</span> GRIEVANCE APPROVED
+                        <span class="emoji"></span>GRIEVANCE APPROVED
                     </div>
                     <h1>Congratulations!</h1>
                     <p>Your grievance has been approved by the committee</p>
@@ -1249,7 +1249,7 @@ class EmailService {
                 address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
             },
             to: supplierEmail,
-            subject: `❌ Grievance Decision - ${itemName}`,
+            subject: `Grievance Decision - ${itemName}`,
             html: htmlContent
         };
 
@@ -1457,7 +1457,7 @@ class EmailService {
             <div class="email-container">
                 <div class="header">
                     <div class="rejection-badge">
-                        <span class="emoji">❌</span> GRIEVANCE DECISION
+                        <span class="emoji"></span>GRIEVANCE DECISION
                     </div>
                     <h1>Grievance Review Complete</h1>
                     <p>Your grievance application has been reviewed</p>

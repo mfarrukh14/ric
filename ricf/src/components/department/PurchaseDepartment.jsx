@@ -11,6 +11,7 @@ const PurchaseDepartment = () => {
     const [activeTab, setActiveTab] = useState('demands');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [processingTenderIds, setProcessingTenderIds] = useState([]);
 
     const [evaluationForm, setEvaluationForm] = useState({
         status: '',
@@ -23,16 +24,14 @@ const PurchaseDepartment = () => {
             urgency: '',
             required_by: ''
         }
-    });    const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+    }); const [showEvaluationModal, setShowEvaluationModal] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [showFinancialScheduleModal, setShowFinancialScheduleModal] = useState(false);
     const [showFinancialOpeningModal, setShowFinancialOpeningModal] = useState(false);
     const [financialOpeningData, setFinancialOpeningData] = useState(null);
     const [scheduleForm, setScheduleForm] = useState({
         openingDateTime: ''
-    });    useEffect(() => {
-        console.log('🏢 Purchase Department component loaded');
-        console.log('🔑 Token:', localStorage.getItem('token') ? 'Present' : 'Missing');
+    }); useEffect(() => {
         fetchPurchaseDemands();
         fetchSupplyOrders();
         fetchReadyTenders();
@@ -60,7 +59,7 @@ const PurchaseDepartment = () => {
         } finally {
             setLoading(false);
         }
-    };    const fetchSupplyOrders = async () => {
+    }; const fetchSupplyOrders = async () => {
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/demands/supply-orders/all`, {
@@ -80,9 +79,8 @@ const PurchaseDepartment = () => {
             console.error('Error fetching supply orders:', err);
             // Don't set error for supply orders as it's secondary functionality
         }
-    };    const fetchReadyTenders = async () => {
+    }; const fetchReadyTenders = async () => {
         try {
-            console.log('🔍 Fetching ready tenders...');
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/financial-opening/ready-tenders`, {
                 headers: {
@@ -90,8 +88,6 @@ const PurchaseDepartment = () => {
                     'Content-Type': 'application/json'
                 }
             });
-
-            console.log('📡 Response status:', response.status);
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error('❌ API Error:', errorText);
@@ -99,14 +95,12 @@ const PurchaseDepartment = () => {
             }
 
             const data = await response.json();
-            console.log('✅ Ready tenders data:', data);
             setReadyTenders(data);
         } catch (err) {
             console.error('Error fetching ready tenders:', err);
         }
-    };    const fetchScheduledOpenings = async () => {
+    }; const fetchScheduledOpenings = async () => {
         try {
-            console.log('🗓️ Fetching scheduled openings...');
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/financial-opening/scheduled`, {
                 headers: {
@@ -120,7 +114,6 @@ const PurchaseDepartment = () => {
             }
 
             const data = await response.json();
-            console.log('✅ Scheduled openings data:', data);
             setScheduledOpenings(data);
         } catch (err) {
             console.error('Error fetching scheduled openings:', err);
@@ -177,7 +170,7 @@ const PurchaseDepartment = () => {
         if (evaluationForm.status === 'approved' && evaluationForm.biddingExpiryTime) {
             const expiryTime = new Date(evaluationForm.biddingExpiryTime);
             const minTime = new Date(Date.now() + 1 * 60 * 1000); // 1 minute from now
-            
+
             if (expiryTime < minTime) {
                 setError('Bidding expiry must be at least 1 minute from now');
                 return;
@@ -187,17 +180,17 @@ const PurchaseDepartment = () => {
         try {
             const token = localStorage.getItem('token');
             let endpoint, method;
-            
+
             if (evaluationForm.status === 'approved') {
                 // Use FormData for file uploads
                 const formData = new FormData();
                 formData.append('expiryDate', evaluationForm.biddingExpiryTime);
                 formData.append('tenderDocument', evaluationForm.tenderDocument);
                 formData.append('itemsList', evaluationForm.itemsList);
-                
+
                 endpoint = `${apiUrl}/demands/${selectedDemand.id}/approve`;
                 method = 'PUT';
-                
+
                 const response = await fetch(endpoint, {
                     method: method,
                     headers: {
@@ -218,7 +211,7 @@ const PurchaseDepartment = () => {
                     action: 'reject',
                     remarks: evaluationForm.comments
                 };
-                
+
                 const response = await fetch(endpoint, {
                     method: method,
                     headers: {
@@ -237,7 +230,7 @@ const PurchaseDepartment = () => {
             setShowEvaluationModal(false);
             fetchPurchaseDemands(); // Refresh the list
             fetchSupplyOrders(); // Refresh supply orders in case new ones were created
-            
+
             // Show success modal
             setShowSuccessModal(true);
             setTimeout(() => {
@@ -326,7 +319,7 @@ const PurchaseDepartment = () => {
             setShowFinancialScheduleModal(false);
             fetchReadyTenders();
             fetchScheduledOpenings();
-            
+
             // Show success message
             alert('Financial opening scheduled successfully!');
         } catch (err) {
@@ -336,6 +329,9 @@ const PurchaseDepartment = () => {
 
     const handleOpenFinancialBids = async (tenderId) => {
         try {
+            // Add tender ID to processing list
+            setProcessingTenderIds(prev => [...prev, tenderId]);
+
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/financial-opening/open/${tenderId}`, {
                 method: 'POST',
@@ -354,9 +350,13 @@ const PurchaseDepartment = () => {
             setFinancialOpeningData(data);
             setShowFinancialOpeningModal(true);
             fetchScheduledOpenings();
+            fetchSupplyOrders(); // Refresh supply orders in case new ones were created
         } catch (err) {
             setError(err.message);
             alert(`Error: ${err.message}`);
+        } finally {
+            // Remove tender ID from processing list when done
+            setProcessingTenderIds(prev => prev.filter(id => id !== tenderId));
         }
     };
 
@@ -437,7 +437,7 @@ const PurchaseDepartment = () => {
         const { name, files } = e.target;
         if (files && files[0]) {
             const file = files[0];
-            
+
             // Validate file types
             if (name === 'tenderDocument') {
                 if (file.type !== 'application/pdf') {
@@ -455,13 +455,13 @@ const PurchaseDepartment = () => {
                     return;
                 }
             }
-            
+
             // Validate file size (10MB)
             if (file.size > 10 * 1024 * 1024) {
                 setError('File size must be less than 10MB');
                 return;
             }
-            
+
             setEvaluationForm(prev => ({
                 ...prev,
                 [name]: file
@@ -545,11 +545,10 @@ const PurchaseDepartment = () => {
                         <nav className="flex space-x-8" aria-label="Tabs">
                             <button
                                 onClick={() => setActiveTab('demands')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                                    activeTab === 'demands'
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'demands'
                                         ? 'border-indigo-500 text-indigo-600'
                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                }`}
+                                    }`}
                             >
                                 Pending Demands
                                 {demands.length > 0 && (
@@ -559,11 +558,10 @@ const PurchaseDepartment = () => {
                                 )}
                             </button>                            <button
                                 onClick={() => setActiveTab('supply-orders')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                                    activeTab === 'supply-orders'
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'supply-orders'
                                         ? 'border-indigo-500 text-indigo-600'
                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                }`}
+                                    }`}
                             >
                                 Supply Orders
                                 {supplyOrders.length > 0 && (
@@ -574,11 +572,10 @@ const PurchaseDepartment = () => {
                             </button>
                             <button
                                 onClick={() => setActiveTab('financial-opening')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                                    activeTab === 'financial-opening'
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'financial-opening'
                                         ? 'border-indigo-500 text-indigo-600'
                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                }`}
+                                    }`}
                             >
                                 Financial Opening
                                 {(readyTenders.length + scheduledOpenings.ready_to_open?.length + scheduledOpenings.scheduled_future?.length) > 0 && (
@@ -593,7 +590,7 @@ const PurchaseDepartment = () => {
                         <div className="bg-white shadow overflow-hidden sm:rounded-md">
                             <div className="px-4 py-5 sm:p-6">
                                 <h2 className="text-lg font-medium text-gray-900 mb-4">Demands for Purchase Review</h2>
-                                
+
                                 {demands.length === 0 ? (
                                     <div className="text-center py-12">
                                         <div className="text-gray-500">No demands available for purchase review at this time.</div>
@@ -650,11 +647,10 @@ const PurchaseDepartment = () => {
                                                                     <div className="flex justify-between items-start mb-2">
                                                                         <h5 className="font-medium text-gray-900">{item.item_name}</h5>
                                                                         {item.store_status && (
-                                                                            <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                                                                item.store_status === 'available' ? 'bg-green-100 text-green-800' :
-                                                                                item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-                                                                                'bg-red-100 text-red-800'
-                                                                            }`}>
+                                                                            <span className={`px-2 py-1 rounded text-xs font-medium ${item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                                                                    item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                                                                        'bg-red-100 text-red-800'
+                                                                                }`}>
                                                                                 {item.store_status.toUpperCase()}
                                                                             </span>
                                                                         )}
@@ -729,7 +725,7 @@ const PurchaseDepartment = () => {
                         <div className="bg-white shadow overflow-hidden sm:rounded-md">
                             <div className="px-4 py-5 sm:p-6">
                                 <h2 className="text-lg font-medium text-gray-900 mb-4">Supply Orders</h2>
-                                
+
                                 {supplyOrders.length === 0 ? (
                                     <div className="text-center py-12">
                                         <div className="text-gray-500">No supply orders available at this time.</div>
@@ -752,11 +748,10 @@ const PurchaseDepartment = () => {
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center">
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                                                            tender.fulfillment_percentage === 100 
-                                                                ? 'bg-green-100 text-green-800' 
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${tender.fulfillment_percentage === 100
+                                                                ? 'bg-green-100 text-green-800'
                                                                 : 'bg-yellow-100 text-yellow-800'
-                                                        }`}>
+                                                            }`}>
                                                             {tender.fulfillment_percentage === 100 ? 'Fully Fulfilled' : 'Partially Fulfilled'}
                                                         </span>
                                                     </div>
@@ -841,7 +836,7 @@ const PurchaseDepartment = () => {
                                                 </div>
                                             </div>
                                         ))}
-                                    </div>                                )}
+                                    </div>)}
                             </div>
                         </div>
                     )}
@@ -857,7 +852,7 @@ const PurchaseDepartment = () => {
                                             <i className="fas fa-clipboard-check mr-2 text-green-600"></i>
                                             All Suppliers Finalized - Ready for Financial Opening
                                         </h2>
-                                        
+
                                         <div className="space-y-4">
                                             {readyTenders.map((tender) => (
                                                 <div key={tender.id} className="border border-green-200 rounded-lg p-4 bg-green-50">
@@ -921,7 +916,7 @@ const PurchaseDepartment = () => {
                                             <i className="fas fa-folder-open mr-2 text-red-600"></i>
                                             Ready to Open - Time Passed
                                         </h2>
-                                        
+
                                         <div className="space-y-4">
                                             {scheduledOpenings.ready_to_open.map((opening) => (
                                                 <div key={opening.id} className="border border-red-200 rounded-lg p-4 bg-red-50">
@@ -938,10 +933,17 @@ const PurchaseDepartment = () => {
                                                         <div className="ml-4">
                                                             <button
                                                                 onClick={() => handleOpenFinancialBids(opening.tender_id)}
-                                                                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                                                disabled={processingTenderIds.includes(opening.tender_id)}
+                                                                className={`px-4 py-2 ${processingTenderIds.includes(opening.tender_id)
+                                                                        ? 'bg-gray-400 cursor-not-allowed'
+                                                                        : 'bg-red-600 hover:bg-red-700'
+                                                                    } text-white rounded-md focus:outline-none focus:ring-2 focus:ring-red-500`}
                                                             >
                                                                 <i className="fas fa-unlock mr-2"></i>
-                                                                Open Financial Bids
+                                                                {processingTenderIds.includes(opening.tender_id)
+                                                                    ? 'Processing...'
+                                                                    : 'Open Financial Bids'
+                                                                }
                                                             </button>
                                                         </div>
                                                     </div>
@@ -960,7 +962,7 @@ const PurchaseDepartment = () => {
                                             <i className="fas fa-clock mr-2 text-blue-600"></i>
                                             Scheduled for Future
                                         </h2>
-                                        
+
                                         <div className="space-y-4">
                                             {scheduledOpenings.scheduled_future.map((opening) => (
                                                 <div key={opening.id} className="border border-blue-200 rounded-lg p-4 bg-blue-50">
@@ -976,7 +978,7 @@ const PurchaseDepartment = () => {
                                                         </div>
                                                         <div className="ml-4">
                                                             <button
-                                                                onClick={() => handleScheduleFinancialOpening({id: opening.tender_id, ...opening})}
+                                                                onClick={() => handleScheduleFinancialOpening({ id: opening.tender_id, ...opening })}
                                                                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                                             >
                                                                 <i className="fas fa-edit mr-2"></i>
@@ -996,35 +998,6 @@ const PurchaseDepartment = () => {
                                         <i className="fas fa-folder-open text-4xl text-gray-400 mb-4"></i>
                                         <h3 className="text-lg font-medium text-gray-900 mb-2">No Financial Openings Available</h3>
                                         <p className="text-gray-600">All grievances must be resolved and suppliers finalized before financial openings can be scheduled.</p>
-                                          {/* Debug Information */}
-                                        <div className="mt-4 p-3 bg-gray-100 text-left text-xs">
-                                            <p><strong>Debug Info:</strong></p>
-                                            <p>Ready Tenders: {readyTenders.length}</p>
-                                            <p>Ready to Open: {scheduledOpenings.ready_to_open?.length || 0}</p>
-                                            <p>Scheduled Future: {scheduledOpenings.scheduled_future?.length || 0}</p>
-                                            <p>Token Available: {localStorage.getItem('token') ? 'Yes' : 'No'}</p>
-                                            
-                                            <div className="mt-2 space-x-2">
-                                                <button
-                                                    onClick={() => {
-                                                        console.log('🧪 Manual API test triggered');
-                                                        fetchReadyTenders();
-                                                    }}
-                                                    className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
-                                                >
-                                                    Test Ready Tenders API
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        console.log('🧪 Manual scheduled openings test triggered');
-                                                        fetchScheduledOpenings();
-                                                    }}
-                                                    className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600"
-                                                >
-                                                    Test Scheduled Openings API
-                                                </button>
-                                            </div>
-                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -1052,11 +1025,10 @@ const PurchaseDepartment = () => {
                                                 <div className="flex justify-between items-start mb-2">
                                                     <h5 className="font-medium text-gray-900">{item.item_name}</h5>
                                                     {item.store_status && (
-                                                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                                            item.store_status === 'available' ? 'bg-green-100 text-green-800' :
-                                                            item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-                                                            'bg-red-100 text-red-800'
-                                                        }`}>
+                                                        <span className={`px-2 py-1 rounded text-xs font-medium ${item.store_status === 'available' ? 'bg-green-100 text-green-800' :
+                                                                item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                                                    'bg-red-100 text-red-800'
+                                                            }`}>
                                                             {item.store_status.toUpperCase()}
                                                         </span>
                                                     )}
@@ -1173,7 +1145,7 @@ const PurchaseDepartment = () => {
                                     </label>
                                     <input
                                         type="datetime-local"
-                                        name="biddingExpiryTime"                                        value={evaluationForm.biddingExpiryTime}
+                                        name="biddingExpiryTime" value={evaluationForm.biddingExpiryTime}
                                         onChange={handleFormChange}
                                         min={new Date(Date.now() + 1 * 60 * 1000).toISOString().slice(0, 16)} // Minimum 1 minute from now
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
@@ -1285,7 +1257,7 @@ const PurchaseDepartment = () => {
                             <h3 className="text-lg font-bold text-gray-900">
                                 Schedule Financial Opening - Tender {selectedTender?.id}
                             </h3>
-                            <button 
+                            <button
                                 onClick={() => setShowFinancialScheduleModal(false)}
                                 className="text-gray-400 hover:text-gray-600"
                             >
@@ -1327,7 +1299,7 @@ const PurchaseDepartment = () => {
                                 <input
                                     type="datetime-local"
                                     value={scheduleForm.openingDateTime}
-                                    onChange={(e) => setScheduleForm({...scheduleForm, openingDateTime: e.target.value})}
+                                    onChange={(e) => setScheduleForm({ ...scheduleForm, openingDateTime: e.target.value })}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                                     required
                                 />
@@ -1365,7 +1337,7 @@ const PurchaseDepartment = () => {
                             <h3 className="text-lg font-bold text-gray-900">
                                 Financial Opening Results - Tender {financialOpeningData.tender?.id}
                             </h3>
-                            <button 
+                            <button
                                 onClick={() => setShowFinancialOpeningModal(false)}
                                 className="text-gray-400 hover:text-gray-600"
                             >
@@ -1419,21 +1391,19 @@ const PurchaseDepartment = () => {
                             </h4>
                             <div className="space-y-3">
                                 {financialOpeningData.optimal_combinations?.slice(0, 5).map((combo, index) => (
-                                    <div key={index} className={`border rounded-lg p-4 ${
-                                        index === 0 ? 'border-yellow-300 bg-yellow-50' :
-                                        index === 1 ? 'border-gray-300 bg-gray-50' :
-                                        index === 2 ? 'border-orange-300 bg-orange-50' :
-                                        'border-gray-200'
-                                    }`}>
+                                    <div key={index} className={`border rounded-lg p-4 ${index === 0 ? 'border-yellow-300 bg-yellow-50' :
+                                            index === 1 ? 'border-gray-300 bg-gray-50' :
+                                                index === 2 ? 'border-orange-300 bg-orange-50' :
+                                                    'border-gray-200'
+                                        }`}>
                                         <div className="flex justify-between items-start">
                                             <div className="flex-1">
                                                 <div className="flex items-center mb-2">
-                                                    <span className={`text-lg font-bold mr-2 ${
-                                                        index === 0 ? 'text-yellow-600' :
-                                                        index === 1 ? 'text-gray-600' :
-                                                        index === 2 ? 'text-orange-600' :
-                                                        'text-gray-500'
-                                                    }`}>
+                                                    <span className={`text-lg font-bold mr-2 ${index === 0 ? 'text-yellow-600' :
+                                                            index === 1 ? 'text-gray-600' :
+                                                                index === 2 ? 'text-orange-600' :
+                                                                    'text-gray-500'
+                                                        }`}>
                                                         #{index + 1}
                                                     </span>
                                                     {index === 0 && <i className="fas fa-crown text-yellow-500 mr-1"></i>}
@@ -1445,7 +1415,7 @@ const PurchaseDepartment = () => {
                                                     </span>
                                                 </div>
                                                 <div className="text-sm text-gray-700">
-                                                    {combo.suppliers.map(supplier => 
+                                                    {combo.suppliers.map(supplier =>
                                                         `${supplier.item_name}: ${supplier.company_name}`
                                                     ).join(' | ')}
                                                 </div>

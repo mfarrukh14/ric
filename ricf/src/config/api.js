@@ -30,8 +30,25 @@ export const login = async (username, password) => {
 
 // Department Management
 export const createDepartment = async (name) => {
-    const response = await api.post('/admin/departments', { name });
-    return response.data;
+    const token = localStorage.getItem('token');
+    if (!token) {
+        throw { error: 'Authentication token not found. Please log in again.' };
+    }
+    
+    try {
+        const response = await api.post('/admin/departments', 
+            { name },
+            { 
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            }
+        );
+        return response.data;
+    } catch (error) {
+        console.error('Department creation error:', error);
+        throw error.response?.data || { error: 'Failed to create department' };
+    }
 };
 
 export const listDepartments = async () => {
@@ -46,8 +63,25 @@ export const deleteDepartment = async (id) => {
 
 // Committee Management
 export const createCommittee = async (name) => {
-    const response = await api.post('/admin/committees', { name });
-    return response.data;
+    const token = localStorage.getItem('token');
+    if (!token) {
+        throw { error: 'Authentication token not found. Please log in again.' };
+    }
+    
+    try {
+        const response = await api.post('/admin/committees', 
+            { name },
+            { 
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            }
+        );
+        return response.data;
+    } catch (error) {
+        console.error('Committee creation error:', error);
+        throw error.response?.data || { error: 'Failed to create committee' };
+    }
 };
 
 export const listCommittees = async () => {
@@ -62,8 +96,25 @@ export const deleteCommittee = async (id) => {
 
 // User Management
 export const createUser = async (userData) => {
-    const response = await api.post('/admin/users', userData);
-    return response.data;
+    const token = localStorage.getItem('token');
+    if (!token) {
+        throw { error: 'Authentication token not found. Please log in again.' };
+    }
+    
+    try {
+        const response = await api.post('/admin/users', 
+            userData,
+            { 
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            }
+        );
+        return response.data;
+    } catch (error) {
+        console.error('User creation error:', error);
+        throw error.response?.data || { error: 'Failed to create user' };
+    }
 };
 
 export const listUsers = async () => {

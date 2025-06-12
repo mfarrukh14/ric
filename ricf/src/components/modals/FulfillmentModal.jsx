@@ -289,7 +289,7 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
                                                     Estimated Cost
                                                 </label>
                                                 <div className="text-sm text-gray-600">
-                                                    ₹{item.estimatedCost}
+                                                    Rs{item.estimatedCost}
                                                 </div>
                                             </div>
                                         </div>

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import CreateDemandModal from '../modals/CreateDemandModal';
 import DemandManagement from '../admin/DemandManagement';
 import SupplierEvaluation from '../admin/SupplierEvaluation';
 import VettingCommittee from '../committee/VettingCommittee';
@@ -11,7 +10,6 @@ import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
   const navigate = useNavigate();
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
@@ -74,31 +72,10 @@ export default function UserDashboard() {
   };
 
   const handleCreateDemand = () => {
-    setIsCreateModalOpen(true);
-  };
-
-  const handleSubmitDemand = async (demandData) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${apiUrl}/demands`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(demandData)
-      });
-      
-      if (response.ok) {
-        fetchUserDemands();
-        return Promise.resolve();
-      } else {
-        throw new Error('Failed to create demand');
-      }
-    } catch (error) {
-      console.error('Error creating demand:', error);
-      throw error;
-    }
+    // Add debugging to see if the function is getting called
+    console.log('Create demand button clicked, navigating to /create-demand');
+    // Instead of opening modal, navigate to multi-step form
+    navigate('/create-demand');
   };
 
   const getStatusColor = (status) => {
@@ -531,11 +508,7 @@ export default function UserDashboard() {
         <GrievanceCommitteeNew />
       )}
 
-      <CreateDemandModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onSubmit={handleSubmitDemand}
-      />
+      {/* Removed CreateDemandModal as it's no longer used */}
     </div>
   );
 }
