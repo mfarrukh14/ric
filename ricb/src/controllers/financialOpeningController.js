@@ -8,17 +8,9 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
     const db = getDatabase();
     const user = req.user;
 
-    console.log('🔍 Financial Opening API called by user:', {
-        id: user?.id,
-        role: user?.role,
-        department_name: user?.department_name
-    });
-
     // Check if user is from purchase department
     const canView = user.role === 'superadmin' || 
                    (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    console.log('🔐 User access check:', { canView, role: user?.role, department: user?.department_name });
 
     if (!canView) {
         console.log('❌ Access denied for user');

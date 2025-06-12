@@ -441,12 +441,6 @@ const approveGrievance = async (req, res) => {
         
         const meetingDateTime = new Date(grievance.meeting_date_time);
         
-        console.log('Debug - Current local time:', now.toISOString());
-        console.log('Debug - Current Pakistan time:', pakistanTime.toISOString());
-        console.log('Debug - Meeting scheduled time:', meetingDateTime.toISOString());
-        console.log('Debug - Meeting has passed:', meetingDateTime < pakistanTime);
-        console.log('Debug - Grievance status:', grievance.status);
-        
         if (meetingDateTime > pakistanTime) {
             return res.status(400).json({ 
                 message: 'Grievance cannot be approved before the scheduled meeting time has passed.' 

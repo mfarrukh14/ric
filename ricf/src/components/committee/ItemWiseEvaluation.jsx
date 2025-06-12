@@ -189,7 +189,7 @@ const ItemWiseEvaluation = () => {
 
             const data = await response.json();
             alert(data.message);
-            navigate('/committee/technical-evaluation');
+            navigate('/dashboard');
         } catch (err) {
             setError(err.message);
         } finally {
