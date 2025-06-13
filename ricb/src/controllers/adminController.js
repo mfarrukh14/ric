@@ -342,6 +342,7 @@ const updateGrievanceDeadlineConfig = async (req, res) => {
     }
 
     try {
+        // Update the configuration
         await new Promise((resolve, reject) => {
             db.run(
                 `INSERT OR REPLACE INTO system_configurations 
@@ -355,9 +356,56 @@ const updateGrievanceDeadlineConfig = async (req, res) => {
             );
         });
 
+        // Update existing active grievance deadlines
+        const updatedDeadlines = await new Promise((resolve, reject) => {
+            // First, get all active deadlines
+            db.all(
+                'SELECT id, deadline_start FROM grievance_deadlines WHERE is_active = 1',
+                [],
+                (err, activeDeadlines) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (activeDeadlines.length === 0) {
+                        resolve([]);
+                        return;
+                    }
+
+                    // Update each active deadline with new end time
+                    const updatePromises = activeDeadlines.map(deadline => {
+                        return new Promise((resolveUpdate, rejectUpdate) => {
+                            const startTime = new Date(deadline.deadline_start);
+                            const newEndTime = new Date(startTime.getTime() + (grievance_deadline_hours * 60 * 60 * 1000));
+                            
+                            db.run(
+                                'UPDATE grievance_deadlines SET deadline_end = ? WHERE id = ?',
+                                [newEndTime.toISOString(), deadline.id],
+                                (updateErr) => {
+                                    if (updateErr) rejectUpdate(updateErr);
+                                    else resolveUpdate({ id: deadline.id, newEndTime });
+                                }
+                            );
+                        });
+                    });
+
+                    Promise.all(updatePromises)
+                        .then(results => resolve(results))
+                        .catch(err => reject(err));
+                }
+            );
+        });
+
+        console.log(`⚙️ Grievance deadline configuration updated by ${user.name}: ${grievance_deadline_hours} hours`);
+        if (updatedDeadlines.length > 0) {
+            console.log(`📅 Updated ${updatedDeadlines.length} existing active deadline(s) with new timeframe`);
+        }
+
         res.json({ 
-            message: 'Grievance deadline configuration updated successfully',
-            grievance_deadline_hours: grievance_deadline_hours
+            message: `Grievance deadline configuration updated successfully${updatedDeadlines.length > 0 ? ` and ${updatedDeadlines.length} active deadline(s) were updated` : ''}`,
+            grievance_deadline_hours: grievance_deadline_hours,
+            updated_active_deadlines: updatedDeadlines.length
         });
     } catch (error) {
         console.error('Error updating grievance deadline config:', error);

@@ -13,7 +13,8 @@ import {
 import Modal from '../modals/Modal';
 import UserListModal from '../modals/UserListModal';
 import DemandManagement from './DemandManagement';
-import { UserPlus, Trash2, Eye, Package } from 'lucide-react';
+import GrievanceDeadlineManagement from './GrievanceDeadlineManagement';
+import { UserPlus, Trash2, Eye, Package, Clock } from 'lucide-react';
 
 const glassTableClass = `
   w-full table-auto bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg
@@ -158,6 +159,16 @@ const AdminDashboard = () => {
                 >
                     <Package size={20} />
                     <span>Demand Management</span>                </button>
+                <button
+                    onClick={() => setActiveTab('grievances')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'grievances'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Clock size={20} />
+                    <span>Grievance Settings</span>
+                </button>
             </div>
 
             {/* Tab Content */}
@@ -246,6 +257,11 @@ const AdminDashboard = () => {
             {/* Demand Management Tab */}
             {activeTab === 'demands' && (
                 <DemandManagement />
+            )}
+
+            {/* Grievance Settings Tab */}
+            {activeTab === 'grievances' && (
+                <GrievanceDeadlineManagement />
             )}
 
             {/* User List Modal */}

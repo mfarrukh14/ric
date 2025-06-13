@@ -6,6 +6,7 @@ const GrievanceManagement = () => {
     const [activeTab, setActiveTab] = useState('rejected-items');
     const [rejectedItems, setRejectedItems] = useState([]);
     const [grievances, setGrievances] = useState([]);
+    const [deadlineStatus, setDeadlineStatus] = useState([]);
     const [loading, setLoading] = useState(false);
     const [showGrievanceForm, setShowGrievanceForm] = useState(false);
     const [selectedItem, setSelectedItem] = useState(null);
@@ -19,6 +20,7 @@ const GrievanceManagement = () => {
     useEffect(() => {
         if (activeTab === 'rejected-items') {
             fetchRejectedItems();
+            fetchDeadlineStatus();
         } else if (activeTab === 'my-grievances') {
             fetchMyGrievances();
         }
@@ -56,7 +58,84 @@ const GrievanceManagement = () => {
         }
     };
 
+    const fetchDeadlineStatus = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await axios.get('http://localhost:5000/api/grievances/supplier/deadline-status', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setDeadlineStatus(response.data);
+        } catch (error) {
+            console.error('Error fetching deadline status:', error);
+        }
+    };
+
+    // Check if grievance can be applied for a specific item
+    const canApplyGrievance = (item) => {
+        // Find the deadline status for this item's tender
+        const deadline = deadlineStatus.find(d => 
+            d.items.some(i => i.tech_eval_id === item.id)
+        );
+        
+        if (!deadline) return false;
+        
+        const itemDeadline = deadline.items.find(i => i.tech_eval_id === item.id);
+        return itemDeadline ? itemDeadline.can_apply : false;
+    };
+
+    // Get deadline information for display
+    const getDeadlineInfo = (item) => {
+        const deadline = deadlineStatus.find(d => 
+            d.items.some(i => i.tech_eval_id === item.id)
+        );
+        
+        if (!deadline) return null;
+        
+        const itemDeadline = deadline.items.find(i => i.tech_eval_id === item.id);
+        if (!itemDeadline) return null;
+        
+        return {
+            deadline_end: deadline.deadline_end,
+            has_expired: deadline.has_expired,
+            grievance_submitted: itemDeadline.grievance_submitted
+        };
+    };
+
+    // Format deadline time remaining
+    const getTimeRemaining = (deadlineEnd) => {
+        const now = new Date();
+        const deadline = new Date(deadlineEnd);
+        const diff = deadline.getTime() - now.getTime();
+        
+        if (diff <= 0) return 'Expired';
+        
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        
+        if (hours > 24) {
+            const days = Math.floor(hours / 24);
+            return `${days} day${days > 1 ? 's' : ''} remaining`;
+        } else if (hours > 0) {
+            return `${hours}h ${minutes}m remaining`;
+        } else {
+            return `${minutes}m remaining`;
+        }
+    };
+
     const handleApplyGrievance = (item) => {
+        const deadlineInfo = getDeadlineInfo(item);
+        
+        if (!canApplyGrievance(item)) {
+            if (deadlineInfo?.has_expired) {
+                toast.error('The grievance application deadline has expired for this item.');
+            } else if (deadlineInfo?.grievance_submitted) {
+                toast.error('You have already submitted a grievance for this item.');
+            } else {
+                toast.error('Grievance application is not available for this item.');
+            }
+            return;
+        }
+        
         setSelectedItem(item);
         setShowGrievanceForm(true);
         setGrievanceForm({
@@ -257,13 +336,101 @@ const GrievanceManagement = () => {
                                             <p className="text-sm text-red-700">{item.rejection_reason}</p>
                                         </div>
 
-                                        <button 
-                                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center"
-                                            onClick={() => handleApplyGrievance(item)}
-                                        >
-                                            <i className="fas fa-file-signature mr-2"></i>
-                                            Apply for Grievance
-                                        </button>
+                                        {/* Deadline Status Display */}
+                                        {(() => {
+                                            const deadlineInfo = getDeadlineInfo(item);
+                                            const canApply = canApplyGrievance(item);
+                                            
+                                            if (deadlineInfo) {
+                                                if (deadlineInfo.grievance_submitted) {
+                                                    return (
+                                                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                                            <div className="flex items-center">
+                                                                <i className="fas fa-check-circle text-blue-600 mr-2"></i>
+                                                                <span className="text-sm font-medium text-blue-800">Grievance Already Submitted</span>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                } else if (deadlineInfo.has_expired) {
+                                                    return (
+                                                        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                                                            <div className="flex items-center">
+                                                                <i className="fas fa-clock text-red-600 mr-2"></i>
+                                                                <span className="text-sm font-medium text-red-800">Grievance Deadline Expired</span>
+                                                            </div>
+                                                            <p className="text-xs text-red-600 mt-1">
+                                                                The deadline for submitting grievance has passed
+                                                            </p>
+                                                        </div>
+                                                    );
+                                                } else {
+                                                    return (
+                                                        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center">
+                                                                    <i className="fas fa-hourglass-half text-green-600 mr-2"></i>
+                                                                    <span className="text-sm font-medium text-green-800">Grievance Available</span>
+                                                                </div>
+                                                                <span className="text-xs text-green-600 font-medium">
+                                                                    {getTimeRemaining(deadlineInfo.deadline_end)}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-green-600 mt-1">
+                                                                You can submit a grievance application for this rejection
+                                                            </p>
+                                                        </div>
+                                                    );
+                                                }
+                                            }
+                                            return null;
+                                        })()}
+
+                                        {(() => {
+                                            const deadlineInfo = getDeadlineInfo(item);
+                                            const canApply = canApplyGrievance(item);
+                                            
+                                            if (deadlineInfo?.grievance_submitted) {
+                                                return (
+                                                    <button 
+                                                        className="w-full bg-gray-400 text-white px-4 py-2 rounded-md text-sm font-medium cursor-not-allowed flex items-center justify-center"
+                                                        disabled
+                                                    >
+                                                        <i className="fas fa-check mr-2"></i>
+                                                        Grievance Submitted
+                                                    </button>
+                                                );
+                                            } else if (deadlineInfo?.has_expired) {
+                                                return (
+                                                    <button 
+                                                        className="w-full bg-red-400 text-white px-4 py-2 rounded-md text-sm font-medium cursor-not-allowed flex items-center justify-center"
+                                                        disabled
+                                                    >
+                                                        <i className="fas fa-clock mr-2"></i>
+                                                        Deadline Expired
+                                                    </button>
+                                                );
+                                            } else if (canApply) {
+                                                return (
+                                                    <button 
+                                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center"
+                                                        onClick={() => handleApplyGrievance(item)}
+                                                    >
+                                                        <i className="fas fa-file-signature mr-2"></i>
+                                                        Apply for Grievance
+                                                    </button>
+                                                );
+                                            } else {
+                                                return (
+                                                    <button 
+                                                        className="w-full bg-gray-400 text-white px-4 py-2 rounded-md text-sm font-medium cursor-not-allowed flex items-center justify-center"
+                                                        disabled
+                                                    >
+                                                        <i className="fas fa-ban mr-2"></i>
+                                                        Grievance Not Available
+                                                    </button>
+                                                );
+                                            }
+                                        })()}
                                     </div>
                                 </div>
                             ))}
