@@ -344,6 +344,38 @@ const initializeDatabase = async () => {
                 else resolve();
             });
         });
+
+        // Create system_configurations table for admin settings
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS system_configurations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_key TEXT UNIQUE NOT NULL,
+                config_value TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create grievance_deadlines table to track individual tender deadlines
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS grievance_deadlines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                deadline_start DATETIME NOT NULL,
+                deadline_end DATETIME NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
         // Run database migrations
         await runMigrations();
 
@@ -511,6 +543,40 @@ const initializeDatabase = async () => {
                 );
             });
         }
+
+        // Initialize default system configurations
+        const defaultConfigs = [
+            {
+                key: 'grievance_deadline_hours',
+                value: '72',
+                description: 'Number of hours suppliers have to submit grievance after technical evaluation (min: 1 hour, max: 720 hours/30 days)'
+            }
+        ];
+
+        for (const config of defaultConfigs) {
+            const existingConfig = await new Promise((resolve, reject) => {
+                db.get("SELECT * FROM system_configurations WHERE config_key = ?", [config.key], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (!existingConfig) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'INSERT INTO system_configurations (config_key, config_value, description) VALUES (?, ?, ?)',
+                        [config.key, config.value, config.description],
+                        (err) => {
+                            if (err) reject(err);
+                            else {
+                                console.log(`Default configuration '${config.key}' created successfully`);
+                                resolve();
+                            }
+                        }
+                    );
+                });
+            }
+        }
     } catch (err) {
         console.error('Error initializing database:', err);
     }
@@ -623,6 +689,74 @@ const runMigrations = async () => {
                     });
                 } else {
                     console.log('financial_openings table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 4: Create system_configurations table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='system_configurations'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating system_configurations table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS system_configurations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        config_key TEXT UNIQUE NOT NULL,
+                        config_value TEXT NOT NULL,
+                        description TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating system_configurations table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created system_configurations table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('system_configurations table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 5: Create grievance_deadlines table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='grievance_deadlines'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating grievance_deadlines table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS grievance_deadlines (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        deadline_start DATETIME NOT NULL,
+                        deadline_end DATETIME NOT NULL,
+                        is_active INTEGER DEFAULT 1,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating grievance_deadlines table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created grievance_deadlines table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('grievance_deadlines table already exists');
                     resolve();
                 }
             });

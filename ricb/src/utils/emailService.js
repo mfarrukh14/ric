@@ -622,7 +622,8 @@ class EmailService {
             background-color: #fafafa;
             border-radius: 4px;
             padding: 20px;
-            margin: 30px 0;
+            margin-bottom: 30px;
+            text-align: left;
             font-size: 15px;
         }
         .contact h4 {
@@ -802,13 +803,12 @@ class EmailService {
             color: #374151;
             margin-bottom: 10px;
         }
-        .item-info p { color: #555555; }
         .next-steps {
             background-color: #eef6ff;
             border-left: 4px solid var(--primary);
             border-radius: 4px;
             padding: 20px;
-            margin: 30px 0;
+            margin-bottom: 25px;
         }
         .next-steps h4 {
             font-size: 18px;
@@ -819,7 +819,6 @@ class EmailService {
         .next-steps ul {
             list-style: none;
             padding-left: 0;
-            color: #374151;
         }
         .next-steps li {
             margin-bottom: 8px;
@@ -835,10 +834,10 @@ class EmailService {
         }
         .contact {
             background-color: #fafafa;
-            border-left: 4px solid var(--accent);
             border-radius: 4px;
             padding: 20px;
-            margin: 30px 0;
+            margin-bottom: 30px;
+            text-align: left;
             font-size: 15px;
         }
         .contact h4 {
@@ -847,7 +846,10 @@ class EmailService {
             margin-bottom: 10px;
             font-weight: 600;
         }
-        .contact p { margin: 4px 0; color: #555555; }
+        .contact p {
+            margin: 4px 0;
+            color: #555555;
+        }
         .footer {
             background-color: #fafafa;
             text-align: center;
@@ -965,8 +967,8 @@ class EmailService {
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
             overflow: hidden;
         }
-        /* Colors: Primary (#00509e) and Accent (#f2a900) */
-        :root { --primary: #00509e; --accent: #f2a900; }
+        /* Colors: Primary (#dc2626) for warning */
+        :root { --primary: #dc2626; --secondary: #f59e0b; }
         .header {
             background-color: var(--primary);
             color: #ffffff;
@@ -984,7 +986,7 @@ class EmailService {
         }
         .badge {
             display: inline-block;
-            background-color: var(--accent);
+            background-color: var(--secondary);
             color: #ffffff;
             padding: 8px 16px;
             border-radius: 20px;
@@ -993,11 +995,11 @@ class EmailService {
         }
         .content { padding: 30px; }
         .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--accent); font-weight: 700; }
+        .company-name { color: var(--secondary); font-weight: 700; }
         .message { color: #555555; line-height: 1.7; }
         .item-info {
-            background-color: #f9fafb;
-            border-left: 4px solid var(--accent);
+            background-color: #fef2f2;
+            border-left: 4px solid var(--primary);
             border-radius: 4px;
             padding: 20px;
             margin: 25px 0;
@@ -1005,68 +1007,105 @@ class EmailService {
         .item-info h4 {
             font-size: 16px;
             font-weight: 600;
-            color: #374151;
+            color: #991b1b;
             margin-bottom: 10px;
         }
-        .item-info p { color: #555555; }
+        .item-info p { color: #7f1d1d; }
         .reason-details {
-            background-color: #eef6ff;
-            border-left: 4px solid var(--primary);
+            background-color: #fef9c3;
+            border-left: 4px solid #f59e0b;
             border-radius: 4px;
             padding: 20px;
-            margin: 30px 0;
+            margin: 25px 0;
         }
         .reason-details h4 {
-            font-size: 18px;
-            color: var(--primary);
-            margin-bottom: 12px;
+            font-size: 16px;
             font-weight: 600;
+            color: #92400e;
+            margin-bottom: 10px;
         }
         .reason-text {
             background-color: #ffffff;
-            border: 1px solid #e5e7eb;
+            border: 1px solid #fed7aa;
             border-radius: 4px;
             padding: 15px;
-            color: #555555;
+            color: #9a3412;
             font-style: italic;
         }
-        .next-steps {
-            background-color: #eef6ff;
-            border-left: 4px solid var(--accent);
+        .grievance-info {
+            background-color: #dbeafe;
+            border-left: 4px solid var(--primary);
             border-radius: 4px;
             padding: 20px;
-            margin: 30px 0;
+            margin: 25px 0;
         }
-        .next-steps h4 {
+        .grievance-info h4 {
             font-size: 18px;
-            color: var(--accent);
-            margin-bottom: 12px;
+            color: var(--primary);
             font-weight: 600;
+            margin-bottom: 12px;
         }
-        .next-steps ul { list-style: none; padding-left: 0; color: #374151; }
-        .next-steps li { margin-bottom: 8px; padding-left: 24px; position: relative; }
-        .next-steps li::before {
-            content: '✓';
+        .deadline-highlight {
+            background-color: #fef3c7;
+            border: 2px solid #f59e0b;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        .deadline-highlight strong {
+            color: #92400e;
+            font-size: 18px;
+        }
+        .steps-list {
+            list-style: none;
+            padding-left: 0;
+            margin: 15px 0;
+        }
+        .steps-list li {
+            margin: 10px 0;
+            padding-left: 25px;
+            position: relative;
+            color: var(--primary);
+        }
+        .steps-list li::before {
+            content: '👉';
             position: absolute;
             left: 0;
-            color: var(--accent);
-            font-weight: bold;
+            font-size: 16px;
         }
-        .contact {
-            background-color: #fafafa;
-            border-left: 4px solid var(--accent);
+        .warning-box {
+            background-color: #fef2f2;
+            border: 2px solid #fca5a5;
             border-radius: 4px;
             padding: 20px;
-            margin: 30px 0;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .warning-box h5 {
+            color: #dc2626;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        .warning-box p {
+            color: #991b1b;
+            font-size: 14px;
+        }
+        .contact {
+            background-color: #f0fdf4;
+            border-left: 4px solid #16a34a;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
             font-size: 15px;
         }
         .contact h4 {
             font-size: 16px;
-            color: var(--primary);
+            color: #15803d;
             margin-bottom: 10px;
             font-weight: 600;
         }
-        .contact p { margin: 4px 0; color: #555555; }
+        .contact p { margin: 4px 0; color: #166534; }
         .footer {
             background-color: #fafafa;
             text-align: center;
@@ -1085,47 +1124,64 @@ class EmailService {
 <body>
     <div class="email-container">
         <div class="header">
-            <div class="badge">GRIEVANCE DECISION</div>
-            <h1>Grievance Review Complete</h1>
-            <p>Your grievance application has been reviewed</p>
+            <div class="badge">GRIEVANCE REJECTED</div>
+            <h1>Grievance Decision</h1>
+            <p>Your grievance has been reviewed</p>
         </div>
         <div class="content">
             <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-            <p class="message">We have completed our thorough review of your grievance application. After careful consideration by the Grievance Committee, we regret to inform you that your grievance has been <strong>rejected</strong>.</p>
+            <p class="message">We regret to inform you that your grievance application regarding the technical evaluation of your bid for the item <strong>${itemName}</strong> has been <strong>rejected</strong>.</p>
             <div class="item-info">
-                <h4>📦 Regarding Item</h4>
+                <h4>📦 Item Details</h4>
                 <p><strong>${itemName}</strong></p>
             </div>
             <div class="reason-details">
-                <h4>📝 Committee Decision</h4>
+                <h4>📝 Reason for Rejection</h4>
                 <div class="reason-text">
                     ${rejectionReason}
                 </div>
             </div>
-            <div class="next-steps">
-                <h4>📋 Next Steps</h4>
-                <ul>
-                    <li>You may address the concerns raised and apply for future tenders</li>
-                    <li>Consider improving your technical specifications or documentation</li>
-                    <li>Contact us if you need clarification on the decision</li>
-                    <li>Monitor our portal for new tender opportunities</li>
+            <div class="grievance-info">
+                <h4>⚖️ Grievance Application Right</h4>
+                <p>If you believe this decision was made in error or if you have additional information that was not considered during the evaluation, you have the right to file a grievance application.</p>
+                <div class="deadline-highlight">
+                    <strong>⏰ Grievance Deadline: ${new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                    })}</strong>
+                    <p style="margin-top: 8px; font-size: 14px; color: #92400e;">You must submit your grievance within 3 days of receiving this notification</p>
+                </div>
+                <h5 style="color: var(--primary); margin: 20px 0 10px 0;">How to Apply for Grievance:</h5>
+                <ul class="steps-list">
+                    <li>Log in to your supplier portal account</li>
+                    <li>Navigate to the "Grievance Management" section</li>
+                    <li>Select the rejected item and submit your grievance application</li>
+                    <li>Provide detailed reasons and supporting documentation</li>
+                    <li>Submit before the deadline mentioned above</li>
                 </ul>
             </div>
+            <div class="warning-box">
+                <h5>⚠️ Important Notice</h5>
+                <p>Grievance applications submitted after the 3-day deadline will not be accepted. Please ensure you submit your application on time if you wish to contest this decision.</p>
+            </div>
             <div class="contact">
-                <h4>📞 Contact Information</h4>
-                <p>If you have any questions regarding this decision, please contact:</p>
+                <h4>📞 Need Assistance?</h4>
+                <p>If you need help with the grievance application process or have questions about the evaluation, please contact:</p>
                 <p><strong>Grievance Committee Secretary</strong></p>
                 <p>Email: grievance@ric.edu.pk</p>
                 <p>Phone: +92-XXX-XXXXXXX</p>
+                <p style="margin-top: 10px; font-size: 14px;">Our team is available to assist you with the grievance process.</p>
             </div>
-            <p class="message">We appreciate your understanding and encourage you to continue participating in our tender processes. We are committed to maintaining fairness and transparency in all our evaluations.</p>
-            <p><strong>Best regards,</strong><br>The Grievance Committee<br>Rawalpindi Institute of Cardiology</p>
+            <p class="message">We appreciate your participation in our tender process. Our evaluation decisions are made to ensure the highest quality standards and compliance with all technical requirements.</p>
+            <p><strong>Best regards,</strong><br>Technical Evaluation Committee<br>Rawalpindi Institute of Cardiology</p>
         </div>
         <div class="footer">
-            <p><strong>Grievance Committee</strong></p>
+            <p><strong>Technical Evaluation Committee</strong></p>
             <p>Rawalpindi Institute of Cardiology</p>
-            <p>Email: grievance@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your grievance application.</p>
+            <p>Email: technical@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your bid evaluation.</p>
+            <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
         </div>
     </div>
 </body>
@@ -1133,9 +1189,9 @@ class EmailService {
         `;
     }
 
-    // Send technical evaluation rejection email
-    async sendTechnicalEvaluationRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, contactPerson) {
-        const htmlContent = this.generateTechnicalEvaluationRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson);
+    // Send technical evaluation rejection email with grievance information
+    async sendTechnicalEvaluationRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, deadlineString) {
+        const htmlContent = this.generateTechnicalEvaluationRejectionEmailHTML(companyName, itemName, rejectionReason, deadlineString);
 
         const mailOptions = {
             from: {
@@ -1158,17 +1214,8 @@ class EmailService {
         }
     }
 
-    generateTechnicalEvaluationRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson) {
+    generateTechnicalEvaluationRejectionEmailHTML(companyName, itemName, rejectionReason, deadlineString) {
         const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        // Calculate the grievance deadline (3 days from now)
-        const grievanceDeadline = new Date();
-        grievanceDeadline.setDate(grievanceDeadline.getDate() + 3);
-        const deadlineString = grievanceDeadline.toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',
             day: 'numeric'
@@ -1178,225 +1225,505 @@ class EmailService {
         <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Technical Evaluation Result</title>
-  <style>
-    /* Reset */
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body {
-      font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background-color:#f2f2f2;
-      color:#333333;
-      line-height:1.6;
-    }
-    .email-container {
-      max-width:600px;
-      margin:40px auto;
-      background-color:#ffffff;
-      border-radius:8px;
-      box-shadow:0 2px 8px rgba(0,0,0,0.1);
-      overflow:hidden;
-    }
-    /* Primary and Accent */
-    :root { --primary:#00509e; --accent:#f2a900; }
-    .header {
-      background-color:var(--primary);
-      color:#ffffff;
-      text-align:center;
-      padding:30px;
-    }
-    .header h1 {
-      font-size:24px;
-      font-weight:700;
-      margin-bottom:8px;
-    }
-    .header p {
-      font-size:16px;
-      opacity:0.9;
-    }
-    .badge {
-      display:inline-block;
-      background-color:var(--accent);
-      color:#ffffff;
-      padding:8px 16px;
-      border-radius:20px;
-      font-weight:600;
-      margin-bottom:15px;
-    }
-    .content { padding:30px; }
-    .content p { margin-bottom:20px; font-size:16px; }
-    .company-name { color:var(--accent); font-weight:700; }
-    .message { color:#555555; line-height:1.7; }
-    .item-info {
-      background-color:#f9fafb;
-      border-left:4px solid var(--accent);
-      border-radius:4px;
-      padding:20px;
-      margin:25px 0;
-    }
-    .item-info h4 {
-      font-size:16px;
-      font-weight:600;
-      color:#374151;
-      margin-bottom:10px;
-    }
-    .item-info p { color:#555555; }
-    .reason-details {
-      background-color:#eef6ff;
-      border-left:4px solid var(--primary);
-      border-radius:4px;
-      padding:20px;
-      margin:30px 0;
-    }
-    .reason-details h4 {
-      font-size:18px;
-      color:var(--primary);
-      font-weight:600;
-      margin-bottom:12px;
-    }
-    .reason-text {
-      background-color:#ffffff;
-      border:1px solid #e5e7eb;
-      border-radius:4px;
-      padding:15px;
-      color:#555555;
-      font-style:italic;
-    }
-    .grievance-info {
-      background-color:#eef6ff;
-      border-left:4px solid var(--accent);
-      border-radius:4px;
-      padding:20px;
-      margin:30px 0;
-    }
-    .grievance-info h4 {
-      font-size:18px;
-      color:var(--accent);
-      font-weight:600;
-      margin-bottom:12px;
-    }
-    .deadline {
-      background-color:#fef3c7;
-      border:2px solid var(--accent);
-      border-radius:8px;
-      padding:15px;
-      text-align:center;
-      margin:15px 0;
-    }
-    .deadline strong { color:#92400e; font-size:18px; }
-    .steps-list {
-      list-style:none;
-      padding-left:0;
-      margin:15px 0;
-    }
-    .steps-list li {
-      position:relative;
-      padding-left:24px;
-      margin:10px 0;
-      color:#1e40af;
-    }
-    .steps-list li::before {
-      content:'👉';
-      position:absolute;
-      left:0;
-      font-size:16px;
-    }
-    .warning-box {
-      background-color:#fef2f2;
-      border:2px solid #fca5a5;
-      border-radius:8px;
-      padding:20px;
-      margin:20px 0;
-      text-align:center;
-    }
-    .warning-box h5 { color:#dc2626; margin-bottom:10px; font-size:16px; }
-    .warning-box p { color:#991b1b; font-size:14px; }
-    .contact-info {
-      background-color:#f0fdf4;
-      border-left:4px solid #16a34a;
-      border-radius:4px;
-      padding:20px;
-      margin:30px 0;
-    }
-    .contact-info h4 {
-      font-size:18px;
-      color:#15803d;
-      font-weight:600;
-      margin-bottom:12px;
-    }
-    .contact-info p { margin:4px 0; color:#555555; }
-    .footer {
-      background-color:#fafafa;
-      text-align:center;
-      padding:20px;
-      font-size:13px;
-      color:#777777;
-    }
-    .footer p { margin-bottom:6px; }
-    @media (max-width:600px) {
-      .email-container { margin:20px; }
-      .header h1 { font-size:20px; }
-      .content { padding:20px; }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Technical Evaluation Result</title>
+    <style>
+        /* Reset */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f2f2f2;
+            color: #333333;
+            line-height: 1.6;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        /* Colors: Primary (#dc2626) for warning */
+        :root { --primary: #dc2626; --secondary: #f59e0b; }
+        .header {
+            background-color: var(--primary);
+            color: #ffffff;
+            text-align: center;
+            padding: 30px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .badge {
+            display: inline-block;
+            background-color: var(--secondary);
+            color: #ffffff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        .content { padding: 30px; }
+        .content p { margin-bottom: 20px; font-size: 16px; }
+        .company-name { color: var(--secondary); font-weight: 700; }
+        .message { color: #555555; line-height: 1.7; }
+        .item-info {
+            background-color: #fef2f2;
+            border-left: 4px solid var(--primary);
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .item-info h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #991b1b;
+            margin-bottom: 10px;
+        }
+        .item-info p { color: #7f1d1d; }
+        .reason-details {
+            background-color: #fef9c3;
+            border-left: 4px solid #f59e0b;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .reason-details h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #92400e;
+            margin-bottom: 10px;
+        }
+        .reason-text {
+            background-color: #ffffff;
+            border: 1px solid #fed7aa;
+            border-radius: 4px;
+            padding: 15px;
+            color: #9a3412;
+            font-style: italic;
+        }
+        .grievance-info {
+            background-color: #dbeafe;
+            border-left: 4px solid var(--primary);
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .grievance-info h4 {
+            font-size: 18px;
+            color: var(--primary);
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .deadline-highlight {
+            background-color: #fef3c7;
+            border: 2px solid #f59e0b;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        .deadline-highlight strong {
+            color: #92400e;
+            font-size: 18px;
+        }
+        .steps-list {
+            list-style: none;
+            padding-left: 0;
+            margin: 15px 0;
+        }
+        .steps-list li {
+            margin: 10px 0;
+            padding-left: 25px;
+            position: relative;
+            color: var(--primary);
+        }
+        .steps-list li::before {
+            content: '👉';
+            position: absolute;
+            left: 0;
+            font-size: 16px;
+        }
+        .warning-box {
+            background-color: #fef2f2;
+            border: 2px solid #fca5a5;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .warning-box h5 {
+            color: #dc2626;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        .warning-box p {
+            color: #991b1b;
+            font-size: 14px;
+        }
+        .contact {
+            background-color: #f0fdf4;
+            border-left: 4px solid #16a34a;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+            font-size: 15px;
+        }
+        .contact h4 {
+            font-size: 16px;
+            color: #15803d;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        .contact p { margin: 4px 0; color: #166534; }
+        .footer {
+            background-color: #fafafa;
+            text-align: center;
+            padding: 20px;
+            font-size: 13px;
+            color: #777777;
+        }
+        .footer p { margin-bottom: 6px; }
+        @media (max-width: 600px) {
+            .email-container { margin: 20px; }
+            .header h1 { font-size: 20px; }
+            .content { padding: 20px; }
+        }
+    </style>
 </head>
 <body>
-  <div class="email-container">
-    <div class="header">
-      <div class="badge">📋 TECHNICAL EVALUATION RESULT</div>
-      <h1>Technical Evaluation Complete</h1>
-      <p>Your bid has been technically evaluated</p>
-    </div>
-    <div class="content">
-      <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-      <p class="message">We have completed the technical evaluation of your bid submission. After careful review by our <strong>Technical Evaluation Committee</strong>, we regret to inform you that your bid has been <strong>rejected</strong> during the technical evaluation phase.</p>
-      <div class="item-info">
-        <h4>📦 Evaluated Item</h4>
-        <p><strong>${itemName}</strong></p>
-      </div>
-      <div class="reason-details">
-        <h4>📝 Rejection Reason</h4>
-        <div class="reason-text">${rejectionReason}</div>
-      </div>
-      <div class="grievance-info">
-        <h4>⚖️ Grievance Application Right</h4>
-        <p>If you believe this decision was made in error or if you have additional information, you have the right to file a grievance application.</p>
-        <div class="deadline">
-          <strong>⏰ Grievance Deadline: ${deadlineString}</strong>
-          <p style="margin-top:8px;font-size:14px;color:#92400e;">Submit within 3 days of notification</p>
+    <div class="email-container">
+        <div class="header">
+            <div class="badge">TECHNICAL EVALUATION RESULT</div>
+            <h1>Technical Evaluation Complete</h1>
+            <p>Your bid has been technically evaluated</p>
         </div>
-        <h5 style="color:#1e40af;margin:20px 0 10px;">How to Apply:</h5>
-        <ul class="steps-list">
-          <li>Log in to your supplier portal</li>
-          <li>Navigate to "Grievance Management"</li>
-          <li>Select the evaluated item and submit grievance</li>
-          <li>Provide detailed reasons & docs</li>
-          <li>Submit before the deadline</li>
-        </ul>
-      </div>
-      <div class="warning-box">
-        <h5>⚠️ Important Notice</h5>
-        <p>Grievances after the 3-day deadline will not be accepted.</p>
-      </div>
-      <div class="contact-info">
-        <h4>📞 Need Assistance?</h4>
-        <p>Contact:</p>
-        <p><strong>Grievance Committee Secretary</strong></p>
-        <p>Email: grievance@rics.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-        <p style="margin-top:8px;font-size:14px;color:#15803d;">We're here to help with your grievance process.</p>
-      </div>
-      <p style="margin-top:30px;">We appreciate your participation in our tender process. Our decisions ensure highest quality and technical compliance.</p>
-      <p style="margin-top:20px;"><strong>Best regards,</strong><br>Technical Evaluation Committee<br>Rawalpindi Institute of Cardiology</p>
+        <div class="content">
+            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
+            <p class="message">We have completed the technical evaluation of your bid submission. After careful review by our <strong>Technical Evaluation Committee</strong>, we regret to inform you that your bid has been <strong>rejected</strong> during the technical evaluation phase.</p>
+            <div class="item-info">
+                <h4>📦 Evaluated Item</h4>
+                <p><strong>${itemName}</strong></p>
+            </div>
+            <div class="reason-details">
+                <h4>📝 Rejection Reason</h4>
+                <div class="reason-text">
+                    ${rejectionReason}
+                </div>
+            </div>
+            <div class="grievance-info">
+                <h4>⚖️ Grievance Application Right</h4>
+                <p>If you believe this decision was made in error or if you have additional information that was not considered during the evaluation, you have the right to file a grievance application.</p>
+                <div class="deadline-highlight">
+                    <strong>⏰ Grievance Deadline: ${deadlineString}</strong>
+                    <p style="margin-top: 8px; font-size: 14px; color: #92400e;">You must submit your grievance within the specified timeframe</p>
+                </div>
+                <h5 style="color: var(--primary); margin: 20px 0 10px 0;">How to Apply for Grievance:</h5>
+                <ul class="steps-list">
+                    <li>Log in to your supplier portal account</li>
+                    <li>Navigate to the "Grievance Management" section</li>
+                    <li>Select the rejected item and submit your grievance application</li>
+                    <li>Provide detailed reasons and supporting documentation</li>
+                    <li>Submit before the deadline mentioned above</li>
+                </ul>
+            </div>
+            <div class="warning-box">
+                <h5>⚠️ Important Notice</h5>
+                <p>Grievance applications submitted after the deadline will not be accepted. Please ensure you submit your application on time if you wish to contest this decision.</p>
+            </div>
+            <div class="contact">
+                <h4>📞 Need Assistance?</h4>
+                <p>If you need help with the grievance application process or have questions about the evaluation, please contact:</p>
+                <p><strong>Grievance Committee Secretary</strong></p>
+                <p>Email: grievance@ric.edu.pk</p>
+                <p>Phone: +92-XXX-XXXXXXX</p>
+                <p style="margin-top: 10px; font-size: 14px;">Our team is available to assist you with the grievance process.</p>
+            </div>
+            <p class="message">We appreciate your participation in our tender process. Our evaluation decisions are made to ensure the highest quality standards and compliance with all technical requirements.</p>
+            <p><strong>Best regards,</strong><br>Technical Evaluation Committee<br>Rawalpindi Institute of Cardiology</p>
+        </div>
+        <div class="footer">
+            <p><strong>Technical Evaluation Committee</strong></p>
+            <p>Rawalpindi Institute of Cardiology</p>
+            <p>Email: technical@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your bid evaluation.</p>
+            <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
+        </div>
     </div>
-    <div class="footer">
-      <p><strong>Technical Evaluation Committee</strong></p>
-      <p>Rawalpindi Institute of Cardiology</p>
-      <p>Email: technical@rics.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-      <p style="margin-top:15px;font-size:12px;opacity:0.6;">This is an automated message regarding your bid evaluation.</p>
-      <p style="font-size:12px;opacity:0.6;">Generated on ${currentDate}</p>
+</body>
+</html>
+        `;
+    }
+
+    // Send grievance deadline expired email
+    async sendGrievanceDeadlineExpiredEmail(supplierEmail, companyName, itemName, contactPerson) {
+        const htmlContent = this.generateGrievanceDeadlineExpiredEmailHTML(companyName, itemName, contactPerson);
+        
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `Grievance Application Deadline Expired - ${itemName}`,
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Grievance deadline expired email sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending grievance deadline expired email:', error);
+            throw error;
+        }
+    }
+
+    generateGrievanceDeadlineExpiredEmailHTML(companyName, itemName, contactPerson) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+        <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grievance Deadline Expired</title>
+    <style>
+        /* Reset */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f2f2f2;
+            color: #333333;
+            line-height: 1.6;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        /* Colors: Primary (#dc2626) for warning */
+        :root { --primary: #dc2626; --secondary: #f59e0b; }
+        .header {
+            background-color: var(--primary);
+            color: #ffffff;
+            text-align: center;
+            padding: 30px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .badge {
+            display: inline-block;
+            background-color: var(--secondary);
+            color: #ffffff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        .content { padding: 30px; }
+        .content p { margin-bottom: 20px; font-size: 16px; }
+        .company-name { color: var(--secondary); font-weight: 700; }
+        .message { color: #555555; line-height: 1.7; }
+        .item-info {
+            background-color: #fef2f2;
+            border-left: 4px solid var(--primary);
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .item-info h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #991b1b;
+            margin-bottom: 10px;
+        }
+        .item-info p { color: #7f1d1d; }
+        .deadline-notice {
+            background-color: #fef3c7;
+            border: 2px solid var(--secondary);
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+            text-align: center;
+        }
+        .deadline-notice h4 {
+            font-size: 18px;
+            color: #92400e;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .deadline-notice p {
+            color: #9a3412;
+            font-size: 16px;
+            margin-bottom: 0;
+        }
+        .consequences {
+            background-color: #fee2e2;
+            border-left: 4px solid var(--primary);
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .consequences h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #991b1b;
+            margin-bottom: 10px;
+        }
+        .consequences ul {
+            list-style: none;
+            padding-left: 0;
+            color: #7f1d1d;
+        }
+        .consequences li {
+            margin-bottom: 8px;
+            padding-left: 24px;
+            position: relative;
+        }
+        .consequences li::before {
+            content: '❌';
+            position: absolute;
+            left: 0;
+            font-size: 14px;
+        }
+        .future-info {
+            background-color: #eef6ff;
+            border-left: 4px solid #3b82f6;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .future-info h4 {
+            font-size: 16px;
+            color: #1e40af;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .future-info p { color: #1e3a8a; }
+        .contact {
+            background-color: #f0fdf4;
+            border-left: 4px solid #16a34a;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+            font-size: 15px;
+        }
+        .contact h4 {
+            font-size: 16px;
+            color: #15803d;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        .contact p { margin: 4px 0; color: #166534; }
+        .footer {
+            background-color: #fafafa;
+            text-align: center;
+            padding: 20px;
+            font-size: 13px;
+            color: #777777;
+        }
+        .footer p { margin-bottom: 6px; }
+        @media (max-width: 600px) {
+            .email-container { margin: 20px; }
+            .header h1 { font-size: 20px; }
+            .content { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <div class="badge">DEADLINE EXPIRED</div>
+            <h1>Grievance Deadline Expired</h1>
+            <p>The deadline for submitting your grievance has passed</p>
+        </div>
+        <div class="content">
+            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
+            <p class="message">We regret to inform you that the deadline for submitting a grievance application regarding the technical evaluation decision has <strong>expired</strong>.</p>
+            <div class="item-info">
+                <h4>📦 Regarding Item</h4>
+                <p><strong>${itemName}</strong></p>
+                <p style="margin-top:8px; font-size:14px;">Your bid for this item was rejected during technical evaluation.</p>
+            </div>
+            <div class="deadline-notice">
+                <h4>⏰ Deadline Status</h4>
+                <p><strong>The grievance application deadline has officially expired.</strong></p>
+                <p style="margin-top:8px; font-size:14px;">No further grievance applications will be accepted for this tender.</p>
+            </div>
+            <div class="consequences">
+                <h4>📋 What This Means</h4>
+                <ul>
+                    <li>Your technical evaluation rejection decision is now final</li>
+                    <li>No grievance applications can be submitted for this tender</li>
+                    <li>Your company will not be included in the approved pool for this item</li>
+                    <li>The tender process will proceed with the approved suppliers only</li>
+                </ul>
+            </div>
+            <div class="future-info">
+                <h4>🔮 Future Opportunities</h4>
+                <p>While this grievance opportunity has passed, your company remains eligible to participate in future tenders. We encourage you to:</p>
+                <ul style="list-style: none; padding-left: 0; margin-top: 10px;">
+                    <li style="margin-bottom: 6px; padding-left: 20px; position: relative; color: #1e3a8a;">
+                        <span style="position: absolute; left: 0;">✓</span>
+                        Continue monitoring our tender opportunities
+                    </li>
+                    <li style="margin-bottom: 6px; padding-left: 20px; position: relative; color: #1e3a8a;">
+                        <span style="position: absolute; left: 0;">✓</span>
+                        Pay attention to future grievance deadlines
+                    </li>
+                    <li style="margin-bottom: 6px; padding-left: 20px; position: relative; color: #1e3a8a;">
+                        <span style="position: absolute; left: 0;">✓</span>
+                        Ensure all technical documentation meets requirements
+                    </li>
+                    <li style="padding-left: 20px; position: relative; color: #1e3a8a;">
+                        <span style="position: absolute; left: 0;">✓</span>
+                        Submit grievances promptly if needed in future
+                    </li>
+                </ul>
+            </div>
+            <div class="contact">
+                <h4>📞 Questions?</h4>
+                <p>If you have questions about future tender opportunities or the tender process in general, please contact:</p>
+                <p><strong>Procurement Department</strong></p>
+                <p>Email: procurement@ric.edu.pk</p>
+                <p>Phone: +92-XXX-XXXXXXX</p>
+            </div>
+            <p class="message">We appreciate your understanding and look forward to your participation in future tender opportunities.</p>
+            <p><strong>Best regards,</strong><br>Grievance Committee<br>Rawalpindi Institute of Cardiology</p>
+        </div>
+        <div class="footer">
+            <p><strong>Grievance Committee</strong></p>
+            <p>Rawalpindi Institute of Cardiology</p>
+            <p>Email: grievance@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding the grievance deadline.</p>
+            <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
+        </div>
     </div>
-  </div>
 </body>
 </html>
         `;

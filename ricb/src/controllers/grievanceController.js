@@ -631,6 +631,82 @@ const rejectGrievance = async (req, res) => {
     }
 };
 
+// Check if grievance deadline has expired for a supplier
+const checkGrievanceDeadlineExpired = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    if (user.role !== 'supplier') {
+        return res.status(403).json({ message: 'Only suppliers can check grievance deadlines' });
+    }
+
+    try {
+        // Get all active grievance deadlines for tenders where this supplier was rejected
+        const deadlineInfo = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT gd.*, te.id as tech_eval_id, te.item_id, di.item_name,
+                        CASE 
+                            WHEN datetime('now') > datetime(gd.deadline_end) THEN 1 
+                            ELSE 0 
+                        END as has_expired
+                 FROM grievance_deadlines gd
+                 JOIN technical_evaluations te ON gd.tender_id = te.tender_id
+                 JOIN demand_items di ON te.item_id = di.id
+                 WHERE te.supplier_id = ? AND te.status = 'rejected' AND gd.is_active = 1`,
+                [user.id],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Group by tender_id and check if any grievance was already submitted
+        const deadlineStatus = {};
+        
+        for (const deadline of deadlineInfo) {
+            const tenderId = deadline.tender_id;
+            const techEvalId = deadline.tech_eval_id;
+            
+            // Check if grievance already submitted for this technical evaluation
+            const existingGrievance = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT id FROM grievance_applications WHERE technical_evaluation_id = ? AND supplier_id = ?',
+                    [techEvalId, user.id],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            if (!deadlineStatus[tenderId]) {
+                deadlineStatus[tenderId] = {
+                    tender_id: tenderId,
+                    deadline_end: deadline.deadline_end,
+                    has_expired: deadline.has_expired,
+                    can_apply_grievance: !deadline.has_expired && !existingGrievance,
+                    grievance_submitted: !!existingGrievance,
+                    items: []
+                };
+            }
+
+            deadlineStatus[tenderId].items.push({
+                tech_eval_id: techEvalId,
+                item_id: deadline.item_id,
+                item_name: deadline.item_name,
+                can_apply: !deadline.has_expired && !existingGrievance,
+                grievance_submitted: !!existingGrievance
+            });
+        }
+
+        res.json(Object.values(deadlineStatus));
+    } catch (error) {
+        console.error('Error checking grievance deadline:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
 module.exports = {
     getSupplierRejectedItems,
     submitGrievanceApplication,
@@ -639,5 +715,6 @@ module.exports = {
     scheduleGrievanceMeeting,
     updateGrievanceStatus,
     approveGrievance,
-    rejectGrievance
+    rejectGrievance,
+    checkGrievanceDeadlineExpired
 };

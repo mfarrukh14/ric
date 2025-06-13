@@ -27,4 +27,13 @@ router.post('/users', auth, isSuperAdmin, adminController.createUser);
 router.get('/users', auth, isSuperAdmin, adminController.listUsers);
 router.delete('/users/:id', auth, isSuperAdmin, adminController.deleteUser);
 
+// System configuration routes
+router.get('/system-configurations', auth, isSuperAdmin, adminController.getSystemConfigurations);
+router.put('/system-configuration', auth, isSuperAdmin, adminController.updateSystemConfiguration);
+
+// Grievance deadline monitoring routes
+router.get('/grievance-deadlines', auth, isSuperAdmin, adminController.getGrievanceDeadlines);
+router.get('/grievance-deadline-config', auth, isSuperAdmin, adminController.getGrievanceDeadlineConfig);
+router.put('/grievance-deadline-config', auth, isSuperAdmin, adminController.updateGrievanceDeadlineConfig);
+
 module.exports = router;

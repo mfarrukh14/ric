@@ -437,7 +437,12 @@ const submitItemWiseEvaluation = async (req, res) => {
                         else resolve();
                     }
                 );
-            });            // Commit transaction
+            });
+
+            // Start grievance deadline timer
+            await startGrievanceDeadlineTimer(db, tenderId);
+
+            // Commit transaction
             await new Promise((resolve, reject) => {
                 db.run('COMMIT', (err) => {
                     if (err) reject(err);
@@ -993,11 +998,194 @@ const generateTechnicalEvaluationReport = async (db, tenderId, evaluations) => {
     }
 };
 
+// Start grievance deadline timer for a tender
+const startGrievanceDeadlineTimer = async (db, tenderId) => {
+    try {
+        // Get the configured grievance deadline hours
+        const config = await new Promise((resolve, reject) => {
+            db.get(
+                "SELECT config_value FROM system_configurations WHERE config_key = 'grievance_deadline_hours'",
+                [],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        const deadlineHours = config ? parseInt(config.config_value) : 72; // Default to 72 hours
+        
+        // Calculate deadline
+        const deadlineStart = new Date();
+        const deadlineEnd = new Date(deadlineStart.getTime() + (deadlineHours * 60 * 60 * 1000));
+
+        // Insert or update grievance deadline
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT OR REPLACE INTO grievance_deadlines 
+                 (tender_id, deadline_start, deadline_end, is_active) 
+                 VALUES (?, ?, ?, 1)`,
+                [tenderId, deadlineStart.toISOString(), deadlineEnd.toISOString()],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        console.log(`📅 Grievance deadline set for tender ${tenderId}: ${deadlineHours} hours from now (until ${deadlineEnd.toLocaleString()})`);
+
+        // Schedule automatic deadline expiry check
+        scheduleGrievanceDeadlineCheck(tenderId, deadlineEnd);
+
+    } catch (error) {
+        console.error('Error starting grievance deadline timer:', error);
+        throw error;
+    }
+};
+
+// Schedule automatic grievance deadline expiry check
+const scheduleGrievanceDeadlineCheck = (tenderId, deadlineEnd) => {
+    const now = new Date();
+    const timeUntilDeadline = deadlineEnd.getTime() - now.getTime();
+
+    if (timeUntilDeadline > 0) {
+        setTimeout(async () => {
+            await processExpiredGrievanceDeadline(tenderId);
+        }, timeUntilDeadline);
+
+        console.log(`⏰ Scheduled grievance deadline check for tender ${tenderId} in ${Math.round(timeUntilDeadline / (1000 * 60 * 60))} hours`);
+    } else {
+        // Deadline has already passed, process immediately
+        setImmediate(async () => {
+            await processExpiredGrievanceDeadline(tenderId);
+        });
+    }
+};
+
+// Process expired grievance deadline
+const processExpiredGrievanceDeadline = async (tenderId) => {
+    try {
+        const db = getDatabase();
+        
+        // Mark grievance deadline as inactive
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE grievance_deadlines SET is_active = 0 WHERE tender_id = ? AND is_active = 1',
+                [tenderId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Get all rejected suppliers who haven't submitted grievances
+        const rejectedSuppliers = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT DISTINCT te.supplier_id, te.tender_id, te.item_id, te.rejection_reason,
+                        s.company_name, s.company_email, s.contact_person,
+                        di.item_name,
+                        dt.demand_id
+                 FROM technical_evaluations te
+                 JOIN suppliers s ON te.supplier_id = s.id
+                 LEFT JOIN demand_items di ON te.item_id = di.id
+                 LEFT JOIN demand_tenders dt ON te.tender_id = dt.id
+                 LEFT JOIN demands d ON dt.demand_id = d.id
+                 WHERE te.tender_id = ? 
+                   AND te.status = 'rejected'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM grievance_applications ga 
+                       WHERE ga.supplier_id = te.supplier_id 
+                         AND ga.tender_id = te.tender_id 
+                         AND ga.item_id = te.item_id
+                   )`,
+                [tenderId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        console.log(`🔍 Found ${rejectedSuppliers.length} suppliers who missed the grievance deadline for tender ${tenderId}`);
+
+        // Send deadline expiry emails and create automatic rejection records
+        const EmailService = require('../utils/emailService');
+        const emailService = new EmailService();
+
+        for (const supplier of rejectedSuppliers) {
+            try {
+                // Get proper item name
+                let itemName = supplier.item_name;
+                if (!itemName && supplier.item_id === 0) {
+                    // Legacy single-item tender
+                    const tender = await new Promise((resolve, reject) => {
+                        db.get(
+                            'SELECT d.item_name FROM demand_tenders dt JOIN demands d ON dt.demand_id = d.id WHERE dt.id = ?',
+                            [tenderId],
+                            (err, row) => {
+                                if (err) reject(err);
+                                else resolve(row);
+                            }
+                        );
+                    });
+                    itemName = tender ? tender.item_name : 'Unknown Item';
+                }
+
+                // Create automatic grievance rejection record
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO grievance_applications 
+                         (technical_evaluation_id, supplier_id, tender_id, item_id, 
+                          grievance_reason, status, submitted_at, resolution)
+                         VALUES (?, ?, ?, ?, ?, 'rejected', CURRENT_TIMESTAMP, ?)`,
+                        [
+                            0, // No actual technical evaluation ID since it wasn't submitted
+                            supplier.supplier_id,
+                            supplier.tender_id,
+                            supplier.item_id,
+                            'Deadline expired - No grievance submitted',
+                            'Automatic rejection due to missed deadline. Supplier did not submit grievance application within the required timeframe.'
+                        ],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+
+                // Send deadline expiry email
+                if (supplier.company_email) {
+                    await emailService.sendGrievanceDeadlineExpiredEmail(
+                        supplier.company_email,
+                        supplier.company_name,
+                        itemName,
+                        supplier.contact_person
+                    );
+                    
+                    console.log(`📧 Deadline expiry email sent to ${supplier.company_name} for item: ${itemName}`);
+                }
+
+            } catch (error) {
+                console.error(`❌ Error processing expired deadline for supplier ${supplier.supplier_id}:`, error);
+            }
+        }
+
+        console.log(`✅ Processed expired grievance deadline for tender ${tenderId}`);
+
+    } catch (error) {
+        console.error(`❌ Error processing expired grievance deadline for tender ${tenderId}:`, error);
+    }
+};
+
 module.exports = {
     getExpiredTenders,
     getTenderDetails,
     downloadTechnicalBid,
     submitItemWiseEvaluation,
     awardTender,
-    downloadEvaluationReport
+    downloadEvaluationReport,
+    startGrievanceDeadlineTimer,
+    processExpiredGrievanceDeadline
 };

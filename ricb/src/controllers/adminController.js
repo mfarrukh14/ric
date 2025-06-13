@@ -150,3 +150,234 @@ exports.deleteUser = (req, res) => {
         res.json({ message: 'User deleted successfully' });
     });
 };
+
+// Admin Controllers
+
+// Get system configurations
+exports.getSystemConfigurations = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is superadmin
+    if (user.role !== 'superadmin') {
+        return res.status(403).json({ message: 'Only superadmin can view system configurations' });
+    }
+
+    try {
+        const configurations = await new Promise((resolve, reject) => {
+            db.all(
+                'SELECT * FROM system_configurations ORDER BY config_key',
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json(configurations);
+    } catch (error) {
+        console.error('Error fetching system configurations:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Update system configuration
+exports.updateSystemConfiguration = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    const { configKey, configValue } = req.body;
+
+    // Check if user is superadmin
+    if (user.role !== 'superadmin') {
+        return res.status(403).json({ message: 'Only superadmin can update system configurations' });
+    }
+
+    if (!configKey || configValue === undefined) {
+        return res.status(400).json({ message: 'Configuration key and value are required' });
+    }
+
+    // Validate grievance deadline hours if that's what's being updated
+    if (configKey === 'grievance_deadline_hours') {
+        const hours = parseInt(configValue);
+        if (isNaN(hours) || hours < 1 || hours > 720) { // 1 hour to 30 days (720 hours)
+            return res.status(400).json({ 
+                message: 'Grievance deadline must be between 1 hour and 720 hours (30 days)' 
+            });
+        }
+    }
+
+    try {
+        // Update configuration
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE system_configurations 
+                 SET config_value = ?, updated_at = CURRENT_TIMESTAMP 
+                 WHERE config_key = ?`,
+                [configValue, configKey],
+                function(err) {
+                    if (err) reject(err);
+                    else if (this.changes === 0) reject(new Error('Configuration not found'));
+                    else resolve();
+                }
+            );
+        });
+
+        // Log the configuration change
+        console.log(`⚙️ System configuration updated by ${user.name}: ${configKey} = ${configValue}`);
+
+        res.json({ 
+            message: 'Configuration updated successfully',
+            configKey,
+            configValue
+        });
+    } catch (error) {
+        console.error('Error updating system configuration:', error);
+        if (error.message === 'Configuration not found') {
+            res.status(404).json({ message: 'Configuration not found' });
+        } else {
+            res.status(500).json({ message: 'Internal server error' });
+        }
+    }
+};
+
+// Get active grievance deadlines
+exports.getGrievanceDeadlines = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is superadmin
+    if (user.role !== 'superadmin') {
+        return res.status(403).json({ message: 'Only superadmin can view grievance deadlines' });
+    }
+
+    try {
+        const deadlines = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT gd.*, dt.bidding_end_time, d.item_name, d.description
+                 FROM grievance_deadlines gd
+                 JOIN demand_tenders dt ON gd.tender_id = dt.id
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE gd.is_active = 1
+                 ORDER BY gd.deadline_end ASC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Add time remaining for each deadline
+        const now = new Date();
+        const enhancedDeadlines = deadlines.map(deadline => {
+            const deadlineEnd = new Date(deadline.deadline_end);
+            const timeRemaining = deadlineEnd.getTime() - now.getTime();
+            
+            return {
+                ...deadline,
+                timeRemainingMs: Math.max(0, timeRemaining),
+                timeRemainingHours: Math.max(0, Math.ceil(timeRemaining / (1000 * 60 * 60))),
+                hasExpired: timeRemaining <= 0
+            };
+        });
+
+        res.json(enhancedDeadlines);
+    } catch (error) {
+        console.error('Error fetching grievance deadlines:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Get grievance deadline configuration
+const getGrievanceDeadlineConfig = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    if (user.role !== 'superadmin') {
+        return res.status(403).json({ message: 'Only superadmin can view grievance deadline configuration' });
+    }
+
+    try {
+        const config = await new Promise((resolve, reject) => {
+            db.get(
+                "SELECT config_value FROM system_configurations WHERE config_key = 'grievance_deadline_hours'",
+                [],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        const grievanceDeadlineHours = config ? parseInt(config.config_value) : 72;
+
+        res.json({
+            grievance_deadline_hours: grievanceDeadlineHours
+        });
+    } catch (error) {
+        console.error('Error fetching grievance deadline config:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Update grievance deadline configuration
+const updateGrievanceDeadlineConfig = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    const { grievance_deadline_hours } = req.body;
+
+    if (user.role !== 'superadmin') {
+        return res.status(403).json({ message: 'Only superadmin can update grievance deadline configuration' });
+    }
+
+    // Convert to minutes for more granular validation
+    const grievanceDeadlineMinutes = parseFloat(grievance_deadline_hours) * 60;
+    
+    // Allow 1 minute minimum to 72 hours (4320 minutes) maximum
+    if (!grievance_deadline_hours || grievanceDeadlineMinutes < 1 || grievanceDeadlineMinutes > 4320) {
+        return res.status(400).json({ 
+            message: 'Grievance deadline must be between 1 minute (0.0167 hours) and 72 hours (4320 minutes)' 
+        });
+    }
+
+    try {
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT OR REPLACE INTO system_configurations 
+                 (config_key, config_value, description, updated_at) 
+                 VALUES ('grievance_deadline_hours', ?, 'Number of hours suppliers have to submit grievance applications after technical evaluation', CURRENT_TIMESTAMP)`,
+                [grievance_deadline_hours.toString()],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ 
+            message: 'Grievance deadline configuration updated successfully',
+            grievance_deadline_hours: grievance_deadline_hours
+        });
+    } catch (error) {
+        console.error('Error updating grievance deadline config:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+module.exports = {
+    createDepartment: exports.createDepartment,
+    listDepartments: exports.listDepartments,
+    deleteDepartment: exports.deleteDepartment,
+    createCommittee: exports.createCommittee,
+    listCommittees: exports.listCommittees,
+    deleteCommittee: exports.deleteCommittee,
+    createUser: exports.createUser,
+    listUsers: exports.listUsers,
+    deleteUser: exports.deleteUser,
+    getSystemConfigurations: exports.getSystemConfigurations,
+    updateSystemConfiguration: exports.updateSystemConfiguration,
+    getGrievanceDeadlines: exports.getGrievanceDeadlines,
+    getGrievanceDeadlineConfig,
+    updateGrievanceDeadlineConfig
+};

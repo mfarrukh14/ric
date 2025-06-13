@@ -9,13 +9,15 @@ const {
     scheduleGrievanceMeeting,
     updateGrievanceStatus,
     approveGrievance,
-    rejectGrievance
+    rejectGrievance,
+    checkGrievanceDeadlineExpired
 } = require('../controllers/grievanceController');
 
 // Routes for suppliers
 router.get('/supplier/rejected-items', authenticateToken, getSupplierRejectedItems);
 router.post('/supplier/submit', authenticateToken, submitGrievanceApplication);
 router.get('/supplier/my-grievances', authenticateToken, getSupplierGrievances);
+router.get('/supplier/deadline-status', authenticateToken, checkGrievanceDeadlineExpired);
 
 // Routes for grievance committee
 router.get('/committee/all', authenticateToken, getAllGrievances);
