@@ -74,12 +74,15 @@ exports.registerSupplier = async (req, res) => {
         const supplierId = await new Promise((resolve, reject) => {
             db.run(
                 `INSERT INTO suppliers (
-                    company_name, company_email, password, company_statement, company_mission,
-                    professional_tax_cert, ntn_document, drug_sale_license, pec_document, gst_document
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    company_name, company_email, contact_person, contact_number, password, 
+                    company_statement, company_mission, professional_tax_cert, ntn_document, 
+                    drug_sale_license, pec_document, gst_document
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     companyName,
                     companyEmail,
+                    contactPerson,
+                    contactNumber,
                     hashedPassword,
                     companyStatement,
                     companyMission,

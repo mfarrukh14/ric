@@ -20,6 +20,31 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
     try {
         console.log('📋 Fetching tenders ready for financial opening...');
         
+        // Ensure temporary_approvals table exists
+        await new Promise((resolve, reject) => {
+            db.run(`
+                CREATE TABLE IF NOT EXISTS temporary_approvals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    supplier_id INTEGER NOT NULL,
+                    tender_id INTEGER NOT NULL,
+                    item_id INTEGER NOT NULL,
+                    grievance_id INTEGER NOT NULL,
+                    approved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    approved_by INTEGER NOT NULL,
+                    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'used', 'expired')),
+                    FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                    FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                    FOREIGN KEY (item_id) REFERENCES demand_items(id),
+                    FOREIGN KEY (grievance_id) REFERENCES grievance_applications(id),
+                    FOREIGN KEY (approved_by) REFERENCES users(id),
+                    UNIQUE(supplier_id, tender_id, item_id, grievance_id)
+                )
+            `, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        
         // Get tenders that have been technically evaluated
         const technicallyEvaluatedTenders = await new Promise((resolve, reject) => {
             db.all(

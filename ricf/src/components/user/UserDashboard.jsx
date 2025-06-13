@@ -507,8 +507,6 @@ export default function UserDashboard() {
       {isGrievanceCommittee && activeTab === 'grievance-evaluation' && (
         <GrievanceCommitteeNew />
       )}
-
-      {/* Removed CreateDemandModal as it's no longer used */}
     </div>
   );
 }

@@ -8,6 +8,8 @@ const ItemWiseEvaluation = () => {
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
     const [itemEvaluations, setItemEvaluations] = useState({});
+    const [showRejectionInput, setShowRejectionInput] = useState({}); // Changed to object with bid IDs as keys
+    const [rejectionReasons, setRejectionReasons] = useState({}); // Changed to object with bid IDs as keys
     
     const { tenderId } = useParams();
     const navigate = useNavigate();
@@ -83,6 +85,15 @@ const ItemWiseEvaluation = () => {
     };
 
     const handleCompanyEvaluation = (itemId, bidId, companyName, action, reason = '') => {
+        // If action is reject and no reason provided, show the inline input
+        if (action === 'reject' && !reason) {
+            setShowRejectionInput(prev => ({
+                ...prev,
+                [bidId]: true
+            }));
+            return;
+        }
+
         setItemEvaluations(prev => {
             const updated = { ...prev };
             const itemEval = updated[itemId];
@@ -105,6 +116,44 @@ const ItemWiseEvaluation = () => {
             return updated;
         });
         setError('');
+    };
+
+    const handleRejectionSubmit = (itemId, bidId, companyName) => {
+        const reason = rejectionReasons[bidId];
+        if (!reason || !reason.trim()) {
+            setError('Please provide a reason for rejection');
+            return;
+        }
+
+        handleCompanyEvaluation(itemId, bidId, companyName, 'reject', reason);
+        
+        // Clear the input and hide it
+        setShowRejectionInput(prev => ({
+            ...prev,
+            [bidId]: false
+        }));
+        setRejectionReasons(prev => ({
+            ...prev,
+            [bidId]: ''
+        }));
+    };
+
+    const handleRejectionCancel = (bidId) => {
+        setShowRejectionInput(prev => ({
+            ...prev,
+            [bidId]: false
+        }));
+        setRejectionReasons(prev => ({
+            ...prev,
+            [bidId]: ''
+        }));
+    };
+
+    const handleReasonChange = (bidId, value) => {
+        setRejectionReasons(prev => ({
+            ...prev,
+            [bidId]: value
+        }));
     };
 
     const getCompanyEvaluationStatus = (itemId, bidId) => {
@@ -335,35 +384,6 @@ const ItemWiseEvaluation = () => {
                                                             })()
                                                         }</div>
                                                     </div>
-                                                    <div>
-                                                        <span className="font-medium">Unit Price:</span>
-                                                        <div>{
-                                                            (() => {
-                                                                // Show item-specific unit price if available
-                                                                if (bid.bidItems && bid.bidItems.length > 0) {
-                                                                    const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
-                                                                    return itemBid ? `Rs ${parseFloat(itemBid.unit_price).toLocaleString()}` : 'N/A';
-                                                                }
-                                                                // Fallback for legacy single-item tenders
-                                                                const unitPrice = bid.total_cost / bid.proposed_quantity;
-                                                                return `Rs ${unitPrice.toLocaleString()}`;
-                                                            })()
-                                                        }</div>
-                                                    </div>
-                                                    <div>
-                                                        <span className="font-medium">Total Cost:</span>
-                                                        <div>{
-                                                            (() => {
-                                                                // Show item-specific total cost if available
-                                                                if (bid.bidItems && bid.bidItems.length > 0) {
-                                                                    const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
-                                                                    return itemBid ? `Rs ${parseFloat(itemBid.total_cost).toLocaleString()}` : 'N/A';
-                                                                }
-                                                                // Fallback for legacy single-item tenders
-                                                                return `Rs ${parseFloat(bid.total_cost).toLocaleString()}`;
-                                                            })()
-                                                        }</div>
-                                                    </div>
                                                 </div>
 
                                                 <div className="grid grid-cols-2 gap-4 text-sm mb-4">
@@ -403,12 +423,7 @@ const ItemWiseEvaluation = () => {
                                                         </button>
 
                                                         <button
-                                                            onClick={() => {
-                                                                const reason = prompt('Please enter rejection reason:');
-                                                                if (reason) {
-                                                                    handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'reject', reason);
-                                                                }
-                                                            }}
+                                                            onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'reject')}
                                                             className={`px-3 py-1 text-sm rounded ${
                                                                 status === 'rejected' 
                                                                     ? 'bg-red-600 text-white' 
@@ -424,6 +439,38 @@ const ItemWiseEvaluation = () => {
                                                             </span>
                                                         )}
                                                     </div>
+
+                                                    {/* Inline rejection reason input */}
+                                                    {showRejectionInput[bid.id] && (
+                                                        <div className="mt-3">
+                                                            <div className="bg-red-50 rounded-md p-3 border border-red-200">
+                                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                                    Reason for Rejection:
+                                                                </label>
+                                                                <textarea
+                                                                    value={rejectionReasons[bid.id] || ''}
+                                                                    onChange={(e) => handleReasonChange(bid.id, e.target.value)}
+                                                                    className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                                                                    rows="2"
+                                                                    placeholder="Enter reason for rejection"
+                                                                ></textarea>
+                                                                <div className="flex justify-end space-x-2 mt-2">
+                                                                    <button
+                                                                        onClick={() => handleRejectionCancel(bid.id)}
+                                                                        className="px-3 py-1 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400"
+                                                                    >
+                                                                        Cancel
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleRejectionSubmit(currentItem.id, bid.id, bid.company_name)}
+                                                                        className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                                                                    >
+                                                                        Submit
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
                                                     {status === 'rejected' && rejectionReason && (
                                                         <div className="mt-2 p-2 bg-red-50 rounded text-sm">

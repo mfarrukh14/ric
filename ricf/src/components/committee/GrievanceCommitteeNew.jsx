@@ -4,11 +4,15 @@ import { Calendar, Clock, MapPin, Eye, CheckCircle, XCircle, AlertCircle, FileTe
 const GrievanceCommitteeNew = () => {
     const [grievances, setGrievances] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [selectedGrievance, setSelectedGrievance] = useState(null);    const [showScheduleModal, setShowScheduleModal] = useState(false);
+    const [selectedGrievance, setSelectedGrievance] = useState(null);
+    const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [showMeetingDetails, setShowMeetingDetails] = useState(false);
     const [showRejectModal, setShowRejectModal] = useState(false);
     const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [rejectionReason, setRejectionReason] = useState('');
+    const [isScheduling, setIsScheduling] = useState(false); // Add loading state for scheduling
+    const [isApproving, setIsApproving] = useState(false); // Add loading state for approving
+    const [isRejecting, setIsRejecting] = useState(false); // Add loading state for rejecting
     const [meetingForm, setMeetingForm] = useState({
         date: '',
         time: '',
@@ -49,6 +53,7 @@ const GrievanceCommitteeNew = () => {
 
             if (response.ok) {
                 const data = await response.json();
+                console.log('Grievance data received:', data); // Log data to see what fields are available
                 setGrievances(data);
             } else {
                 console.error('Failed to fetch grievances');
@@ -90,7 +95,8 @@ const GrievanceCommitteeNew = () => {
         } else if (!meetingPassed) {
             return [
                 { key: 'view', label: 'View Details', icon: Eye, color: 'blue' },
-                { key: 'meeting', label: 'View Meeting Details', icon: Clock, color: 'orange' }
+                { key: 'meeting', label: 'View Meeting Details', icon: Clock, color: 'orange' },
+                { key: 'reschedule', label: 'Reschedule Meeting', icon: Calendar, color: 'blue' }
             ];
         } else {
             return [
@@ -102,12 +108,27 @@ const GrievanceCommitteeNew = () => {
     };
 
     const handleAction = (grievance, action) => {
+        console.log('Selected grievance data:', grievance); // Add detailed logging
         setSelectedGrievance(grievance);
           switch (action) {
             case 'view':
                 setShowDetailsModal(true);
                 break;
             case 'schedule':
+                setMeetingForm({ date: '', time: '', location: '', details: '' });
+                setShowScheduleModal(true);
+                break;
+            case 'reschedule':
+                // Pre-populate form with existing meeting details
+                const meeting = parseMeetingDetails(grievance);
+                if (meeting) {
+                    setMeetingForm({
+                        date: meeting.date,
+                        time: meeting.time,
+                        location: meeting.location,
+                        details: meeting.details
+                    });
+                }
                 setShowScheduleModal(true);
                 break;
             case 'meeting':
@@ -123,6 +144,20 @@ const GrievanceCommitteeNew = () => {
     };
 
     const handleScheduleMeeting = async () => {
+        // Validate all required fields
+        if (!meetingForm.date || !meetingForm.time || !meetingForm.location || !meetingForm.details) {
+            alert('Please fill in all required fields');
+            return;
+        }
+
+        // Additional validation for location and details to ensure they're not just whitespace
+        if (!meetingForm.location.trim() || !meetingForm.details.trim()) {
+            alert('Please provide valid location and meeting details');
+            return;
+        }
+
+        setIsScheduling(true); // Start scheduling
+
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`http://localhost:5000/api/grievances/committee/${selectedGrievance.id}/schedule-meeting`, {
@@ -150,11 +185,24 @@ const GrievanceCommitteeNew = () => {
         } catch (error) {
             console.error('Error scheduling meeting:', error);
             alert('Failed to schedule meeting');
+        } finally {
+            setIsScheduling(false); // End scheduling
         }
-    };    const handleApprove = async (grievanceId) => {
+    };
+
+    // Check if all meeting form fields are filled
+    const isScheduleFormValid = () => {
+        return meetingForm.date && 
+               meetingForm.time && 
+               meetingForm.location.trim() && 
+               meetingForm.details.trim();
+    };
+    const handleApprove = async (grievanceId) => {
         if (!confirm('Are you sure you want to approve this grievance? This decision is irreversible and the company will be added to the temporary approval pool.')) {
             return;
         }
+
+        setIsApproving(true); // Start approving
 
         try {
             const token = localStorage.getItem('token');
@@ -176,6 +224,8 @@ const GrievanceCommitteeNew = () => {
         } catch (error) {
             console.error('Error approving grievance:', error);
             alert('Failed to approve grievance');
+        } finally {
+            setIsApproving(false); // End approving
         }
     };    const handleReject = async () => {
         if (!rejectionReason.trim()) {
@@ -186,6 +236,8 @@ const GrievanceCommitteeNew = () => {
         if (!confirm('Are you sure you want to reject this grievance? This decision is irreversible.')) {
             return;
         }
+
+        setIsRejecting(true); // Start rejecting
 
         try {
             const token = localStorage.getItem('token');
@@ -210,6 +262,8 @@ const GrievanceCommitteeNew = () => {
         } catch (error) {
             console.error('Error rejecting grievance:', error);
             alert('Failed to reject grievance');
+        } finally {
+            setIsRejecting(false); // End rejecting
         }
     };
 
@@ -246,19 +300,6 @@ const GrievanceCommitteeNew = () => {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">                <div className="mb-8">
                     <h1 className="text-3xl font-bold text-gray-900">Grievance Committee Dashboard</h1>
                     <p className="mt-2 text-gray-600">Review and manage supplier grievance applications</p>
-                    <div className="mt-2 text-sm text-gray-500">                        Current Pakistan Time (UTC+5): {(() => {
-                            const now = new Date();
-                            const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
-                            const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
-                            return pakistanTime.toLocaleString('en-PK', { 
-                                year: 'numeric', 
-                                month: 'short', 
-                                day: 'numeric', 
-                                hour: '2-digit', 
-                                minute: '2-digit' 
-                            });
-                        })()}
-                    </div>
                 </div>
 
                 {grievances.length === 0 ? (
@@ -316,15 +357,32 @@ const GrievanceCommitteeNew = () => {
                                                             orange: 'bg-orange-600 hover:bg-orange-700 text-white',
                                                             red: 'bg-red-600 hover:bg-red-700 text-white'
                                                         };
+
+                                                        // Check if this action should be disabled due to loading state
+                                                        const isActionDisabled = (action.key === 'approve' && isApproving) || 
+                                                                                (action.key === 'reject' && isRejecting);
+
+                                                        // Get the button text based on loading state
+                                                        const getButtonText = () => {
+                                                            if (action.key === 'approve' && isApproving) return 'Approving...';
+                                                            if (action.key === 'reject' && isRejecting) return 'Rejecting...';
+                                                            return action.label;
+                                                        };
+
+                                                        // Apply disabled styles when processing
+                                                        const buttonClasses = isActionDisabled 
+                                                            ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                                                            : colorClasses[action.color];
                                                         
                                                         return (
                                                             <button
                                                                 key={action.key}
                                                                 onClick={() => handleAction(grievance, action.key)}
-                                                                className={`inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md transition-colors duration-200 ${colorClasses[action.color]}`}
+                                                                disabled={isActionDisabled}
+                                                                className={`inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md transition-colors duration-200 ${buttonClasses}`}
                                                             >
                                                                 <Icon className="w-4 h-4 mr-1.5" />
-                                                                {action.label}
+                                                                {getButtonText()}
                                                             </button>
                                                         );
                                                     })}
@@ -346,42 +404,46 @@ const GrievanceCommitteeNew = () => {
                         <h3 className="text-lg font-bold text-gray-900 mb-4">Schedule Meeting</h3>
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Date</label>
+                                <label className="block text-sm font-medium text-gray-700">Date *</label>
                                 <input
                                     type="date"
                                     value={meetingForm.date}
                                     onChange={(e) => setMeetingForm({...meetingForm, date: e.target.value})}
                                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
                                     min={new Date().toISOString().split('T')[0]}
+                                    required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Time</label>
+                                <label className="block text-sm font-medium text-gray-700">Time *</label>
                                 <input
                                     type="time"
                                     value={meetingForm.time}
                                     onChange={(e) => setMeetingForm({...meetingForm, time: e.target.value})}
                                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                                    required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Location</label>
+                                <label className="block text-sm font-medium text-gray-700">Location *</label>
                                 <input
                                     type="text"
                                     value={meetingForm.location}
                                     onChange={(e) => setMeetingForm({...meetingForm, location: e.target.value})}
                                     placeholder="Meeting room, address, or online link"
                                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                                    required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Additional Details</label>
+                                <label className="block text-sm font-medium text-gray-700">Additional Details *</label>
                                 <textarea
                                     value={meetingForm.details}
                                     onChange={(e) => setMeetingForm({...meetingForm, details: e.target.value})}
                                     placeholder="Any additional instructions or requirements..."
                                     rows={3}
                                     className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                                    required
                                 />
                             </div>
                         </div>
@@ -394,9 +456,14 @@ const GrievanceCommitteeNew = () => {
                             </button>
                             <button
                                 onClick={handleScheduleMeeting}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                disabled={!isScheduleFormValid()}
+                                className={`px-4 py-2 rounded-md transition-colors ${
+                                    isScheduleFormValid() 
+                                        ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                }`}
                             >
-                                Schedule Meeting
+                                {isScheduling ? 'Scheduling...' : 'Schedule Meeting'}
                             </button>
                         </div>
                     </div>
@@ -461,27 +528,34 @@ const GrievanceCommitteeNew = () => {
                             {/* Company Information */}
                             <div className="space-y-4">
                                 <h4 className="text-md font-semibold text-gray-800 border-b pb-2">Company Information</h4>
+                                
+                                {/* Notice about missing data - only show if some fields are missing */}
+                                {(!selectedGrievance.contact_person || !selectedGrievance.contact_number) && (
+                                    <div className="p-2 bg-yellow-50 border border-yellow-200 rounded-md mb-2">
+                                        <p className="text-sm text-yellow-700">
+                                            <span className="font-medium">Note:</span> Some supplier details are missing. These fields may not have been provided during supplier registration.
+                                        </p>
+                                    </div>
+                                )}
+                                
                                 <div className="space-y-3">
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Company Name:</label>
-                                        <p className="text-gray-900">{selectedGrievance.company_name}</p>
+                                        <p className="text-gray-900">{selectedGrievance.company_name || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Contact Person:</label>
-                                        <p className="text-gray-900">{selectedGrievance.contact_person}</p>
+                                        <p className="text-gray-900">{selectedGrievance.contact_person || selectedGrievance.supplier_contact_person || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Contact Email:</label>
-                                        <p className="text-gray-900">{selectedGrievance.contact_email}</p>
+                                        <p className="text-gray-900">{selectedGrievance.company_email || selectedGrievance.contact_email || selectedGrievance.supplier_email || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Contact Phone:</label>
-                                        <p className="text-gray-900">{selectedGrievance.contact_phone}</p>
+                                        <p className="text-gray-900">{selectedGrievance.contact_number || selectedGrievance.contact_phone || selectedGrievance.supplier_phone || 'N/A'}</p>
                                     </div>
-                                    <div>
-                                        <label className="text-sm font-medium text-gray-600">Company Address:</label>
-                                        <p className="text-gray-900">{selectedGrievance.company_address}</p>
-                                    </div>
+                                    {/* Note: company_address field doesn't exist in the database schema */}
                                 </div>
                             </div>
 
@@ -491,11 +565,11 @@ const GrievanceCommitteeNew = () => {
                                 <div className="space-y-3">
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Item/Service:</label>
-                                        <p className="text-gray-900">{selectedGrievance.item_name}</p>
+                                        <p className="text-gray-900">{selectedGrievance.item_name || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Tender Reference:</label>
-                                        <p className="text-gray-900">{selectedGrievance.tender_reference}</p>
+                                        <p className="text-gray-900">{selectedGrievance.tender_reference || `#${selectedGrievance.tender_id}` || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Status:</label>
@@ -506,19 +580,22 @@ const GrievanceCommitteeNew = () => {
                                             selectedGrievance.status === 'rejected' ? 'bg-red-100 text-red-800' :
                                             'bg-gray-100 text-gray-800'
                                         }`}>
-                                            {selectedGrievance.status.replace('_', ' ').toUpperCase()}
+                                            {selectedGrievance.status?.replace('_', ' ').toUpperCase() || 'PENDING'}
                                         </span>
                                     </div>
                                     <div>
                                         <label className="text-sm font-medium text-gray-600">Submitted:</label>
                                         <p className="text-gray-900">
-                                            {new Date(selectedGrievance.created_at).toLocaleString('en-PK', {
-                                                year: 'numeric',
-                                                month: 'long',
-                                                day: 'numeric',
-                                                hour: '2-digit',
-                                                minute: '2-digit'
-                                            })}
+                                            {selectedGrievance.created_at && isNaN(new Date(selectedGrievance.created_at).getTime()) 
+                                                ? 'Date not available'
+                                                : new Date(selectedGrievance.created_at).toLocaleString('en-PK', {
+                                                    year: 'numeric',
+                                                    month: 'long',
+                                                    day: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })
+                                            }
                                         </p>
                                     </div>
                                 </div>
@@ -617,7 +694,7 @@ const GrievanceCommitteeNew = () => {
                                 onClick={handleReject}
                                 className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
                             >
-                                Reject Grievance
+                                {isRejecting ? 'Rejecting...' : 'Reject Grievance'}
                             </button>
                         </div>
                     </div>

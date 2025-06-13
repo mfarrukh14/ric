@@ -445,11 +445,107 @@ const submitItemWiseEvaluation = async (req, res) => {
                 });
             });
 
+            // Send email notifications to rejected suppliers
+            const EmailService = require('../utils/emailService');
+            const emailService = new EmailService();
+
+            // Process email notifications in the background
+            setTimeout(async () => {
+                try {
+                    console.log('📧 Sending rejection emails to affected suppliers...');
+                    
+                    for (const [itemId, itemEval] of Object.entries(evaluations)) {
+                        // Get item name for the emails
+                        let itemName = 'Unknown Item';
+                        
+                        // Find the item name from the tender details
+                        const tender = await new Promise((resolve, reject) => {
+                            db.get(
+                                `SELECT dt.*, d.item_name
+                                 FROM demand_tenders dt
+                                 JOIN demands d ON dt.demand_id = d.id
+                                 WHERE dt.id = ?`,
+                                [tenderId],
+                                (err, row) => {
+                                    if (err) reject(err);
+                                    else resolve(row);
+                                }
+                            );
+                        });
+
+                        if (tender) {
+                            if (itemId === '0') {
+                                // Legacy single-item tender
+                                itemName = tender.item_name;
+                            } else {
+                                // Multi-item tender - get specific item name
+                                const item = await new Promise((resolve, reject) => {
+                                    db.get(
+                                        'SELECT item_name FROM demand_items WHERE id = ?',
+                                        [itemId],
+                                        (err, row) => {
+                                            if (err) reject(err);
+                                            else resolve(row);
+                                        }
+                                    );
+                                });
+                                if (item) {
+                                    itemName = item.item_name;
+                                }
+                            }
+                        }
+
+                        // Send emails to rejected companies for this item
+                        for (const rejected of itemEval.rejectedCompanies) {
+                            try {
+                                // Get supplier details from bid
+                                const supplierDetails = await new Promise((resolve, reject) => {
+                                    db.get(
+                                        `SELECT s.company_name, s.company_email, s.contact_person
+                                         FROM supplier_bids sb
+                                         JOIN suppliers s ON sb.supplier_id = s.id
+                                         WHERE sb.id = ?`,
+                                        [rejected.bidId],
+                                        (err, row) => {
+                                            if (err) reject(err);
+                                            else resolve(row);
+                                        }
+                                    );
+                                });
+
+                                if (supplierDetails && supplierDetails.company_email) {
+                                    console.log(`📧 Sending rejection email to ${supplierDetails.company_name} for item: ${itemName}`);
+                                    
+                                    await emailService.sendTechnicalEvaluationRejectionEmail(
+                                        supplierDetails.company_email,
+                                        supplierDetails.company_name,
+                                        itemName,
+                                        rejected.reason,
+                                        supplierDetails.contact_person
+                                    );
+                                    
+                                    console.log(`✅ Rejection email sent successfully to ${supplierDetails.company_name}`);
+                                } else {
+                                    console.warn(`⚠️ No email found for bid ID: ${rejected.bidId}`);
+                                }
+                            } catch (emailError) {
+                                console.error(`❌ Failed to send rejection email for bid ${rejected.bidId}:`, emailError);
+                                // Continue with other emails even if one fails
+                            }
+                        }
+                    }
+
+                    console.log('📧 All rejection email notifications processed successfully');
+                } catch (error) {
+                    console.error('❌ Error sending rejection email notifications:', error);
+                }
+            }, 1000); // Send emails 1 second after the response to avoid blocking
+
             // Generate Excel report after successful evaluation
             const excelFilePath = await generateTechnicalEvaluationReport(db, tenderId, evaluations);
 
             res.json({ 
-                message: 'Technical evaluation completed successfully. Approved companies have been added to temporary pools for each item. Rejected companies can now apply for grievance.',
+                message: 'Technical evaluation completed successfully. Approved companies have been added to temporary pools for each item. Rejected companies have been notified via email and can apply for grievance within 3 days.',
                 tenderId: tenderId,
                 reportFile: excelFilePath
             });
