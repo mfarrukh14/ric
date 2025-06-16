@@ -78,7 +78,6 @@ const processExpiredTenders = async (req, res) => {
             second: '2-digit',
             hour12: false
         });
-        console.log(`Current Pakistan time: ${currentTime}`);
         
         // Get all expired tenders that haven't been processed yet
         const expiredTenders = await new Promise((resolve, reject) => {

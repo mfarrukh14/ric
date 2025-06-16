@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../../config/api';
-import SupplierAuth from './SupplierAuth';
+import { login } from '../../../config/api';
+import SupplierAuth from '../SupplierAuth';
 
 const Login = ({ onLogin }) => {
   const [activeTab, setActiveTab] = useState('user');
@@ -48,7 +48,7 @@ const Login = ({ onLogin }) => {
     <div
       className="relative min-h-screen bg-cover bg-center flex items-center justify-center"
       style={{ 
-        backgroundImage: "url('/images/background.jpg')",
+        backgroundImage: "url('/images/background.png')",
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat"
@@ -58,20 +58,30 @@ const Login = ({ onLogin }) => {
       <div className="absolute inset-0 bg-black opacity-30"></div>
 
       {/* Frosted Glass Card */}
-      <div className="relative max-w-md w-full space-y-8 p-8 bg-white/15 bg-opacity-10 backdrop-filter backdrop-blur-lg rounded-2xl">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-light text-gray-100 tracking-tight">
-            RIC e-Tender Portal
-          </h2>
-        </div>
+      <div
+  className="
+    relative
+    max-w-md w-full space-y-8 p-8
+    bg-gradient-to-b
+      from-white/20    /* light glass at top */
+      to-purple-800/10 
+    backdrop-filter backdrop-blur-sm
+    rounded-2xl
+  "
+>
+  <div>
+    <h2 className="mt-6 text-center text-3xl font-light text-gray-100 tracking-tight">
+      RIC e-Tender Portal
+    </h2>
+  </div>
 
         {/* Tab Navigation */}
-        <div className="flex space-x-1 bg-gray-100 bg-opacity-20 rounded-lg p-1">
+        <div className="flex space-x-1 bg-white/10 bg-opacity-20 rounded-lg p-1">
           <button
             onClick={() => setActiveTab('user')}
             className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-all ${
               activeTab === 'user'
-                ? 'bg-white bg-opacity-30 text-gray-900 shadow-sm'
+                ? 'bg-black/20 bg-opacity-30 text-gray-100 shadow-sm'
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
@@ -81,7 +91,7 @@ const Login = ({ onLogin }) => {
             onClick={() => setActiveTab('supplier')}
             className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-all ${
               activeTab === 'supplier'
-                ? 'bg-white bg-opacity-30 text-gray-900 shadow-sm'
+                ? 'bg-purple-400/30 bg-opacity-30 text-gray-100 shadow-sm'
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
@@ -105,7 +115,7 @@ const Login = ({ onLogin }) => {
                 name="username"
                 type="text"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border-none placeholder-gray-300 text-gray-100 rounded-t-md focus:outline-none focus:ring-1 focus:ring-red-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border-none placeholder-gray-300 text-gray-100 rounded-t-md focus:outline-none focus:ring-1 focus:ring-gray-700 focus:z-10 sm:text-sm"
                 placeholder="Username"
                 value={credentials.username}
                 onChange={handleChange}
@@ -120,7 +130,7 @@ const Login = ({ onLogin }) => {
                 name="password"
                 type="password"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border-none placeholder-gray-300 text-gray-100 rounded-b-md focus:outline-none focus:ring-1 focus:ring-red-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border-none placeholder-gray-300 text-gray-100 rounded-b-md focus:outline-none focus:ring-1 focus:ring-gray-700 focus:z-10 sm:text-sm"
                 placeholder="Password"
                 value={credentials.password}
                 onChange={handleChange}
@@ -132,7 +142,7 @@ const Login = ({ onLogin }) => {
             <button
               type="submit"
               disabled={loading}
-              className="group relative cursor-pointer w-full flex justify-center py-2 px-4 border border-transparent text-sm font-bold rounded-md text-white bg-red-700 hover:bg-red-500 focus:outline-none"
+              className="group relative cursor-pointer w-1/2 mx-auto flex justify-center py-2 px-4 border border-transparent text-lg font-bold rounded-full text-white bg-purple-400/30 hover:bg-purple-200/40 focus:outline-none"
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>

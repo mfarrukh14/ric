@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import '../index.css';
-import Login from '../components/auth/Login';
+import Login from '../components/auth/Login/Login';
 import AdminDashboard from '../components/admin/AdminDashboard';
 import UserDashboard from '../components/user/UserDashboard';
 import SupplierDashboard from '../components/supplier/SupplierDashboard';
