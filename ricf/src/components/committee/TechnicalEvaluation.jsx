@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiUrl } from '../../config/api';
 
 const TechnicalEvaluation = () => {
     const [expiredTenders, setExpiredTenders] = useState([]);
@@ -7,7 +8,6 @@ const TechnicalEvaluation = () => {
     const [error, setError] = useState('');
 
     const navigate = useNavigate();
-    const apiUrl = 'http://localhost:5000/api';
 
     useEffect(() => {
         fetchExpiredTenders();

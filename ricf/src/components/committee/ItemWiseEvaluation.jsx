@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { apiUrl } from '../../config/api';
 
 const ItemWiseEvaluation = () => {
     const [tender, setTender] = useState(null);
@@ -13,7 +14,6 @@ const ItemWiseEvaluation = () => {
     
     const { tenderId } = useParams();
     const navigate = useNavigate();
-    const apiUrl = 'http://localhost:5000/api';
 
     useEffect(() => {
         if (tenderId) {

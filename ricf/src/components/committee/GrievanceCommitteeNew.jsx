@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, MapPin, Eye, CheckCircle, XCircle, AlertCircle, FileText, User, Mail, Phone } from 'lucide-react';
+import { apiUrl } from '../../config/api';
 
 const GrievanceCommitteeNew = () => {
     const [grievances, setGrievances] = useState([]);
@@ -44,7 +45,7 @@ const GrievanceCommitteeNew = () => {
     };const fetchGrievances = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch('http://localhost:5000/api/grievances/committee/all', {
+            const response = await fetch(`${apiUrl}/grievances/committee/all`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
@@ -160,7 +161,7 @@ const GrievanceCommitteeNew = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`http://localhost:5000/api/grievances/committee/${selectedGrievance.id}/schedule-meeting`, {
+            const response = await fetch(`${apiUrl}/grievances/committee/${selectedGrievance.id}/schedule-meeting`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -206,7 +207,7 @@ const GrievanceCommitteeNew = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`http://localhost:5000/api/grievances/committee/${grievanceId}/approve`, {
+            const response = await fetch(`${apiUrl}/grievances/committee/${grievanceId}/approve`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -241,7 +242,7 @@ const GrievanceCommitteeNew = () => {
 
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`http://localhost:5000/api/grievances/committee/${selectedGrievance.id}/reject`, {
+            const response = await fetch(`${apiUrl}/grievances/committee/${selectedGrievance.id}/reject`, {
                 method: 'PATCH',
                 headers: {
                     'Authorization': `Bearer ${token}`,

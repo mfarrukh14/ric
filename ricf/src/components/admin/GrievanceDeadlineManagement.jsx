@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import { apiUrl } from '../../config/api';
 
 const GrievanceDeadlineManagement = () => {
     const [config, setConfig] = useState({
@@ -20,7 +21,7 @@ const GrievanceDeadlineManagement = () => {
     const fetchConfig = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/admin/grievance-deadline-config', {
+            const response = await axios.get(`${apiUrl}/admin/grievance-deadline-config`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setConfig(response.data);
@@ -44,7 +45,7 @@ const GrievanceDeadlineManagement = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/admin/grievance-deadlines', {
+            const response = await axios.get(`${apiUrl}/admin/grievance-deadlines`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setDeadlines(response.data);
@@ -62,7 +63,7 @@ const GrievanceDeadlineManagement = () => {
         
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.put('http://localhost:5000/api/admin/grievance-deadline-config', config, {
+            const response = await axios.put(`${apiUrl}/admin/grievance-deadline-config`, config, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             

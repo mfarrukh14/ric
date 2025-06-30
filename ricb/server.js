@@ -1,7 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { connectDatabase } = require('./src/config/database'); // Import the connectDatabase function
+const { connectDatabase } = require('./src/config/database');
+
 const authRoutes = require('./src/routes/auth');
 const adminRoutes = require('./src/routes/admin');
 const demandRoutes = require('./src/routes/demands');
@@ -11,11 +12,13 @@ const grievanceRoutes = require('./src/routes/grievanceRoutes');
 const financialOpeningRoutes = require('./src/routes/financialOpening');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = 5001;
+const HOST = process.env.HOST || '0.0.0.0';
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -28,32 +31,29 @@ app.use('/api/financial-opening', financialOpeningRoutes);
 
 // Test route
 app.get('/', (req, res) => {
-    res.json({ message: 'Server is running' });
+  res.json({ message: 'Server is running' });
 });
 
-// Import tender processing function
+// Tender expiry processing
 const { markExpiredTendersForEvaluation } = require('./src/controllers/tenderController');
-
-// Set up automatic processing of expired tenders every minute
 setInterval(async () => {
-    try {
-        console.log('Checking for expired tenders...');
-        await markExpiredTendersForEvaluation();
-    } catch (error) {
-        console.error('Error in automatic tender processing:', error);
-    }
-}, 60000); // Check every minute
-
+  try {
+    console.log('Checking for expired tenders...');
+    await markExpiredTendersForEvaluation();
+  } catch (error) {
+    console.error('Error in automatic tender processing:', error);
+  }
+}, 60000);
 console.log('Automatic tender expiry processing started (checks every minute)');
 
-// Connect to the database and then start the server
+// Connect DB and start server
 connectDatabase()
-    .then(() => {
-        app.listen(PORT, () => {
-            console.log(`Server is running on port ${PORT}`);
-        });
-    })
-    .catch(err => {
-        console.error('Failed to connect to the database:', err);
-        process.exit(1);
+  .then(() => {
+    app.listen(PORT, HOST, () => {
+      console.log(`Server is running on http://${HOST}:${PORT}`);
     });
+  })
+  .catch(err => {
+    console.error('Failed to connect to the database:', err);
+    process.exit(1);
+  });

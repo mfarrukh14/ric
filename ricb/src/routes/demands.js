@@ -254,8 +254,30 @@ router.get('/tenders/:tenderId/items-list', auth, async (req, res) => {
         res.sendFile(filePath);
     } catch (error) {
         console.error('Error downloading items list:', error);
-        res.status(500).json({ message: 'Failed to download items list' });
+        res.status(500).json({ message: 'Failed to download items list' });    }
+});
+
+// Error handling middleware for multer errors
+router.use((error, req, res, next) => {
+    if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ 
+                error: 'File too large. Please upload a file smaller than 10MB.'
+            });
+        }
+        return res.status(400).json({ 
+            error: 'File upload error. Please try again.'
+        });
     }
+    
+    if (error.message.includes('PDF files are allowed') || error.message.includes('Excel or CSV file')) {
+        return res.status(400).json({ 
+            error: error.message
+        });
+    }
+    
+    // Pass other errors to default error handler
+    next(error);
 });
 
 module.exports = router;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import { apiUrl } from '../../config/api';
 
 const GrievanceManagement = () => {
     const [activeTab, setActiveTab] = useState('rejected-items');
@@ -30,7 +31,7 @@ const GrievanceManagement = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/grievances/supplier/rejected-items', {
+            const response = await axios.get(`${apiUrl}/grievances/supplier/rejected-items`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setRejectedItems(response.data);
@@ -46,7 +47,7 @@ const GrievanceManagement = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/grievances/supplier/my-grievances', {
+            const response = await axios.get(`${apiUrl}/grievances/supplier/my-grievances`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setGrievances(response.data);
@@ -61,7 +62,7 @@ const GrievanceManagement = () => {
     const fetchDeadlineStatus = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/grievances/supplier/deadline-status', {
+            const response = await axios.get(`${apiUrl}/grievances/supplier/deadline-status`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setDeadlineStatus(response.data);
@@ -157,7 +158,7 @@ const GrievanceManagement = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            await axios.post('http://localhost:5000/api/grievances/supplier/submit', {
+            await axios.post(`${apiUrl}/grievances/supplier/submit`, {
                 technicalEvaluationId: selectedItem.id,
                 ...grievanceForm
             }, {

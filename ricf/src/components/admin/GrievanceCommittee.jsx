@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { toast } from 'react-toastify';
+import { apiUrl } from '../../config/api';
 
 const GrievanceCommittee = () => {
     const [grievances, setGrievances] = useState([]);
@@ -24,7 +25,7 @@ const GrievanceCommittee = () => {
         setLoading(true);
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/grievances/committee/all', {
+            const response = await axios.get(`${apiUrl}/grievances/committee/all`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setGrievances(response.data);
@@ -64,7 +65,7 @@ const GrievanceCommittee = () => {
         try {
             const token = localStorage.getItem('token');
             await axios.post(
-                `http://localhost:5000/api/grievances/committee/${selectedGrievance.id}/schedule-meeting`,
+                `${apiUrl}/grievances/committee/${selectedGrievance.id}/schedule-meeting`,
                 meetingForm,
                 { headers: { Authorization: `Bearer ${token}` }}
             );
@@ -86,7 +87,7 @@ const GrievanceCommittee = () => {
         try {
             const token = localStorage.getItem('token');
             await axios.patch(
-                `http://localhost:5000/api/grievances/committee/${grievanceId}/status`,
+                `${apiUrl}/grievances/committee/${grievanceId}/status`,
                 { status: newStatus, resolution },
                 { headers: { Authorization: `Bearer ${token}` }}
             );

@@ -112,4 +112,27 @@ router.post('/test-email', auth, async (req, res) => {
     }
 });
 
+// Error handling middleware for multer errors
+router.use((error, req, res, next) => {
+    if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ 
+                error: 'File too large. Please upload a file smaller than 10MB.'
+            });
+        }
+        return res.status(400).json({ 
+            error: 'File upload error. Please try again.'
+        });
+    }
+    
+    if (error.message.includes('Only PDF files are allowed')) {
+        return res.status(400).json({ 
+            error: 'Only PDF files are allowed.'
+        });
+    }
+    
+    // Pass other errors to default error handler
+    next(error);
+});
+
 module.exports = router;
