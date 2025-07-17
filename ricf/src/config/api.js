@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://147.93.87.182:5001/api';
+const API_URL = 'http://192.168.1.19:5000/api';
 
 const api = axios.create({
     baseURL: API_URL,
@@ -22,6 +22,85 @@ api.interceptors.request.use((config) => {
 export const login = async (username, password) => {
     try {
         const response = await api.post('/auth/login', { username, password });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+// Complete 2FA Login
+export const complete2FALogin = async (userId, token, isBackupCode = false) => {
+    try {
+        const response = await api.post('/auth/complete-2fa-login', { 
+            userId, 
+            token, 
+            isBackupCode 
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+// 2FA Management
+export const setup2FA = async () => {
+    try {
+        const response = await api.post('/2fa/setup');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const enable2FA = async (token) => {
+    try {
+        const response = await api.post('/2fa/enable', { token });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const verify2FA = async (userId, token, isBackupCode = false) => {
+    try {
+        const response = await api.post('/2fa/verify', { 
+            userId, 
+            token, 
+            isBackupCode 
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const disable2FA = async (token, isBackupCode = false) => {
+    try {
+        const response = await api.post('/2fa/disable', { 
+            token, 
+            isBackupCode 
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const get2FAStatus = async () => {
+    try {
+        const response = await api.get('/2fa/status');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const regenerateBackupCodes = async (token, isBackupCode = false) => {
+    try {
+        const response = await api.post('/2fa/regenerate-backup-codes', { 
+            token, 
+            isBackupCode 
+        });
         return response.data;
     } catch (error) {
         throw error.response?.data || { error: 'Network error' };
@@ -153,6 +232,53 @@ export const updateDemandStatus = async (demandId, status, responseText) => {
 
 export const getDemandById = async (demandId) => {
     const response = await api.get(`/demands/${demandId}`);
+    return response.data;
+};
+
+// Item Categories
+export const getItemCategories = async () => {
+    const response = await api.get('/items/categories');
+    return response.data;
+};
+
+export const createItemCategory = async (categoryData) => {
+    const response = await api.post('/items/categories', categoryData);
+    return response.data;
+};
+
+export const updateItemCategory = async (id, categoryData) => {
+    const response = await api.put(`/items/categories/${id}`, categoryData);
+    return response.data;
+};
+
+export const deleteItemCategory = async (id) => {
+    const response = await api.delete(`/items/categories/${id}`);
+    return response.data;
+};
+
+// Item Names
+export const getItemNamesByCategory = async (categoryId) => {
+    const response = await api.get(`/items/categories/${categoryId}/names`);
+    return response.data;
+};
+
+export const getAllItemNames = async () => {
+    const response = await api.get('/items/names');
+    return response.data;
+};
+
+export const createItemName = async (itemNameData) => {
+    const response = await api.post('/items/names', itemNameData);
+    return response.data;
+};
+
+export const updateItemName = async (id, itemNameData) => {
+    const response = await api.put(`/items/names/${id}`, itemNameData);
+    return response.data;
+};
+
+export const deleteItemName = async (id) => {
+    const response = await api.delete(`/items/names/${id}`);
     return response.data;
 };
 

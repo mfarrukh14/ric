@@ -13,11 +13,12 @@ const createDemand = async (req, res) => {
 
     // Validate each item
     for (const item of items) {
-        if (!item.itemName || !item.quantity || !item.estimatedCost) {
-            return res.status(400).json({ message: 'Each item must have name, quantity and estimated cost' });
+        if (!item.categoryId || !item.itemNameId || !item.quantity || !item.unit || 
+            (!item.prevYearCost && item.prevYearCost !== 0) || (!item.currentYearCost && item.currentYearCost !== 0)) {
+            return res.status(400).json({ message: 'Each item must have category, item name, quantity, unit, and both year costs' });
         }
-        if (item.quantity <= 0 || item.estimatedCost <= 0) {
-            return res.status(400).json({ message: 'Quantity and estimated cost must be positive numbers' });
+        if (item.quantity <= 0 || item.prevYearCost < 0 || item.currentYearCost < 0) {
+            return res.status(400).json({ message: 'Quantity must be positive and costs cannot be negative' });
         }
     }
 
@@ -27,16 +28,32 @@ const createDemand = async (req, res) => {
     }
 
     try {
-        // Calculate total estimated cost
-        const totalEstimatedCost = items.reduce((sum, item) => sum + parseFloat(item.estimatedCost), 0);
+        // Calculate total estimated cost (using current year cost)
+        const totalEstimatedCost = items.reduce((sum, item) => sum + parseFloat(item.currentYearCost), 0);
         
-        // Create main demand record (using first item as primary for backward compatibility)
+        // Get item name for the first item for backward compatibility
         const firstItem = items[0];
+        const itemNameData = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT name FROM item_names WHERE id = ?',
+                [firstItem.itemNameId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!itemNameData) {
+            return res.status(400).json({ message: 'Invalid item name selected for first item' });
+        }
+
+        // Create main demand record (using first item as primary for backward compatibility)
         const demandResult = await new Promise((resolve, reject) => {
             db.run(
                 `INSERT INTO demands (item_name, quantity, estimated_cost, description, urgency, required_by, created_by)
                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [firstItem.itemName, firstItem.quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId],
+                [itemNameData.name, firstItem.quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId],
                 function(err) {
                     if (err) reject(err);
                     else resolve({ id: this.lastID });
@@ -46,14 +63,38 @@ const createDemand = async (req, res) => {
 
         const demandId = demandResult.id;
 
-        // Insert all items into demand_items table
+        // Insert all items into demand_items table with new fields
         for (const item of items) {
+            // Get the actual item name
+            const itemName = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT name FROM item_names WHERE id = ?',
+                    [item.itemNameId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row?.name || 'Unknown Item');
+                    }
+                );
+            });
+
             await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, unit, remarks)
-                     VALUES (?, ?, ?, ?, ?, ?)`,
-                    [demandId, item.itemName, item.quantity, item.estimatedCost, item.unit || 'pieces', item.remarks || null],
-                    function(err) {
+                    `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, remarks, unit, 
+                     category_id, item_name_id, prev_year_cost, current_year_cost) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        demandId, 
+                        itemName, 
+                        item.quantity, 
+                        item.currentYearCost, // Use current year cost as estimated cost
+                        item.remarks || null, 
+                        item.unit,
+                        item.categoryId,
+                        item.itemNameId,
+                        item.prevYearCost,
+                        item.currentYearCost
+                    ],
+                    (err) => {
                         if (err) reject(err);
                         else resolve();
                     }
@@ -241,10 +282,17 @@ const getDemandWithItems = async (req, res) => {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
-        // Get items for the demand
+        // Get items for the demand with category names
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id`,
+                `SELECT di.*, 
+                        ic.name as category_name,
+                        in_t.name as item_name_full
+                 FROM demand_items di
+                 LEFT JOIN item_categories ic ON di.category_id = ic.id
+                 LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                 WHERE di.demand_id = ? 
+                 ORDER BY di.id`,
                 [id],
                 (err, rows) => {
                     if (err) reject(err);
@@ -282,11 +330,18 @@ const getAllDemandsWithItems = async (req, res) => {
             );
         });
 
-        // Get items for each demand
+        // Get items for each demand with category names
         for (let demand of demands) {
             const items = await new Promise((resolve, reject) => {
                 db.all(
-                    `SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id ASC`,
+                    `SELECT di.*, 
+                            ic.name as category_name,
+                            in_t.name as item_name_full
+                     FROM demand_items di
+                     LEFT JOIN item_categories ic ON di.category_id = ic.id
+                     LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                     WHERE di.demand_id = ? 
+                     ORDER BY di.id ASC`,
                     [demand.id],
                     (err, rows) => {
                         if (err) reject(err);

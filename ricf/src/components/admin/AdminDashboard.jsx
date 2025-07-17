@@ -8,12 +8,22 @@ import {
     createUser,
     deleteDepartment,
     deleteCommittee,
-    deleteUser
+    deleteUser,
+    getItemCategories,
+    getAllItemNames,
+    createItemCategory,
+    createItemName,
+    updateItemCategory,
+    updateItemName,
+    deleteItemCategory,
+    deleteItemName,
+    getItemNamesByCategory
 } from '../../config/api';
 import Modal from '../modals/Modal';
 import UserListModal from '../modals/UserListModal';
 import DemandManagement from './DemandManagement';
 import GrievanceDeadlineManagement from './GrievanceDeadlineManagement';
+import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
 import { UserPlus, Trash2, Eye, Package, Clock } from 'lucide-react';
 
 const glassTableClass = `
@@ -26,11 +36,16 @@ const AdminDashboard = () => {
     const [departments, setDepartments] = useState([]);
     const [committees, setCommittees] = useState([]);
     const [users, setUsers] = useState([]);
-    const [activeTab, setActiveTab] = useState('management'); // management or demands
+    const [itemCategories, setItemCategories] = useState([]);
+    const [itemNames, setItemNames] = useState([]);
+    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances
     const [showDepartmentModal, setShowDepartmentModal] = useState(false);
     const [showCommitteeModal, setShowCommitteeModal] = useState(false);
     const [showUserModal, setShowUserModal] = useState(false);
     const [showUserListModal, setShowUserListModal] = useState(false);
+    const [showCategoryModal, setShowCategoryModal] = useState(false);
+    const [showItemNameModal, setShowItemNameModal] = useState(false);
+    const [show2FASetup, setShow2FASetup] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState({ id: null, type: '' });
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -38,6 +53,9 @@ const AdminDashboard = () => {
     const [newUser, setNewUser] = useState({
         name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false
     });
+    const [newCategory, setNewCategory] = useState({ name: '', description: '' });
+    const [newItemName, setNewItemName] = useState({ categoryId: '', name: '', description: '' });
+    const [editingItem, setEditingItem] = useState(null);
     const [error, setError] = useState('');
     const [createdCredentials, setCreatedCredentials] = useState(null);
 
@@ -45,12 +63,18 @@ const AdminDashboard = () => {
 
     const fetchAll = async () => {
         try {
-            const [d, c, u] = await Promise.all([
-                listDepartments(), listCommittees(), listUsers()
+            const [d, c, u, ic, in_] = await Promise.all([
+                listDepartments(), 
+                listCommittees(), 
+                listUsers(), 
+                getItemCategories(), 
+                getAllItemNames()
             ]);
             setDepartments(d);
             setCommittees(c);
             setUsers(u);
+            setItemCategories(ic);
+            setItemNames(in_);
         } catch (e) {
             setError(e.error || 'Failed to load data');
         }
@@ -100,6 +124,125 @@ const AdminDashboard = () => {
         }
     };
 
+    // Item Management Handlers
+    const handleCreateCategory = async (e) => {
+        e.preventDefault();
+        if (!newCategory.name.trim()) {
+            setError('Category name is required');
+            return;
+        }
+        try {
+            await createItemCategory(newCategory);
+            setNewCategory({ name: '', description: '' });
+            setShowCategoryModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to create category');
+        }
+    };
+
+    const handleEditCategory = (category) => {
+        setEditingItem(category);
+        setNewCategory({ name: category.name, description: category.description || '' });
+        setShowCategoryModal(true);
+    };
+
+    const handleUpdateCategory = async (e) => {
+        e.preventDefault();
+        if (!newCategory.name.trim()) {
+            setError('Category name is required');
+            return;
+        }
+        try {
+            await updateItemCategory(editingItem.id, newCategory);
+            setNewCategory({ name: '', description: '' });
+            setEditingItem(null);
+            setShowCategoryModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to update category');
+        }
+    };
+
+    const handleDeleteCategory = async (categoryId) => {
+        if (window.confirm('Are you sure you want to delete this category? This will also delete all associated item names.')) {
+            try {
+                await deleteItemCategory(categoryId);
+                fetchAll();
+            } catch (error) {
+                setError(error.error || 'Failed to delete category');
+            }
+        }
+    };
+
+    const handleCreateItemName = async (e) => {
+        e.preventDefault();
+        if (!newItemName.categoryId || !newItemName.name.trim()) {
+            setError('Category and item name are required');
+            return;
+        }
+        try {
+            await createItemName(newItemName);
+            setNewItemName({ categoryId: '', name: '', description: '' });
+            setShowItemNameModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to create item name');
+        }
+    };
+
+    const handleEditItemName = (item) => {
+        setEditingItem(item);
+        setNewItemName({ 
+            categoryId: item.category_id, 
+            name: item.name, 
+            description: item.description || '' 
+        });
+        setShowItemNameModal(true);
+    };
+
+    const handleUpdateItemName = async (e) => {
+        e.preventDefault();
+        if (!newItemName.categoryId || !newItemName.name.trim()) {
+            setError('Category and item name are required');
+            return;
+        }
+        try {
+            await updateItemName(editingItem.id, newItemName);
+            setNewItemName({ categoryId: '', name: '', description: '' });
+            setEditingItem(null);
+            setShowItemNameModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to update item name');
+        }
+    };
+
+    const handleDeleteItemName = async (itemId) => {
+        if (window.confirm('Are you sure you want to delete this item name?')) {
+            try {
+                await deleteItemName(itemId);
+                fetchAll();
+            } catch (error) {
+                setError(error.error || 'Failed to delete item name');
+            }
+        }
+    };
+
+    const handleCloseCategoryModal = () => {
+        setShowCategoryModal(false);
+        setEditingItem(null);
+        setNewCategory({ name: '', description: '' });
+        setError('');
+    };
+
+    const handleCloseItemNameModal = () => {
+        setShowItemNameModal(false);
+        setEditingItem(null);
+        setNewItemName({ categoryId: '', name: '', description: '' });
+        setError('');
+    };
+
     const getUsersFor = (id, type) =>
         users.filter(u => type === 'department' ? u.department_id === id : u.committee_id === id);
 
@@ -121,7 +264,18 @@ const AdminDashboard = () => {
         }
     }; return (
         <div className="container mx-auto px-4 py-8 space-y-6">
-            <h1 className="text-3xl font-bold text-black">Admin Dashboard</h1>
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold text-black">Admin Dashboard</h1>
+                <button
+                    onClick={() => setShow2FASetup(true)}
+                    className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 flex items-center"
+                >
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    Security Settings
+                </button>
+            </div>
 
             {error && (
                 <div className="bg-red-100 border border-red-400 text-red-700 p-4 rounded flex justify-between">
@@ -149,6 +303,16 @@ const AdminDashboard = () => {
                 >
                     <UserPlus size={20} />
                     <span>User Management</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('items')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'items'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Package size={20} />
+                    <span>Item Management</span>
                 </button>
                 <button
                     onClick={() => setActiveTab('demands')}
@@ -250,6 +414,115 @@ const AdminDashboard = () => {
                                         </tr>
                                     ))
                                 )}                    </tbody>                </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Item Management Tab */}
+            {activeTab === 'items' && (
+                <div className="space-y-6">
+                    {/* Item Categories Table */}
+                    <div className={glassTableClass}>
+                        <div className="flex justify-between items-center p-4">
+                            <h2 className="text-xl font-semibold text-black">Item Categories</h2>
+                            <button
+                                onClick={() => setShowCategoryModal(true)}
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                            >
+                                <UserPlus size={16} />
+                                <span>Add Category</span>
+                            </button>
+                        </div>
+                        <table className="w-full">
+                            <thead>
+                                <tr className="bg-black bg-opacity-10">
+                                    <th className="text-left p-3 text-black font-medium">Name</th>
+                                    <th className="text-left p-3 text-black font-medium">Description</th>
+                                    <th className="text-left p-3 text-black font-medium">Items Count</th>
+                                    <th className="text-left p-3 text-black font-medium">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {itemCategories.length === 0 ? (
+                                    <tr><td colSpan="4" className="text-center p-6 text-black">No categories found</td></tr>
+                                ) : (
+                                    itemCategories.map(category => (
+                                        <tr key={category.id} className="border-t border-white border-opacity-20">
+                                            <td className="p-3 text-black">{category.name}</td>
+                                            <td className="p-3 text-black">{category.description || 'No description'}</td>
+                                            <td className="p-3 text-black">
+                                                {itemNames.filter(item => item.category_id === category.id).length}
+                                            </td>
+                                            <td className="p-3 space-x-2">
+                                                <button
+                                                    onClick={() => handleEditCategory(category)}
+                                                    className="text-blue-600 hover:text-blue-800"
+                                                >
+                                                    <Eye size={16} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteCategory(category.id)}
+                                                    className="text-red-600 hover:text-red-800"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Item Names Table */}
+                    <div className={glassTableClass}>
+                        <div className="flex justify-between items-center p-4">
+                            <h2 className="text-xl font-semibold text-black">Item Names</h2>
+                            <button
+                                onClick={() => setShowItemNameModal(true)}
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                            >
+                                <UserPlus size={16} />
+                                <span>Add Item Name</span>
+                            </button>
+                        </div>
+                        <table className="w-full">
+                            <thead>
+                                <tr className="bg-black bg-opacity-10">
+                                    <th className="text-left p-3 text-black font-medium">Item Name</th>
+                                    <th className="text-left p-3 text-black font-medium">Category</th>
+                                    <th className="text-left p-3 text-black font-medium">Description</th>
+                                    <th className="text-left p-3 text-black font-medium">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {itemNames.length === 0 ? (
+                                    <tr><td colSpan="4" className="text-center p-6 text-black">No item names found</td></tr>
+                                ) : (
+                                    itemNames.map(item => (
+                                        <tr key={item.id} className="border-t border-white border-opacity-20">
+                                            <td className="p-3 text-black">{item.name}</td>
+                                            <td className="p-3 text-black">{item.category_name}</td>
+                                            <td className="p-3 text-black">{item.description || 'No description'}</td>
+                                            <td className="p-3 space-x-2">
+                                                <button
+                                                    onClick={() => handleEditItemName(item)}
+                                                    className="text-blue-600 hover:text-blue-800"
+                                                >
+                                                    <Eye size={16} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteItemName(item.id)}
+                                                    className="text-red-600 hover:text-red-800"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
@@ -358,9 +631,89 @@ const AdminDashboard = () => {
                 </form>
             </Modal>
 
+            {/* Category Modal */}
+            <Modal 
+                show={showCategoryModal} 
+                onClose={handleCloseCategoryModal} 
+                title={editingItem ? "Edit Category" : "Add Category"}
+            >
+                {error && <div className="mb-4 text-red-600">{error}</div>}
+                <form onSubmit={editingItem ? handleUpdateCategory : handleCreateCategory}>
+                    <input
+                        type="text"
+                        placeholder="Category Name"
+                        value={newCategory.name}
+                        onChange={e => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full p-2 border rounded mb-3"
+                        required
+                    />
+                    <textarea
+                        placeholder="Description (optional)"
+                        value={newCategory.description}
+                        onChange={e => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
+                        className="w-full p-2 border rounded mb-4"
+                        rows="3"
+                    />
+                    <button 
+                        type="submit" 
+                        className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700"
+                    >
+                        {editingItem ? 'Update Category' : 'Create Category'}
+                    </button>
+                </form>
+            </Modal>
+
+            {/* Item Name Modal */}
+            <Modal 
+                show={showItemNameModal} 
+                onClose={handleCloseItemNameModal} 
+                title={editingItem ? "Edit Item Name" : "Add Item Name"}
+            >
+                {error && <div className="mb-4 text-red-600">{error}</div>}
+                <form onSubmit={editingItem ? handleUpdateItemName : handleCreateItemName}>
+                    <select
+                        value={newItemName.categoryId}
+                        onChange={e => setNewItemName(prev => ({ ...prev, categoryId: e.target.value }))}
+                        className="w-full p-2 border rounded mb-3"
+                        required
+                    >
+                        <option value="">Select Category</option>
+                        {itemCategories.map(category => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="text"
+                        placeholder="Item Name"
+                        value={newItemName.name}
+                        onChange={e => setNewItemName(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full p-2 border rounded mb-3"
+                        required
+                    />
+                    <textarea
+                        placeholder="Description (optional)"
+                        value={newItemName.description}
+                        onChange={e => setNewItemName(prev => ({ ...prev, description: e.target.value }))}
+                        className="w-full p-2 border rounded mb-4"
+                        rows="3"
+                    />
+                    <button 
+                        type="submit" 
+                        className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700"
+                    >
+                        {editingItem ? 'Update Item Name' : 'Create Item Name'}
+                    </button>
+                </form>
+            </Modal>
+
             {/* Demand Management Tab */}
             {activeTab === 'demands' && (
                 <DemandManagement />
+            )}
+
+            {/* 2FA Setup Modal */}
+            {show2FASetup && (
+                <TwoFactorSetup onClose={() => setShow2FASetup(false)} />
             )}
         </div>
     );

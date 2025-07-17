@@ -215,7 +215,14 @@ const updateItemStatuses = async (req, res) => {
                         store_available_quantity = ?, 
                         remarks = ?,
                         store_response_at = datetime('now'),
-                        store_response_by = ?
+                        store_response_by = ?,
+                        stock_in_hand = ?,
+                        consumption_type = ?,
+                        consumption_amount = ?,
+                        calculated_required_qty = ?,
+                        store_estimated_cost = ?,
+                        removal_reason = ?,
+                        is_removed = ?
                     WHERE id = ? AND demand_id = ?
                 `;
                 
@@ -225,6 +232,13 @@ const updateItemStatuses = async (req, res) => {
                         update.availableQuantity,
                         update.remarks || null,
                         userId,
+                        update.stockInHand || 0,
+                        update.consumptionType || 'monthly',
+                        update.consumptionAmount || 0,
+                        update.calculatedRequiredQty || update.availableQuantity,
+                        update.storeEstimatedCost || update.estimatedCost,
+                        update.removalReason || null,
+                        update.isRemoved || 0,
                         update.itemId,
                         id
                     ], (err) => {

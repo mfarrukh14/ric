@@ -15,20 +15,20 @@ const Modal = ({ show, onClose, title, children }) => {
   const modalContent = (
     <div
       className="
-        fixed inset-0 
-        bg-black/15 bg-opacity-30 
-        backdrop-filter backdrop-blur-md 
-        flex items-center justify-center 
+        fixed inset-0
+        bg-black/15 bg-opacity-30
+        backdrop-filter backdrop-blur-md
+        flex items-center justify-center
         z-50
       "
       onClick={onClose}
     >
       <div
         className="
-          bg-white bg-opacity-20 
-          backdrop-filter backdrop-blur-lg 
-          border border-white border-opacity-30 
-          rounded-2xl shadow-xl 
+          bg-white bg-opacity-20
+          backdrop-filter backdrop-blur-lg
+          border border-white border-opacity-30
+          rounded-2xl shadow-xl
           p-6 w-full max-w-md
         "
         onClick={e => e.stopPropagation()}
@@ -39,7 +39,7 @@ const Modal = ({ show, onClose, title, children }) => {
             onClick={onClose}
             className="text-white hover:text-gray-200 text-2xl leading-none"
           >
-            ×
+            &times;
           </button>
         </div>
         {children}

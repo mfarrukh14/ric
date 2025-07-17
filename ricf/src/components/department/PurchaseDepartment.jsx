@@ -657,14 +657,24 @@ const PurchaseDepartment = () => {
                                                                     </div>
                                                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
                                                                         <div>
-                                                                            <span className="font-medium">Quantity:</span> {item.quantity}
+                                                                            <span className="font-medium">Quantity:</span> {item.quantity} {item.unit}
                                                                         </div>
                                                                         <div>
                                                                             <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                                                         </div>
                                                                         {item.store_available_quantity !== undefined && (
                                                                             <div>
-                                                                                <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                                                                <span className="font-medium">Store Available:</span> {item.store_available_quantity} {item.unit}
+                                                                            </div>
+                                                                        )}
+                                                                        {item.stock_in_hand !== undefined && (
+                                                                            <div>
+                                                                                <span className="font-medium">Stock in Hand:</span> {item.stock_in_hand} {item.unit}
+                                                                            </div>
+                                                                        )}
+                                                                        {item.consumption_type && (
+                                                                            <div className="col-span-2">
+                                                                                <span className="font-medium">Consumption:</span> {item.consumption_amount} {item.unit} ({item.consumption_type})
                                                                             </div>
                                                                         )}
                                                                         {item.remarks && (
@@ -685,10 +695,13 @@ const PurchaseDepartment = () => {
                                                             <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
                                                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
                                                                 <div>
-                                                                    <span className="font-medium">Quantity:</span> {demand.quantity}
+                                                                    <span className="font-medium">Quantity:</span> {demand.quantity} {demand.unit || 'pcs'}
                                                                 </div>
                                                                 <div>
                                                                     <span className="font-medium">Est. Cost:</span> Rs {demand.estimated_cost}
+                                                                </div>
+                                                                <div>
+                                                                    <span className="font-medium">Unit:</span> {demand.unit || 'pcs'}
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -1035,14 +1048,14 @@ const PurchaseDepartment = () => {
                                                 </div>
                                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
                                                     <div>
-                                                        <span className="font-medium">Requested:</span> {item.quantity}
+                                                        <span className="font-medium">Requested:</span> {item.quantity} {item.unit}
                                                     </div>
                                                     <div>
                                                         <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                                     </div>
                                                     {item.store_available_quantity !== undefined && (
                                                         <div>
-                                                            <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                                            <span className="font-medium">Store Available:</span> {item.store_available_quantity} {item.unit}
                                                         </div>
                                                     )}
                                                 </div>
@@ -1061,12 +1074,15 @@ const PurchaseDepartment = () => {
                                     <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
                                     <div className="bg-gray-50 rounded-lg p-4">
                                         <h5 className="font-medium text-gray-900 mb-2">{selectedDemand?.item_name}</h5>
-                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
                                             <div>
-                                                <span className="font-medium">Quantity:</span> {selectedDemand?.quantity}
+                                                <span className="font-medium">Quantity:</span> {selectedDemand?.quantity} {selectedDemand?.unit || 'pcs'}
                                             </div>
                                             <div>
                                                 <span className="font-medium">Est. Cost:</span> Rs {selectedDemand?.estimated_cost}
+                                            </div>
+                                            <div>
+                                                <span className="font-medium">Unit:</span> {selectedDemand?.unit || 'pcs'}
                                             </div>
                                         </div>
                                     </div>

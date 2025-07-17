@@ -4,7 +4,12 @@ const path = require('path');
 const fs = require('fs');
 const auth = require('../middleware/auth');
 const {
-    registerSupplier,
+    sendRegistrationOTP,
+    verifyEmailOTP,
+    verifySMSOTP,
+    completeRegistration,
+    resendOTP,
+    legacyRegisterSupplier,
     loginSupplier,
     getPendingSuppliers,
     getSupplierDetails,
@@ -69,7 +74,11 @@ const uploadBidFields = upload.fields([
 ]);
 
 // Public routes
-router.post('/register', uploadRegistrationFields, registerSupplier);
+router.post('/register/send-otp', uploadRegistrationFields, sendRegistrationOTP);
+router.post('/register/verify-email-otp', verifyEmailOTP);
+router.post('/register/verify-sms-otp', verifySMSOTP);
+router.post('/register/complete', completeRegistration);
+router.post('/register/resend-otp', resendOTP);
 router.post('/login', loginSupplier);
 
 // Protected routes (for evaluation committee)

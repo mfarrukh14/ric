@@ -10,9 +10,11 @@ const supplierRoutes = require('./src/routes/suppliers');
 const technicalEvaluationRoutes = require('./src/routes/technicalEvaluation');
 const grievanceRoutes = require('./src/routes/grievanceRoutes');
 const financialOpeningRoutes = require('./src/routes/financialOpening');
+const itemRoutes = require('./src/routes/items');
+const twoFactorRoutes = require('./src/routes/twoFactor');
 
 const app = express();
-const PORT = 5001;
+const PORT = 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 // Middleware
@@ -28,6 +30,8 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/technical-evaluation', technicalEvaluationRoutes);
 app.use('/api/grievances', grievanceRoutes);
 app.use('/api/financial-opening', financialOpeningRoutes);
+app.use('/api/items', itemRoutes);
+app.use('/api/2fa', twoFactorRoutes);
 
 // Test route
 app.get('/', (req, res) => {

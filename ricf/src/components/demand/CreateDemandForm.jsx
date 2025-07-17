@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiUrl } from '../../config/api';
+import { apiUrl, getItemCategories, getItemNamesByCategory } from '../../config/api';
 
 const CreateDemandForm = () => {
   const navigate = useNavigate();
@@ -8,18 +8,90 @@ const CreateDemandForm = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Dropdown data
+  const [categories, setCategories] = useState([]);
+  const [itemNamesByCategory, setItemNamesByCategory] = useState({});
+
+  // Unit options
+  const unitOptions = ['packet', 'box', 'kg', 'roll', 'ltr', 'numbers', 'tests', 'kit'];
+
+  // Get current and previous fiscal years
+  const getCurrentFiscalYear = () => {
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1; // JavaScript months are 0-indexed
+    
+    // Fiscal year typically runs from July to June
+    if (currentMonth >= 7) {
+      return `${currentYear}-${currentYear + 1}`;
+    } else {
+      return `${currentYear - 1}-${currentYear}`;
+    }
+  };
+
+  const getPreviousFiscalYear = () => {
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+    
+    if (currentMonth >= 7) {
+      return `${currentYear - 1}-${currentYear}`;
+    } else {
+      return `${currentYear - 2}-${currentYear - 1}`;
+    }
+  };
+
+  const currentFiscalYear = getCurrentFiscalYear();
+  const previousFiscalYear = getPreviousFiscalYear();
+
   // Form data state
   const [formData, setFormData] = useState({
     description: '',
     urgency: 'normal',
     requiredBy: '',
     items: [
-      { itemName: '', quantity: '', estimatedCost: '', remarks: '' }
+      { 
+        categoryId: '', 
+        itemNameId: '', 
+        quantity: '', 
+        unit: 'numbers', 
+        prevYearCost: '', 
+        currentYearCost: '', 
+        remarks: '' 
+      }
     ]
   });
 
   // Validation state
   const [errors, setErrors] = useState({});
+
+  // Load categories on component mount
+  useEffect(() => {
+    loadCategories();
+  }, []);
+
+  const loadCategories = async () => {
+    try {
+      const categoriesData = await getItemCategories();
+      setCategories(categoriesData);
+    } catch (error) {
+      console.error('Error loading categories:', error);
+      setError('Failed to load item categories');
+    }
+  };
+
+  const loadItemNames = async (categoryId) => {
+    try {
+      const itemNames = await getItemNamesByCategory(categoryId);
+      setItemNamesByCategory(prev => ({
+        ...prev,
+        [categoryId]: itemNames
+      }));
+    } catch (error) {
+      console.error('Error loading item names:', error);
+      setError('Failed to load item names');
+    }
+  };
 
   // Handle form field changes
   const handleChange = (e) => {
@@ -40,6 +112,15 @@ const CreateDemandForm = () => {
   const handleItemChange = (index, field, value) => {
     const newItems = [...formData.items];
     newItems[index][field] = value;
+    
+    // If category is changed, load item names and reset item name
+    if (field === 'categoryId') {
+      newItems[index]['itemNameId'] = '';
+      if (value) {
+        loadItemNames(value);
+      }
+    }
+    
     setFormData(prev => ({
       ...prev,
       items: newItems
@@ -58,7 +139,15 @@ const CreateDemandForm = () => {
   const addItem = () => {
     setFormData(prev => ({
       ...prev,
-      items: [...prev.items, { itemName: '', quantity: '', estimatedCost: '', remarks: '' }]
+      items: [...prev.items, { 
+        categoryId: '', 
+        itemNameId: '', 
+        quantity: '', 
+        unit: 'numbers', 
+        prevYearCost: '', 
+        currentYearCost: '', 
+        remarks: '' 
+      }]
     }));
   };
 
@@ -88,14 +177,23 @@ const CreateDemandForm = () => {
     else if (currentStep === 2) {
       // Validate each item
       formData.items.forEach((item, index) => {
-        if (!item.itemName.trim()) {
-          newErrors[`item_${index}_itemName`] = 'Item name is required';
+        if (!item.categoryId) {
+          newErrors[`item_${index}_categoryId`] = 'Item category is required';
+        }
+        if (!item.itemNameId) {
+          newErrors[`item_${index}_itemNameId`] = 'Item name is required';
         }
         if (!item.quantity || item.quantity <= 0) {
           newErrors[`item_${index}_quantity`] = 'Valid quantity is required';
         }
-        if (!item.estimatedCost || item.estimatedCost <= 0) {
-          newErrors[`item_${index}_estimatedCost`] = 'Valid estimated cost is required';
+        if (!item.unit) {
+          newErrors[`item_${index}_unit`] = 'Unit is required';
+        }
+        if (item.prevYearCost === '' || item.prevYearCost < 0) {
+          newErrors[`item_${index}_prevYearCost`] = 'Previous year cost is required';
+        }
+        if (item.currentYearCost === '' || item.currentYearCost < 0) {
+          newErrors[`item_${index}_currentYearCost`] = 'Current year cost is required';
         }
       });
     }
@@ -268,24 +366,57 @@ const CreateDemandForm = () => {
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
+                      {/* Item Category Dropdown */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Item Category *
+                        </label>
+                        <select
+                          value={item.categoryId}
+                          onChange={(e) => handleItemChange(index, 'categoryId', e.target.value)}
+                          className={`w-full px-3 py-2 border rounded-md text-sm ${
+                            errors[`item_${index}_categoryId`] ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                        >
+                          <option value="">Select Category</option>
+                          {categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                              {category.name}
+                            </option>
+                          ))}
+                        </select>
+                        {errors[`item_${index}_categoryId`] && (
+                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_categoryId`]}</p>
+                        )}
+                      </div>
+
+                      {/* Item Name Dropdown */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
                           Item Name *
                         </label>
-                        <input
-                          type="text"
-                          value={item.itemName}
-                          onChange={(e) => handleItemChange(index, 'itemName', e.target.value)}
+                        <select
+                          value={item.itemNameId}
+                          onChange={(e) => handleItemChange(index, 'itemNameId', e.target.value)}
+                          disabled={!item.categoryId}
                           className={`w-full px-3 py-2 border rounded-md text-sm ${
-                            errors[`item_${index}_itemName`] ? 'border-red-500' : 'border-gray-300'
-                          }`}
-                          placeholder="Enter item name"
-                        />
-                        {errors[`item_${index}_itemName`] && (
-                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_itemName`]}</p>
+                            errors[`item_${index}_itemNameId`] ? 'border-red-500' : 'border-gray-300'
+                          } ${!item.categoryId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                        >
+                          <option value="">Select Item</option>
+                          {item.categoryId && itemNamesByCategory[item.categoryId] && 
+                           itemNamesByCategory[item.categoryId].map((itemName) => (
+                            <option key={itemName.id} value={itemName.id}>
+                              {itemName.name}
+                            </option>
+                          ))}
+                        </select>
+                        {errors[`item_${index}_itemNameId`] && (
+                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_itemNameId`]}</p>
                         )}
                       </div>
 
+                      {/* Quantity */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
                           Quantity *
@@ -305,27 +436,73 @@ const CreateDemandForm = () => {
                         )}
                       </div>
 
+                      {/* Unit Dropdown */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Estimated Cost (Rs) *
+                          Unit *
                         </label>
-                        <input
-                          type="number"
-                          value={item.estimatedCost}
-                          onChange={(e) => handleItemChange(index, 'estimatedCost', e.target.value)}
-                          min="0"
-                          step="0.01"
+                        <select
+                          value={item.unit}
+                          onChange={(e) => handleItemChange(index, 'unit', e.target.value)}
                           className={`w-full px-3 py-2 border rounded-md text-sm ${
-                            errors[`item_${index}_estimatedCost`] ? 'border-red-500' : 'border-gray-300'
+                            errors[`item_${index}_unit`] ? 'border-red-500' : 'border-gray-300'
                           }`}
-                          placeholder="Cost"
-                        />
-                        {errors[`item_${index}_estimatedCost`] && (
-                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_estimatedCost`]}</p>
+                        >
+                          {unitOptions.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </select>
+                        {errors[`item_${index}_unit`] && (
+                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_unit`]}</p>
                         )}
                       </div>
 
+                      {/* Previous Year Cost */}
                       <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Previous Year Cost ({previousFiscalYear}) *
+                        </label>
+                        <input
+                          type="number"
+                          value={item.prevYearCost}
+                          onChange={(e) => handleItemChange(index, 'prevYearCost', e.target.value)}
+                          min="0"
+                          step="0.01"
+                          className={`w-full px-3 py-2 border rounded-md text-sm ${
+                            errors[`item_${index}_prevYearCost`] ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="Previous Cost"
+                        />
+                        {errors[`item_${index}_prevYearCost`] && (
+                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_prevYearCost`]}</p>
+                        )}
+                      </div>
+
+                      {/* Current Year Cost */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Current Year Cost ({currentFiscalYear}) *
+                        </label>
+                        <input
+                          type="number"
+                          value={item.currentYearCost}
+                          onChange={(e) => handleItemChange(index, 'currentYearCost', e.target.value)}
+                          min="0"
+                          step="0.01"
+                          className={`w-full px-3 py-2 border rounded-md text-sm ${
+                            errors[`item_${index}_currentYearCost`] ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="Current Cost"
+                        />
+                        {errors[`item_${index}_currentYearCost`] && (
+                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_currentYearCost`]}</p>
+                        )}
+                      </div>
+
+                      {/* Remarks */}
+                      <div className="col-span-2">
                         <label className="block text-xs font-medium text-gray-600 mb-1">
                           Remarks (Optional)
                         </label>
@@ -399,9 +576,13 @@ const CreateDemandForm = () => {
                 <p className="text-blue-700 mb-1">
                   <span className="font-medium">Total Items:</span> {formData.items.length}
                 </p>
+                <p className="text-blue-700 mb-1">
+                  <span className="font-medium">Total Previous Year Cost ({previousFiscalYear}):</span> Rs 
+                  {" " + formData.items.reduce((sum, item) => sum + (parseFloat(item.prevYearCost) || 0), 0).toFixed(2)}
+                </p>
                 <p className="text-blue-700">
-                  <span className="font-medium">Total Estimated Cost:</span> Rs 
-                  {" " + formData.items.reduce((sum, item) => sum + (parseFloat(item.estimatedCost) || 0), 0)}
+                  <span className="font-medium">Total Current Year Cost ({currentFiscalYear}):</span> Rs 
+                  {" " + formData.items.reduce((sum, item) => sum + (parseFloat(item.currentYearCost) || 0), 0).toFixed(2)}
                 </p>
               </div>
             </div>

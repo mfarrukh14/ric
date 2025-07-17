@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiUrl } from '../../config/api';
-import FulfillmentModal from '../modals/FulfillmentModal';
 
 const DemandManagement = () => {
+    const navigate = useNavigate();
     const [demands, setDemands] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [selectedDemand, setSelectedDemand] = useState(null);
-    const [showFulfillmentModal, setShowFulfillmentModal] = useState(false);
 
     useEffect(() => {
         fetchDemands();
@@ -37,14 +36,8 @@ const DemandManagement = () => {
     };
 
     const handleManageFulfillment = (demand) => {
-        setSelectedDemand(demand);
-        setShowFulfillmentModal(true);
-    };
-
-    const handleFulfillmentSuccess = (result) => {
-        // Refresh the demands list
-        fetchDemands();
-        setSelectedDemand(null);
+        // Navigate to the dedicated fulfillment page
+        navigate(`/store/fulfillment/${demand.id}`);
     };
 
     const getStatusBadge = (status) => {
@@ -221,19 +214,29 @@ const DemandManagement = () => {
                                                                 </div>
                                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
                                                                     <div>
-                                                                        <span className="font-medium">Quantity:</span> {item.quantity}
+                                                                        <span className="font-medium">Quantity:</span> {item.quantity} {item.unit}
                                                                     </div>
                                                                     <div>
                                                                         <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                                                     </div>
                                                                     {item.store_available_quantity !== undefined && (
                                                                         <div>
-                                                                            <span className="font-medium">Available:</span> {item.store_available_quantity}
+                                                                            <span className="font-medium">Available:</span> {item.store_available_quantity} {item.unit}
                                                                         </div>
                                                                     )}
                                                                     {item.unit && (
                                                                         <div>
                                                                             <span className="font-medium">Unit:</span> {item.unit}
+                                                                        </div>
+                                                                    )}
+                                                                    {item.stock_in_hand !== undefined && (
+                                                                        <div>
+                                                                            <span className="font-medium">Stock in Hand:</span> {item.stock_in_hand} {item.unit}
+                                                                        </div>
+                                                                    )}
+                                                                    {item.consumption_type && (
+                                                                        <div>
+                                                                            <span className="font-medium">Consumption:</span> {item.consumption_amount} {item.unit} ({item.consumption_type})
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -254,10 +257,13 @@ const DemandManagement = () => {
                                                         <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
                                                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
                                                             <div>
-                                                                <span className="font-medium">Quantity:</span> {demand.quantity}
+                                                                <span className="font-medium">Quantity:</span> {demand.quantity} {demand.unit || 'pcs'}
                                                             </div>
                                                             <div>
                                                                 <span className="font-medium">Est. Cost:</span> Rs {demand.estimated_cost}
+                                                            </div>
+                                                            <div>
+                                                                <span className="font-medium">Unit:</span> {demand.unit || 'pcs'}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -298,17 +304,6 @@ const DemandManagement = () => {
                     </div>
                 </div>
             </div>
-
-            {/* Fulfillment Modal */}
-            <FulfillmentModal
-                demand={selectedDemand}
-                isOpen={showFulfillmentModal}
-                onClose={() => {
-                    setShowFulfillmentModal(false);
-                    setSelectedDemand(null);
-                }}
-                onSuccess={handleFulfillmentSuccess}
-            />
         </div>
     );
 };

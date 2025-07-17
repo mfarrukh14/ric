@@ -3,13 +3,453 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const EmailService = require('../utils/emailService');
+const smsService = require('../utils/smsService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const emailService = new EmailService();
 
-// Register a new supplier
-exports.registerSupplier = async (req, res) => {
+// Generate OTP
+const generateOTP = () => {
+    return crypto.randomInt(100000, 999999).toString();
+};
+
+// Send OTP for supplier registration
+exports.sendRegistrationOTP = async (req, res) => {
+    const {
+        companyName,
+        companyEmail,
+        password,
+        confirmPassword,
+        companyStatement,
+        companyMission,
+        contactPerson,
+        contactNumber
+    } = req.body;
+
+    const db = getDatabase();
+
+    try {
+        // Validation
+        if (!companyName || !companyEmail || !password || !confirmPassword || !companyStatement || !companyMission || !contactNumber) {
+            return res.status(400).json({ error: 'All fields are required' });
+        }
+
+        if (password !== confirmPassword) {
+            return res.status(400).json({ error: 'Passwords do not match' });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+        }
+
+        // Validate Pakistani mobile number
+        if (!smsService.isValidPakistaniMobile(contactNumber)) {
+            return res.status(400).json({ error: 'Please provide a valid Pakistani mobile number' });
+        }
+
+        // Check required documents
+        const requiredDocs = ['professionalTaxCert', 'ntnDocument', 'drugSaleLicense', 'pecDocument', 'gstDocument'];
+        const missingDocs = requiredDocs.filter(doc => !req.files || !req.files[doc]);
+        
+        if (missingDocs.length > 0) {
+            return res.status(400).json({ 
+                error: `Missing required documents: ${missingDocs.join(', ')}` 
+            });
+        }
+
+        // Check if supplier already exists
+        const existingSupplier = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM suppliers WHERE company_email = ?', [companyEmail], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (existingSupplier) {
+            return res.status(409).json({ error: 'Company email already registered' });
+        }
+
+        // Generate separate OTPs for email and SMS
+        const emailOTP = generateOTP();
+        const smsOTP = generateOTP();
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+        const formattedPhoneNumber = smsService.formatPakistaniNumber(contactNumber);
+
+        // Store file paths
+        const filePaths = {};
+        for (const doc of requiredDocs) {
+            if (req.files[doc]) {
+                filePaths[doc] = req.files[doc][0].path;
+            }
+        }
+
+        // Hash password for storage
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Prepare registration data
+        const registrationData = {
+            companyName,
+            companyEmail,
+            contactPerson,
+            contactNumber: formattedPhoneNumber,
+            hashedPassword,
+            companyStatement,
+            companyMission
+        };
+
+        // Clear any existing unverified OTP for this email/phone
+        await new Promise((resolve, reject) => {
+            db.run(
+                'DELETE FROM supplier_otp_verification WHERE (email = ? OR phone_number = ?) AND is_completed = 0',
+                [companyEmail, formattedPhoneNumber],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Store OTP and registration data
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO supplier_otp_verification (
+                    email, phone_number, email_otp_code, sms_otp_code, registration_data, file_paths, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    companyEmail,
+                    formattedPhoneNumber,
+                    emailOTP,
+                    smsOTP,
+                    JSON.stringify(registrationData),
+                    JSON.stringify(filePaths),
+                    expiresAt.toISOString()
+                ],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                }
+            );
+        });
+
+        // Send OTP email and SMS
+        try {
+            await Promise.all([
+                emailService.sendOTPEmail(companyEmail, emailOTP, companyName),
+                smsService.sendOTP(formattedPhoneNumber, smsOTP)
+            ]);
+        } catch (error) {
+            console.error('Failed to send OTP:', error);
+            return res.status(500).json({ error: 'Failed to send verification codes. Please try again.' });
+        }
+
+        res.json({
+            message: 'Verification codes sent to your email and mobile number. Please verify both to complete registration.',
+            email: companyEmail,
+            phoneNumber: formattedPhoneNumber,
+            expiresIn: 15 // minutes
+        });
+
+    } catch (error) {
+        console.error('Send OTP error:', error);
+        res.status(500).json({ error: 'Failed to send OTP. Please try again.' });
+    }
+};
+
+// Verify Email OTP
+exports.verifyEmailOTP = async (req, res) => {
+    const { email, emailOTP } = req.body;
+    const db = getDatabase();
+
+    try {
+        if (!email || !emailOTP) {
+            return res.status(400).json({ error: 'Email and email OTP are required' });
+        }
+
+        // Find OTP record
+        const otpRecord = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM supplier_otp_verification WHERE email = ? AND email_otp_code = ? AND is_completed = 0',
+                [email, emailOTP],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({ error: 'Invalid or expired email OTP' });
+        }
+
+        // Check if OTP has expired
+        const now = new Date();
+        const expiresAt = new Date(otpRecord.expires_at);
+        
+        if (now > expiresAt) {
+            return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
+        }
+
+        // Mark email as verified
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE supplier_otp_verification SET email_verified = 1, email_verified_at = ? WHERE id = ?',
+                [new Date().toISOString(), otpRecord.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({
+            message: 'Email verified successfully!',
+            emailVerified: true,
+            smsVerified: otpRecord.sms_verified === 1
+        });
+
+    } catch (error) {
+        console.error('Email OTP verification error:', error);
+        res.status(500).json({ error: 'Email verification failed. Please try again.' });
+    }
+};
+
+// Verify SMS OTP
+exports.verifySMSOTP = async (req, res) => {
+    const { email, smsOTP } = req.body;
+    const db = getDatabase();
+
+    try {
+        if (!email || !smsOTP) {
+            return res.status(400).json({ error: 'Email and SMS OTP are required' });
+        }
+
+        // Find OTP record
+        const otpRecord = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM supplier_otp_verification WHERE email = ? AND sms_otp_code = ? AND is_completed = 0',
+                [email, smsOTP],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({ error: 'Invalid or expired SMS OTP' });
+        }
+
+        // Check if OTP has expired
+        const now = new Date();
+        const expiresAt = new Date(otpRecord.expires_at);
+        
+        if (now > expiresAt) {
+            return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
+        }
+
+        // Mark SMS as verified
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE supplier_otp_verification SET sms_verified = 1, sms_verified_at = ? WHERE id = ?',
+                [new Date().toISOString(), otpRecord.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({
+            message: 'Mobile number verified successfully!',
+            emailVerified: otpRecord.email_verified === 1,
+            smsVerified: true
+        });
+
+    } catch (error) {
+        console.error('SMS OTP verification error:', error);
+        res.status(500).json({ error: 'SMS verification failed. Please try again.' });
+    }
+};
+
+// Complete registration after both OTPs are verified
+exports.completeRegistration = async (req, res) => {
+    const { email } = req.body;
+    const db = getDatabase();
+
+    try {
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+
+        // Find OTP record and check if both are verified
+        const otpRecord = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM supplier_otp_verification WHERE email = ? AND email_verified = 1 AND sms_verified = 1 AND is_completed = 0',
+                [email],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({ error: 'Both email and mobile number must be verified before completing registration' });
+        }
+
+        // Check if OTP has expired
+        const now = new Date();
+        const expiresAt = new Date(otpRecord.expires_at);
+        
+        if (now > expiresAt) {
+            return res.status(400).json({ error: 'Registration session has expired. Please start again.' });
+        }
+
+        // Parse registration data
+        const registrationData = JSON.parse(otpRecord.registration_data);
+        const filePaths = JSON.parse(otpRecord.file_paths);
+
+        // Check if supplier already exists (double check)
+        const existingSupplier = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM suppliers WHERE company_email = ?', [email], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (existingSupplier) {
+            return res.status(409).json({ error: 'Company email already registered' });
+        }
+
+        // Insert supplier into database
+        const supplierId = await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO suppliers (
+                    company_name, company_email, contact_person, contact_number, password, 
+                    company_statement, company_mission, professional_tax_cert, ntn_document, 
+                    drug_sale_license, pec_document, gst_document
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    registrationData.companyName,
+                    registrationData.companyEmail,
+                    registrationData.contactPerson,
+                    registrationData.contactNumber,
+                    registrationData.hashedPassword,
+                    registrationData.companyStatement,
+                    registrationData.companyMission,
+                    filePaths.professionalTaxCert || null,
+                    filePaths.ntnDocument || null,
+                    filePaths.drugSaleLicense || null,
+                    filePaths.pecDocument || null,
+                    filePaths.gstDocument || null
+                ],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                }
+            );
+        });
+
+        // Mark registration as completed
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE supplier_otp_verification SET is_completed = 1, completed_at = ? WHERE id = ?',
+                [new Date().toISOString(), otpRecord.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.status(201).json({
+            message: 'Registration completed successfully! Your application has been submitted to the evaluation committee.',
+            supplierId
+        });
+
+    } catch (error) {
+        console.error('Complete registration error:', error);
+        res.status(500).json({ error: 'Registration completion failed. Please try again.' });
+    }
+};
+
+// Resend OTP
+exports.resendOTP = async (req, res) => {
+    const { email } = req.body;
+    const db = getDatabase();
+
+    try {
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+
+        // Find existing unverified OTP record
+        const otpRecord = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM supplier_otp_verification WHERE email = ? AND is_completed = 0 ORDER BY created_at DESC LIMIT 1',
+                [email],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!otpRecord) {
+            return res.status(404).json({ error: 'No pending registration found for this email' });
+        }
+
+        // Generate new OTPs
+        const newEmailOTP = generateOTP();
+        const newSMSOTP = generateOTP();
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+
+        // Update OTP record
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE supplier_otp_verification SET 
+                 email_otp_code = ?, sms_otp_code = ?, expires_at = ?, created_at = ?,
+                 email_verified = 0, sms_verified = 0, email_verified_at = NULL, sms_verified_at = NULL 
+                 WHERE id = ?`,
+                [newEmailOTP, newSMSOTP, expiresAt.toISOString(), new Date().toISOString(), otpRecord.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Parse registration data to get company name and phone
+        const registrationData = JSON.parse(otpRecord.registration_data);
+
+        // Send new OTPs
+        try {
+            await Promise.all([
+                emailService.sendOTPEmail(email, newEmailOTP, registrationData.companyName),
+                smsService.sendOTP(otpRecord.phone_number, newSMSOTP)
+            ]);
+        } catch (error) {
+            console.error('Failed to send OTPs:', error);
+            return res.status(500).json({ error: 'Failed to send verification codes. Please try again.' });
+        }
+
+        res.json({
+            message: 'New verification codes sent to your email and mobile number.',
+            email,
+            phoneNumber: otpRecord.phone_number,
+            expiresIn: 15 // minutes
+        });
+
+    } catch (error) {
+        console.error('Resend OTP error:', error);
+        res.status(500).json({ error: 'Failed to resend OTP. Please try again.' });
+    }
+};
+
+// Legacy register function (kept for reference, not used)
+exports.legacyRegisterSupplier = async (req, res) => {
     const {
         companyName,
         companyEmail,

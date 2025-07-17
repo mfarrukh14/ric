@@ -3,12 +3,21 @@ require('dotenv').config();
 
 class EmailService {
     constructor() {
+        // Check if email credentials are available
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+            console.error('Email credentials not found in environment variables');
+            console.error('EMAIL_USER:', process.env.EMAIL_USER ? 'Set' : 'Not set');
+            console.error('EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'Set' : 'Not set');
+        }
+
         this.transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: {
                 user: process.env.EMAIL_USER,
                 pass: process.env.EMAIL_PASSWORD
-            }
+            },
+            debug: true, // Enable debug output
+            logger: true // Log to console
         });
     }
 
@@ -1726,6 +1735,230 @@ class EmailService {
     </div>
 </body>
 </html>
+        `;
+    }
+
+    async sendOTPEmail(supplierEmail, otpCode, companyName) {
+        const htmlContent = this.generateOTPEmailHTML(otpCode, companyName);
+
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: 'Email Verification - RIC Supplier Registration',
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('OTP email sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending OTP email:', error);
+            throw error;
+        }
+    }
+
+    generateOTPEmailHTML(otpCode, companyName) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Email Verification - RIC Supplier Registration</title>
+                <style>
+                    body {
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        margin: 0;
+                        padding: 20px;
+                        min-height: 100vh;
+                    }
+                    .container {
+                        max-width: 600px;
+                        margin: 0 auto;
+                        background: white;
+                        border-radius: 20px;
+                        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                        overflow: hidden;
+                        position: relative;
+                    }
+                    .header {
+                        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+                        color: white;
+                        padding: 40px 30px;
+                        text-align: center;
+                        position: relative;
+                    }
+                    .header::before {
+                        content: '';
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="50" cy="50" r="1" fill="white" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+                    }
+                    .header h1 {
+                        margin: 0;
+                        font-size: 28px;
+                        font-weight: 700;
+                        position: relative;
+                        z-index: 1;
+                    }
+                    .header p {
+                        margin: 10px 0 0 0;
+                        font-size: 16px;
+                        opacity: 0.9;
+                        position: relative;
+                        z-index: 1;
+                    }
+                    .content {
+                        padding: 40px 30px;
+                        line-height: 1.6;
+                        color: #333;
+                    }
+                    .otp-section {
+                        text-align: center;
+                        margin: 30px 0;
+                        padding: 30px;
+                        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+                        border-radius: 15px;
+                        border: 2px dashed #2563eb;
+                    }
+                    .otp-code {
+                        font-size: 36px;
+                        font-weight: 700;
+                        color: #2563eb;
+                        letter-spacing: 8px;
+                        margin: 15px 0;
+                        padding: 15px;
+                        background: white;
+                        border-radius: 10px;
+                        border: 2px solid #e2e8f0;
+                        display: inline-block;
+                        font-family: 'Courier New', monospace;
+                    }
+                    .warning {
+                        background: #fef3c7;
+                        border: 1px solid #f59e0b;
+                        border-radius: 10px;
+                        padding: 20px;
+                        margin: 20px 0;
+                        color: #92400e;
+                    }
+                    .warning h4 {
+                        margin: 0 0 10px 0;
+                        color: #92400e;
+                        font-size: 16px;
+                    }
+                    .instructions {
+                        background: #f0f9ff;
+                        border-left: 4px solid #2563eb;
+                        padding: 20px;
+                        margin: 20px 0;
+                        border-radius: 0 10px 10px 0;
+                    }
+                    .instructions h4 {
+                        margin: 0 0 15px 0;
+                        color: #1e40af;
+                        font-size: 18px;
+                    }
+                    .instructions ul {
+                        margin: 0;
+                        padding-left: 20px;
+                    }
+                    .instructions li {
+                        margin: 8px 0;
+                        color: #1e40af;
+                    }
+                    .footer {
+                        background: #f8fafc;
+                        padding: 30px;
+                        text-align: center;
+                        border-top: 1px solid #e2e8f0;
+                        color: #64748b;
+                    }
+                    .footer p {
+                        margin: 5px 0;
+                    }
+                    .security-notice {
+                        background: #fee2e2;
+                        border: 1px solid #f87171;
+                        border-radius: 10px;
+                        padding: 15px;
+                        margin: 20px 0;
+                        color: #dc2626;
+                        font-size: 14px;
+                    }
+                    .company-name {
+                        font-weight: 700;
+                        color: #2563eb;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>🔐 Email Verification</h1>
+                        <p>RIC E-Tender System</p>
+                    </div>
+                    <div class="content">
+                        <h2>Hello <span class="company-name">${companyName}</span>,</h2>
+                        <p>Thank you for registering as a supplier with the Rawalpindi Institute of Cardiology E-Tender System. To complete your registration and ensure the security of your account, please verify your email address.</p>
+                        
+                        <div class="otp-section">
+                            <h3 style="margin: 0 0 15px 0; color: #2563eb;">Your Verification Code</h3>
+                            <div class="otp-code">${otpCode}</div>
+                            <p style="margin: 15px 0 0 0; color: #64748b; font-size: 14px;">
+                                This code expires in <strong>15 minutes</strong>
+                            </p>
+                        </div>
+
+                        <div class="instructions">
+                            <h4>📋 How to complete verification:</h4>
+                            <ul>
+                                <li>Enter the 6-digit code above in the verification form</li>
+                                <li>Complete the verification within 15 minutes</li>
+                                <li>If the code expires, you can request a new one</li>
+                                <li>After verification, your registration will be submitted to our evaluation committee</li>
+                            </ul>
+                        </div>
+
+                        <div class="warning">
+                            <h4>⏰ Important Notice</h4>
+                            <p>This verification code will expire in 15 minutes for security reasons. If you don't complete the verification in time, you can request a new code from the registration page.</p>
+                        </div>
+
+                        <div class="security-notice">
+                            <strong>🔒 Security Notice:</strong> Never share this verification code with anyone. RIC staff will never ask for your verification code via phone or email.
+                        </div>
+
+                        <p><strong>What happens next?</strong></p>
+                        <p>Once you verify your email, your supplier registration will be forwarded to our evaluation committee for review. You will receive another email notification once the evaluation is complete.</p>
+                        
+                        <p>If you didn't request this registration, please ignore this email or contact our support team.</p>
+                    </div>
+                    <div class="footer">
+                        <p><strong>Procurement Department</strong></p>
+                        <p>Rawalpindi Institute of Cardiology</p>
+                        <p>Email: procurement@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
+                        <p style="font-size:12px;opacity:0.6;">This is an automated verification email.</p>
+                        <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
+                    </div>
+                </div>
+            </body>
+            </html>
         `;
     }
 }

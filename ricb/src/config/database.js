@@ -376,6 +376,106 @@ const initializeDatabase = async () => {
                 else resolve();
             });
         });
+
+        // Create item_categories table for dropdown categories
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS item_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create item_names table for dropdown item names
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS item_names (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES item_categories (id) ON DELETE CASCADE,
+                UNIQUE(category_id, name)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_otp_verification table for email and SMS verification
+        await new Promise((resolve, reject) => {
+            // First check if table exists and drop it to recreate with new structure
+            db.run(`DROP TABLE IF EXISTS supplier_otp_verification`, (err) => {
+                if (err) {
+                    console.log('Note: supplier_otp_verification table did not exist, creating new one');
+                }
+                
+                // Create the table with new SMS structure
+                db.run(`CREATE TABLE IF NOT EXISTS supplier_otp_verification (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    phone_number TEXT NOT NULL,
+                    email_otp_code TEXT NOT NULL,
+                    sms_otp_code TEXT NOT NULL,
+                    registration_data TEXT NOT NULL,
+                    file_paths TEXT,
+                    expires_at DATETIME NOT NULL,
+                    email_verified INTEGER DEFAULT 0,
+                    sms_verified INTEGER DEFAULT 0,
+                    is_completed INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    email_verified_at DATETIME,
+                    sms_verified_at DATETIME,
+                    completed_at DATETIME
+                )`, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        });
+
+        // Create indexes for supplier_otp_verification table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email ON supplier_otp_verification(email)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_phone ON supplier_otp_verification(phone_number)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email_code ON supplier_otp_verification(email_otp_code)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_sms_code ON supplier_otp_verification(sms_otp_code)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_expires ON supplier_otp_verification(expires_at)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Run database migrations
         await runMigrations();
 
@@ -400,7 +500,108 @@ const initializeDatabase = async () => {
                     }
                 );
             });
-        }        // Check if Evaluation Committee exists
+        }
+
+        // Initialize default item categories
+        const defaultCategories = [
+            { name: 'Medical Equipment', description: 'Medical and healthcare equipment' },
+            { name: 'Office Supplies', description: 'General office and administrative supplies' },
+            { name: 'Laboratory Supplies', description: 'Laboratory equipment and consumables' },
+            { name: 'Pharmaceuticals', description: 'Medicines and pharmaceutical products' },
+            { name: 'IT Equipment', description: 'Information technology hardware and software' },
+            { name: 'Maintenance Supplies', description: 'Maintenance and repair supplies' }
+        ];
+
+        for (const category of defaultCategories) {
+            const existingCategory = await new Promise((resolve, reject) => {
+                db.get("SELECT * FROM item_categories WHERE name = ?", [category.name], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (!existingCategory) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'INSERT INTO item_categories (name, description) VALUES (?, ?)',
+                        [category.name, category.description],
+                        (err) => {
+                            if (err) reject(err);
+                            else {
+                                console.log(`Default category '${category.name}' created successfully`);
+                                resolve();
+                            }
+                        }
+                    );
+                });
+            }
+        }
+
+        // Initialize default item names for each category
+        const defaultItems = {
+            'Medical Equipment': [
+                'Stethoscope', 'Blood Pressure Monitor', 'Thermometer', 'Pulse Oximeter', 
+                'ECG Machine', 'X-ray Film', 'Surgical Gloves', 'Face Masks'
+            ],
+            'Office Supplies': [
+                'A4 Paper', 'Pens', 'Pencils', 'Folders', 'Stapler', 'Paper Clips', 
+                'Notebooks', 'Envelopes', 'Printer Cartridges'
+            ],
+            'Laboratory Supplies': [
+                'Test Tubes', 'Petri Dishes', 'Microscope Slides', 'Pipettes', 
+                'Beakers', 'Reagents', 'Lab Coats', 'Safety Goggles'
+            ],
+            'Pharmaceuticals': [
+                'Paracetamol', 'Antibiotics', 'Insulin', 'Vaccines', 'Syringes', 
+                'IV Fluids', 'Bandages', 'Antiseptic Solution'
+            ],
+            'IT Equipment': [
+                'Computers', 'Laptops', 'Printers', 'Keyboards', 'Mouse', 
+                'Monitors', 'Network Cables', 'Software Licenses'
+            ],
+            'Maintenance Supplies': [
+                'Cleaning Chemicals', 'Tools', 'Spare Parts', 'Electrical Items', 
+                'Plumbing Supplies', 'Paint', 'Brushes', 'Safety Equipment'
+            ]
+        };
+
+        for (const [categoryName, items] of Object.entries(defaultItems)) {
+            // Get category ID
+            const category = await new Promise((resolve, reject) => {
+                db.get("SELECT id FROM item_categories WHERE name = ?", [categoryName], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (category) {
+                for (const itemName of items) {
+                    const existingItem = await new Promise((resolve, reject) => {
+                        db.get("SELECT * FROM item_names WHERE category_id = ? AND name = ?", 
+                               [category.id, itemName], (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        });
+                    });
+
+                    if (!existingItem) {
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                'INSERT INTO item_names (category_id, name) VALUES (?, ?)',
+                                [category.id, itemName],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                    }
+                }
+                console.log(`Default items for '${categoryName}' category initialized`);
+            }
+        }
+
+        // Check if Evaluation Committee exists
         const committeeRow = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM committees WHERE name = 'Evaluation Committee'", (err, row) => {
                 if (err) reject(err);
@@ -758,6 +959,248 @@ const runMigrations = async () => {
                 } else {
                     console.log('grievance_deadlines table already exists');
                     resolve();
+                }
+            });
+        });
+
+        // Migration 4: Add new columns to demand_items table for categories and fiscal year costs
+        await new Promise((resolve, reject) => {
+            // Check if new columns exist
+            db.get("PRAGMA table_info(demand_items)", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                // Get all columns
+                db.all("PRAGMA table_info(demand_items)", [], (err, columns) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    
+                    const columnNames = columns.map(col => col.name);
+                    const hasNewColumns = columnNames.includes('category_id') && 
+                                          columnNames.includes('item_name_id') && 
+                                          columnNames.includes('prev_year_cost') && 
+                                          columnNames.includes('current_year_cost');
+                    
+                    if (!hasNewColumns) {
+                        console.log('Adding new columns to demand_items table...');
+                        
+                        // Add columns one by one
+                        const addColumn = (columnDef) => {
+                            return new Promise((resolveCol, rejectCol) => {
+                                db.run(`ALTER TABLE demand_items ADD COLUMN ${columnDef}`, (err) => {
+                                    if (err && !err.message.includes('duplicate column name')) {
+                                        rejectCol(err);
+                                    } else {
+                                        resolveCol();
+                                    }
+                                });
+                            });
+                        };
+                        
+                        Promise.all([
+                            addColumn('category_id INTEGER'),
+                            addColumn('item_name_id INTEGER'),
+                            addColumn('prev_year_cost DECIMAL(10,2) DEFAULT 0'),
+                            addColumn('current_year_cost DECIMAL(10,2) DEFAULT 0'),
+                            addColumn('stock_in_hand INTEGER DEFAULT 0'),
+                            addColumn('consumption_type TEXT DEFAULT "monthly"'),
+                            addColumn('consumption_amount INTEGER DEFAULT 0'),
+                            addColumn('calculated_required_qty INTEGER DEFAULT 0'),
+                            addColumn('store_estimated_cost DECIMAL(10,2) DEFAULT 0'),
+                            addColumn('removal_reason TEXT'),
+                            addColumn('is_removed INTEGER DEFAULT 0')
+                        ]).then(() => {
+                            console.log('Successfully added new columns to demand_items table');
+                            resolve();
+                        }).catch((err) => {
+                            console.error('Error adding columns to demand_items table:', err);
+                            reject(err);
+                        });
+                    } else {
+                        console.log('demand_items table already has new columns');
+                        resolve();
+                    }
+                });
+            });
+        });
+
+        // Migration 6: Add 2FA columns to users table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(users)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const has2FAColumns = columnNames.includes('two_factor_secret') && 
+                                      columnNames.includes('two_factor_enabled') && 
+                                      columnNames.includes('backup_codes');
+                
+                if (!has2FAColumns) {
+                    console.log('Adding 2FA columns to users table...');
+                    
+                    const addColumn = (columnDef) => {
+                        return new Promise((resolveCol, rejectCol) => {
+                            db.run(`ALTER TABLE users ADD COLUMN ${columnDef}`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    rejectCol(err);
+                                } else {
+                                    resolveCol();
+                                }
+                            });
+                        });
+                    };
+                    
+                    Promise.all([
+                        addColumn('two_factor_secret TEXT'),
+                        addColumn('two_factor_enabled INTEGER DEFAULT 0'),
+                        addColumn('backup_codes TEXT')
+                    ]).then(() => {
+                        console.log('Successfully added 2FA columns to users table');
+                        resolve();
+                    }).catch((err) => {
+                        console.error('Error adding 2FA columns to users table:', err);
+                        reject(err);
+                    });
+                } else {
+                    console.log('users table already has 2FA columns');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 7: Create supplier_otp_verification table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_otp_verification'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating supplier_otp_verification table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_otp_verification (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email TEXT NOT NULL,
+                        phone_number TEXT NOT NULL,
+                        email_otp_code TEXT NOT NULL,
+                        sms_otp_code TEXT NOT NULL,
+                        registration_data TEXT NOT NULL,
+                        file_paths TEXT,
+                        expires_at DATETIME NOT NULL,
+                        email_verified INTEGER DEFAULT 0,
+                        sms_verified INTEGER DEFAULT 0,
+                        is_completed INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        email_verified_at DATETIME,
+                        sms_verified_at DATETIME,
+                        completed_at DATETIME
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating supplier_otp_verification table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created supplier_otp_verification table');
+                            
+                            // Create indexes after table creation
+                            Promise.all([
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email ON supplier_otp_verification(email)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_phone ON supplier_otp_verification(phone_number)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email_code ON supplier_otp_verification(email_otp_code)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_sms_code ON supplier_otp_verification(sms_otp_code)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_expires ON supplier_otp_verification(expires_at)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                })
+                            ]).then(() => {
+                                console.log('Successfully created indexes for supplier_otp_verification table');
+                                resolve();
+                            }).catch(reject);
+                        }
+                    });
+                } else {
+                    // Table exists, check if it has the new SMS columns
+                    db.all("PRAGMA table_info(supplier_otp_verification)", [], (err, columns) => {
+                        if (err) {
+                            reject(err);
+                            return;
+                        }
+                        
+                        const columnNames = columns.map(col => col.name);
+                        const hasSMSColumns = columnNames.includes('phone_number') && 
+                                             columnNames.includes('email_otp_code') && 
+                                             columnNames.includes('sms_otp_code') &&
+                                             columnNames.includes('email_verified') &&
+                                             columnNames.includes('sms_verified');
+                        
+                        if (!hasSMSColumns) {
+                            console.log('Updating supplier_otp_verification table for SMS support...');
+                            
+                            // Drop and recreate table to add SMS support
+                            db.run(`DROP TABLE IF EXISTS supplier_otp_verification`, (err) => {
+                                if (err) {
+                                    reject(err);
+                                    return;
+                                }
+                                
+                                // Recreate with new structure
+                                db.run(`CREATE TABLE supplier_otp_verification (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    email TEXT NOT NULL,
+                                    phone_number TEXT NOT NULL,
+                                    email_otp_code TEXT NOT NULL,
+                                    sms_otp_code TEXT NOT NULL,
+                                    registration_data TEXT NOT NULL,
+                                    file_paths TEXT,
+                                    expires_at DATETIME NOT NULL,
+                                    email_verified INTEGER DEFAULT 0,
+                                    sms_verified INTEGER DEFAULT 0,
+                                    is_completed INTEGER DEFAULT 0,
+                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                    email_verified_at DATETIME,
+                                    sms_verified_at DATETIME,
+                                    completed_at DATETIME
+                                )`, (err) => {
+                                    if (err) {
+                                        reject(err);
+                                    } else {
+                                        console.log('Successfully updated supplier_otp_verification table');
+                                        resolve();
+                                    }
+                                });
+                            });
+                        } else {
+                            console.log('supplier_otp_verification table already has SMS columns');
+                            resolve();
+                        }
+                    });
                 }
             });
         });

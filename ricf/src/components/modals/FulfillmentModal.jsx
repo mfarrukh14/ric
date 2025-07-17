@@ -27,13 +27,27 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
 
         const initialStatuses = items.map(item => ({
             itemId: item.id,
-            itemName: item.item_name,
+            itemName: item.item_name_full || item.item_name,
             requestedQuantity: parseInt(item.quantity),
-            availableQuantity: parseInt(item.quantity), // Default to full quantity
+            availableQuantity: parseInt(item.quantity), // This will be auto-synced with calculatedRequiredQty
             status: 'available', // Default status
             remarks: '',
             estimatedCost: parseFloat(item.estimated_cost),
-            unit: item.unit || 'pcs'
+            unit: item.unit || 'pcs',
+            // New fields for stock management
+            stockInHand: parseInt(item.stock_in_hand || 0),
+            consumptionType: item.consumption_type || 'monthly',
+            consumptionAmount: parseInt(item.consumption_amount || 0),
+            calculatedRequiredQty: parseInt(item.calculated_required_qty || item.quantity),
+            storeEstimatedCost: parseFloat(item.store_estimated_cost || item.estimated_cost),
+            removalReason: item.removal_reason || '',
+            isRemoved: item.is_removed || false,
+            // Item details for display
+            categoryId: item.category_id,
+            categoryName: item.category_name || 'N/A',
+            itemNameId: item.item_name_id,
+            prevYearCost: parseFloat(item.prev_year_cost || 0),
+            currentYearCost: parseFloat(item.current_year_cost || item.estimated_cost)
         }));
 
         setItemStatuses(initialStatuses);
@@ -46,10 +60,36 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
             [field]: value
         };
 
-        // Auto-adjust status based on available quantity
-        if (field === 'availableQuantity') {
+        // Auto-calculate required quantity when stock or consumption changes
+        if (field === 'stockInHand' || field === 'consumptionAmount' || field === 'consumptionType') {
+            const stockInHand = parseInt(updatedStatuses[index].stockInHand || 0);
+            const consumptionAmount = parseInt(updatedStatuses[index].consumptionAmount || 0);
             const requestedQty = updatedStatuses[index].requestedQuantity;
-            const availableQty = parseInt(value);
+            
+            // Calculate how much is actually needed
+            let shortfall = 0;
+            if (consumptionAmount > stockInHand) {
+                shortfall = consumptionAmount - stockInHand;
+            }
+            
+            // Set calculated required quantity (but allow user to modify it later)
+            if (field !== 'calculatedRequiredQty') {
+                updatedStatuses[index].calculatedRequiredQty = Math.min(shortfall, requestedQty);
+            }
+            
+            // Auto-sync available quantity with calculated requirement
+            updatedStatuses[index].availableQuantity = updatedStatuses[index].calculatedRequiredQty;
+        }
+
+        // Sync available quantity when calculated required quantity changes
+        if (field === 'calculatedRequiredQty') {
+            updatedStatuses[index].availableQuantity = parseInt(value || 0);
+        }
+
+        // Auto-adjust status based on available quantity
+        if (field === 'calculatedRequiredQty') {
+            const requestedQty = updatedStatuses[index].requestedQuantity;
+            const availableQty = parseInt(value || 0);
 
             if (availableQty <= 0) {
                 updatedStatuses[index].status = 'not_available';
@@ -63,6 +103,19 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
         setItemStatuses(updatedStatuses);
     };
 
+    const handleItemRemoval = (index, isRemoved, reason = '') => {
+        const updatedStatuses = [...itemStatuses];
+        updatedStatuses[index] = {
+            ...updatedStatuses[index],
+            isRemoved: isRemoved,
+            removalReason: reason,
+            // If removing, set available quantity to 0
+            availableQuantity: isRemoved ? 0 : updatedStatuses[index].calculatedRequiredQty,
+            status: isRemoved ? 'not_available' : 'available'
+        };
+        setItemStatuses(updatedStatuses);
+    };
+
     const handleStatusChange = (index, status) => {
         const updatedStatuses = [...itemStatuses];
         updatedStatuses[index] = {
@@ -72,11 +125,13 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
 
         // Auto-adjust quantity based on status
         if (status === 'not_available') {
+            updatedStatuses[index].calculatedRequiredQty = 0;
             updatedStatuses[index].availableQuantity = 0;
         } else if (status === 'available') {
+            updatedStatuses[index].calculatedRequiredQty = updatedStatuses[index].requestedQuantity;
             updatedStatuses[index].availableQuantity = updatedStatuses[index].requestedQuantity;
         }
-        // For partial, keep current availableQuantity
+        // For partial, keep current calculatedRequiredQty
 
         setItemStatuses(updatedStatuses);
     };
@@ -90,18 +145,18 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
         for (let i = 0; i < itemStatuses.length; i++) {
             const item = itemStatuses[i];
             
-            if (item.status === 'partial' && (item.availableQuantity <= 0 || item.availableQuantity >= item.requestedQuantity)) {
+            if (item.status === 'partial' && (item.calculatedRequiredQty <= 0 || item.calculatedRequiredQty >= item.requestedQuantity)) {
                 setError(`Item "${item.itemName}": Partial quantity must be between 1 and ${item.requestedQuantity - 1}`);
                 return false;
             }
 
-            if (item.availableQuantity < 0) {
-                setError(`Item "${item.itemName}": Available quantity cannot be negative`);
+            if (item.calculatedRequiredQty < 0) {
+                setError(`Item "${item.itemName}": Required quantity cannot be negative`);
                 return false;
             }
 
-            if (item.availableQuantity > item.requestedQuantity) {
-                setError(`Item "${item.itemName}": Available quantity cannot exceed requested quantity`);
+            if (item.calculatedRequiredQty > item.requestedQuantity) {
+                setError(`Item "${item.itemName}": Required quantity cannot exceed requested quantity`);
                 return false;
             }
         }
@@ -162,18 +217,23 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
     };
 
     const getFulfillmentSummary = () => {
-        const fullyAvailable = itemStatuses.filter(item => item.status === 'available').length;
-        const partiallyAvailable = itemStatuses.filter(item => item.status === 'partial').length;
-        const notAvailable = itemStatuses.filter(item => item.status === 'not_available').length;
+        const nonRemovedItems = itemStatuses.filter(item => !item.isRemoved);
+        const fullyAvailable = nonRemovedItems.filter(item => item.status === 'available').length;
+        const partiallyAvailable = nonRemovedItems.filter(item => item.status === 'partial').length;
+        const notAvailable = nonRemovedItems.filter(item => item.status === 'not_available').length;
+        const removedItems = itemStatuses.filter(item => item.isRemoved).length;
         
-        return { fullyAvailable, partiallyAvailable, notAvailable };
+        return { fullyAvailable, partiallyAvailable, notAvailable, removedItems };
     };
 
     const getExpectedOutcome = () => {
-        const { fullyAvailable, partiallyAvailable, notAvailable } = getFulfillmentSummary();
+        const { fullyAvailable, partiallyAvailable, notAvailable, removedItems } = getFulfillmentSummary();
+        const totalNonRemovedItems = fullyAvailable + partiallyAvailable + notAvailable;
         
-        if (fullyAvailable === itemStatuses.length) {
-            return { status: 'available', text: 'All items will be marked as AVAILABLE', color: 'text-green-600' };
+        if (totalNonRemovedItems === 0) {
+            return { status: 'all_removed', text: 'All items have been removed from demand', color: 'text-red-600' };
+        } else if (fullyAvailable === totalNonRemovedItems) {
+            return { status: 'available', text: 'All remaining items will be marked as AVAILABLE', color: 'text-green-600' };
         } else if (partiallyAvailable > 0 || notAvailable > 0) {
             return { status: 'vetting_pending', text: 'Demand will go to VETTING COMMITTEE for review', color: 'text-blue-600' };
         }
@@ -248,18 +308,34 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
                     <form onSubmit={handleSubmit}>
                         {/* Items Fulfillment */}
                         <div className="mb-6">
-                            <h4 className="text-lg font-medium text-gray-900 mb-4">Items Fulfillment</h4>
-                            <div className="space-y-4">
+                            <h4 className="text-lg font-medium text-gray-900 mb-4">Items Fulfillment Management</h4>
+                            <div className="space-y-6">
                                 {itemStatuses.map((item, index) => (
-                                    <div key={index} className="border border-gray-200 rounded-lg p-4">
-                                        <div className="flex justify-between items-start mb-3">
-                                            <h5 className="font-medium text-gray-900">{item.itemName}</h5>
-                                            <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusBadgeColor(item.status)}`}>
-                                                {item.status.toUpperCase().replace('_', ' ')}
-                                            </span>
+                                    <div key={index} className="border border-gray-200 rounded-lg p-6">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <h5 className="font-medium text-gray-900 text-lg">{item.itemName}</h5>
+                                            <div className="flex space-x-2">
+                                                <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusBadgeColor(item.status)}`}>
+                                                    {item.status.toUpperCase().replace('_', ' ')}
+                                                </span>
+                                                {item.isRemoved && (
+                                                    <span className="px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+                                                        REMOVED
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
 
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                        {/* Item Details Grid */}
+                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                    Category
+                                                </label>
+                                                <div className="text-sm text-gray-600">
+                                                    {item.categoryName || 'N/A'}
+                                                </div>
+                                            </div>
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">
                                                     Requested Quantity
@@ -268,87 +344,198 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
                                                     {item.requestedQuantity} {item.unit}
                                                 </div>
                                             </div>
-                                            
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Available Quantity *
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max={item.requestedQuantity}
-                                                    value={item.availableQuantity}
-                                                    onChange={(e) => handleItemStatusChange(index, 'availableQuantity', e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                    required
-                                                />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Estimated Cost
+                                                    Previous Year Cost
                                                 </label>
                                                 <div className="text-sm text-gray-600">
-                                                    Rs{item.estimatedCost}
+                                                    Rs {item.prevYearCost}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                    Current Year Cost
+                                                </label>
+                                                <div className="text-sm text-gray-600">
+                                                    Rs {item.currentYearCost}
                                                 </div>
                                             </div>
                                         </div>
 
-                                        {/* Status Selection */}
-                                        <div className="mb-4">
-                                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                Fulfillment Status
-                                            </label>
-                                            <div className="flex space-x-4">
-                                                <label className="flex items-center">
-                                                    <input
-                                                        type="radio"
-                                                        name={`status-${index}`}
-                                                        value="available"
-                                                        checked={item.status === 'available'}
-                                                        onChange={() => handleStatusChange(index, 'available')}
-                                                        className="mr-2"
-                                                    />
-                                                    <span className="text-green-600">Fully Available</span>
-                                                </label>
-                                                <label className="flex items-center">
-                                                    <input
-                                                        type="radio"
-                                                        name={`status-${index}`}
-                                                        value="partial"
-                                                        checked={item.status === 'partial'}
-                                                        onChange={() => handleStatusChange(index, 'partial')}
-                                                        className="mr-2"
-                                                    />
-                                                    <span className="text-yellow-600">Partially Available</span>
-                                                </label>
-                                                <label className="flex items-center">
-                                                    <input
-                                                        type="radio"
-                                                        name={`status-${index}`}
-                                                        value="not_available"
-                                                        checked={item.status === 'not_available'}
-                                                        onChange={() => handleStatusChange(index, 'not_available')}
-                                                        className="mr-2"
-                                                    />
-                                                    <span className="text-red-600">Not Available</span>
-                                                </label>
-                                            </div>
-                                        </div>
+                                        {!item.isRemoved ? (
+                                            <>
+                                                {/* Stock Management Section */}
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                            Stock in Hand *
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={item.stockInHand}
+                                                            onChange={(e) => handleItemStatusChange(index, 'stockInHand', e.target.value)}
+                                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                            required
+                                                        />
+                                                        <div className="text-xs text-gray-500 mt-1">{item.unit}</div>
+                                                    </div>
+                                                    
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                            Consumption Type *
+                                                        </label>
+                                                        <select
+                                                            value={item.consumptionType}
+                                                            onChange={(e) => handleItemStatusChange(index, 'consumptionType', e.target.value)}
+                                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                            required
+                                                        >
+                                                            <option value="monthly">Monthly</option>
+                                                            <option value="quarterly">Quarterly</option>
+                                                            <option value="yearly">Yearly</option>
+                                                        </select>
+                                                    </div>
 
-                                        {/* Remarks */}
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Remarks (Optional)
-                                            </label>
-                                            <textarea
-                                                value={item.remarks}
-                                                onChange={(e) => handleItemStatusChange(index, 'remarks', e.target.value)}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                rows="2"
-                                                placeholder="Any additional comments for this item..."
-                                            />
-                                        </div>
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                            Consumption Amount *
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={item.consumptionAmount}
+                                                            onChange={(e) => handleItemStatusChange(index, 'consumptionAmount', e.target.value)}
+                                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                            required
+                                                        />
+                                                        <div className="text-xs text-gray-500 mt-1">{item.unit}</div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Calculated Requirements */}
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                            Calculated Required Qty
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max={item.requestedQuantity}
+                                                            value={item.calculatedRequiredQty}
+                                                            onChange={(e) => handleItemStatusChange(index, 'calculatedRequiredQty', e.target.value)}
+                                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <div className="text-xs text-gray-500 mt-1">{item.unit} (Auto-calculated, but editable)</div>
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                            Store Estimated Cost
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={item.storeEstimatedCost}
+                                                            onChange={(e) => handleItemStatusChange(index, 'storeEstimatedCost', e.target.value)}
+                                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <div className="text-xs text-gray-500 mt-1">Rs</div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Status Selection */}
+                                                <div className="mb-4">
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                        Fulfillment Status
+                                                    </label>
+                                                    <div className="flex space-x-4">
+                                                        <label className="flex items-center">
+                                                            <input
+                                                                type="radio"
+                                                                name={`status-${index}`}
+                                                                value="available"
+                                                                checked={item.status === 'available'}
+                                                                onChange={() => handleStatusChange(index, 'available')}
+                                                                className="mr-2"
+                                                            />
+                                                            <span className="text-green-600">Fully Available</span>
+                                                        </label>
+                                                        <label className="flex items-center">
+                                                            <input
+                                                                type="radio"
+                                                                name={`status-${index}`}
+                                                                value="partial"
+                                                                checked={item.status === 'partial'}
+                                                                onChange={() => handleStatusChange(index, 'partial')}
+                                                                className="mr-2"
+                                                            />
+                                                            <span className="text-yellow-600">Partially Available</span>
+                                                        </label>
+                                                        <label className="flex items-center">
+                                                            <input
+                                                                type="radio"
+                                                                name={`status-${index}`}
+                                                                value="not_available"
+                                                                checked={item.status === 'not_available'}
+                                                                onChange={() => handleStatusChange(index, 'not_available')}
+                                                                className="mr-2"
+                                                            />
+                                                            <span className="text-red-600">Not Available</span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                {/* Remarks */}
+                                                <div className="mb-4">
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                        Remarks (Optional)
+                                                    </label>
+                                                    <textarea
+                                                        value={item.remarks}
+                                                        onChange={(e) => handleItemStatusChange(index, 'remarks', e.target.value)}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                        rows="2"
+                                                        placeholder="Any additional comments for this item..."
+                                                    />
+                                                </div>
+
+                                                {/* Remove Item Option */}
+                                                <div className="flex justify-end">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const reason = prompt('Please provide a reason for removing this item from the demand:');
+                                                            if (reason) {
+                                                                handleItemRemoval(index, true, reason);
+                                                            }
+                                                        }}
+                                                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                                    >
+                                                        Remove Item
+                                                    </button>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            /* Removed Item Display */
+                                            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <p className="text-red-800 font-medium">This item has been removed from the demand</p>
+                                                        <p className="text-red-600 text-sm mt-1">Reason: {item.removalReason}</p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleItemRemoval(index, false, '')}
+                                                        className="px-3 py-1 bg-green-600 text-white text-sm rounded-md hover:bg-green-700"
+                                                    >
+                                                        Restore Item
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -357,7 +544,7 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
                         {/* Summary */}
                         <div className="mb-6 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
                             <h4 className="font-medium text-gray-900 mb-2">Fulfillment Summary</h4>
-                            <div className="grid grid-cols-3 gap-4 text-sm mb-3">
+                            <div className="grid grid-cols-4 gap-4 text-sm mb-3">
                                 <div className="text-green-600">
                                     <span className="font-medium">Fully Available:</span> {summary.fullyAvailable}
                                 </div>
@@ -366,6 +553,9 @@ const FulfillmentModal = ({ demand, isOpen, onClose, onSuccess }) => {
                                 </div>
                                 <div className="text-red-600">
                                     <span className="font-medium">Not Available:</span> {summary.notAvailable}
+                                </div>
+                                <div className="text-red-800">
+                                    <span className="font-medium">Removed:</span> {summary.removedItems}
                                 </div>
                             </div>
                             <div className={`font-medium ${expectedOutcome.color}`}>

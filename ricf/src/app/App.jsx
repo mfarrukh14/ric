@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import React, { useState, useEffect } from 'react';
 import '../index.css';
 import Login from '../components/auth/Login/Login';
+import SupplierRegister from '../components/auth/SupplierRegister';
 import AdminDashboard from '../components/admin/AdminDashboard';
 import UserDashboard from '../components/user/UserDashboard';
 import SupplierDashboard from '../components/supplier/SupplierDashboard';
@@ -10,6 +11,7 @@ import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
 import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
 import CreateDemandForm from '../components/demand/CreateDemandForm';
+import FulfillmentPage from '../components/store/FulfillmentPage';
 import Header from '../components/layout/header/Header';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -55,6 +57,16 @@ function App() {
                 <Navigate to="/" replace />
               ) : (
                 <Login onLogin={setUser} /> 
+              )
+            }
+          />
+          <Route
+            path="/supplier-register"
+            element={
+              user ? (
+                <Navigate to="/" replace />
+              ) : (
+                <SupplierRegister />
               )
             }
           />
@@ -119,6 +131,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <CreateDemandForm />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/store/fulfillment/:demandId"
+            element={
+              <ProtectedRoute>
+                <FulfillmentPage />
               </ProtectedRoute>
             }
           />

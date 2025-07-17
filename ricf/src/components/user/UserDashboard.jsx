@@ -6,6 +6,7 @@ import VettingCommittee from '../committee/VettingCommittee';
 import TechnicalEvaluation from '../committee/TechnicalEvaluation';
 import PurchaseDepartment from '../department/PurchaseDepartment';
 import GrievanceCommitteeNew from '../committee/GrievanceCommitteeNew';
+import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
 import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
@@ -14,6 +15,7 @@ export default function UserDashboard() {
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('my-demands');
+  const [show2FASetup, setShow2FASetup] = useState(false);
 
   // Check if user is Store department user
   const isStoreDepartmentUser = user?.departmentName && user.departmentName.toLowerCase() === 'store';
@@ -105,14 +107,25 @@ export default function UserDashboard() {
            isPurchaseDepartment ? 'Purchase Department Dashboard' :
            isGrievanceCommittee ? 'Grievance Committee Dashboard' : 'User Dashboard'}
         </h1>
-        {user?.eligibleForDemandCreation && (
+        <div className="flex space-x-3">
           <button
-            onClick={handleCreateDemand}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+            onClick={() => setShow2FASetup(true)}
+            className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 flex items-center"
           >
-            Create Demand
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            Security Settings
           </button>
-        )}
+          {user?.eligibleForDemandCreation && (
+            <button
+              onClick={handleCreateDemand}
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+            >
+              Create Demand
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tab Navigation for Store Department Users */}
@@ -422,14 +435,19 @@ export default function UserDashboard() {
                                   </div>
                                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
                                     <div>
-                                      <span className="font-medium">Quantity:</span> {item.quantity}
+                                      <span className="font-medium">Quantity:</span> {item.quantity} {item.unit}
                                     </div>
                                     <div>
                                       <span className="font-medium">Est. Cost:</span> Rs {item.estimated_cost}
                                     </div>
                                     {item.store_available_quantity > 0 && (
                                       <div>
-                                        <span className="font-medium">Store Available:</span> {item.store_available_quantity}
+                                        <span className="font-medium">Store Available:</span> {item.store_available_quantity} {item.unit}
+                                      </div>
+                                    )}
+                                    {item.unit && (
+                                      <div>
+                                        <span className="font-medium">Unit:</span> {item.unit}
                                       </div>
                                     )}
                                     {item.remarks && (
@@ -450,10 +468,13 @@ export default function UserDashboard() {
                               <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
                               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
                                 <div>
-                                  <span className="font-medium">Quantity:</span> {demand.quantity}
+                                  <span className="font-medium">Quantity:</span> {demand.quantity} {demand.unit || 'pcs'}
                                 </div>
                                 <div>
                                   <span className="font-medium">Est. Cost:</span> Rs {demand.estimated_cost}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Unit:</span> {demand.unit || 'pcs'}
                                 </div>
                               </div>
                             </div>
@@ -506,6 +527,11 @@ export default function UserDashboard() {
 
       {isGrievanceCommittee && activeTab === 'grievance-evaluation' && (
         <GrievanceCommitteeNew />
+      )}
+
+      {/* 2FA Setup Modal */}
+      {show2FASetup && (
+        <TwoFactorSetup onClose={() => setShow2FASetup(false)} />
       )}
     </div>
   );
