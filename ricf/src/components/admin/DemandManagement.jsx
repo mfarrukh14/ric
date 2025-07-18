@@ -46,9 +46,6 @@ const DemandManagement = () => {
             'store_pending': 'bg-blue-100 text-blue-800',
             'available': 'bg-green-100 text-green-800',
             'not_available': 'bg-red-100 text-red-800',
-            'vetting_pending': 'bg-purple-100 text-purple-800',
-            'vetting_approved': 'bg-green-100 text-green-800',
-            'vetting_rejected': 'bg-red-100 text-red-800',
             'purchase_pending': 'bg-indigo-100 text-indigo-800',
             'purchase_approved': 'bg-green-100 text-green-800',
             'rejected': 'bg-red-100 text-red-800'

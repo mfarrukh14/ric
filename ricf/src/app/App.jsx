@@ -33,12 +33,24 @@ function App() {
   useEffect(() => {
     try {
       const storedUser = localStorage.getItem('user');
+      const storedSupplier = localStorage.getItem('supplier');
+      
       if (storedUser) {
-        setUser(JSON.parse(storedUser));
+        const userData = JSON.parse(storedUser);
+        setUser(userData);
+      } else if (storedSupplier) {
+        // Handle supplier login - convert supplier data to user format
+        const supplierData = JSON.parse(storedSupplier);
+        const supplierUser = {
+          ...supplierData,
+          role: 'supplier'
+        };
+        setUser(supplierUser);
       }
     } catch (error) {
       console.error('Error parsing user data:', error);
       localStorage.removeItem('user');
+      localStorage.removeItem('supplier');
     } finally {
       setLoading(false);
     }
@@ -51,6 +63,8 @@ function App() {
   const handleLogout = useCallback(() => {
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    localStorage.removeItem('supplier');
+    localStorage.removeItem('supplierToken');
     setUser(null);
   }, []);
 

@@ -24,7 +24,7 @@ const getPurchaseDemands = async (req, res) => {
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
                  LEFT JOIN users sr ON d.store_response_by = sr.id
-                 WHERE d.status = 'vetting_approved' AND d.purchase_response_by IS NULL
+                 WHERE d.status IN ('purchase_pending', 'available') AND d.purchase_response_by IS NULL
                  ORDER BY d.created_at DESC`,
                 [],
                 (err, rows) => {

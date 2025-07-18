@@ -137,8 +137,8 @@ const updateDemandItemsStatus = async (req, res) => {
             });
         }
 
-        // Check if any items need to go to vetting (partial or not_available)
-        const itemsNeedingVetting = await new Promise((resolve, reject) => {
+        // Check if any items need to go to purchase (partial or not_available)
+        const itemsNeedingPurchase = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT * FROM demand_items 
                  WHERE demand_id = ? AND store_status IN ('partial', 'not_available')`,
@@ -151,8 +151,8 @@ const updateDemandItemsStatus = async (req, res) => {
         });
 
         let newDemandStatus = 'available';
-        if (itemsNeedingVetting.length > 0) {
-            newDemandStatus = 'vetting';
+        if (itemsNeedingPurchase.length > 0) {
+            newDemandStatus = 'purchase_pending';
         }
 
         // Update main demand status
@@ -176,7 +176,7 @@ const updateDemandItemsStatus = async (req, res) => {
         res.json({ 
             message: 'Demand items status updated successfully',
             status: newDemandStatus,
-            itemsToVetting: itemsNeedingVetting.length
+            itemsToPurchase: itemsNeedingPurchase.length
         });
     } catch (error) {
         console.error('Error updating demand items status:', error);
@@ -318,7 +318,7 @@ const updateItemStatuses = async (req, res) => {
             );
             
             if (hasPartialOrUnavailable) {
-                demandStatus = 'vetting_pending';
+                demandStatus = 'purchase_pending';
             }
 
             // Update demand status and store response

@@ -926,8 +926,8 @@ const getActiveTenders = async (req, res) => {
                 `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description 
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.status = 'active' AND dt.submission_deadline > datetime('now')
-                 ORDER BY dt.submission_deadline ASC`,
+                 WHERE dt.tender_status = 'active' AND dt.bidding_end_time > datetime('now')
+                 ORDER BY dt.bidding_end_time ASC`,
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -949,8 +949,34 @@ const submitBid = async (req, res) => {
 };
 
 const getSupplierBids = async (req, res) => {
-    // Implementation for getting supplier bids
-    res.status(501).json({ error: 'Get supplier bids not yet implemented in new system' });
+    const db = getDatabase();
+
+    try {
+        const supplierId = req.user.id; // Get supplier ID from authenticated user
+        
+        const bids = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT sb.*, dt.bidding_start_time, dt.bidding_end_time, dt.tender_status,
+                        d.item_name, d.quantity, d.estimated_cost, d.description
+                 FROM supplier_bids sb
+                 JOIN demand_tenders dt ON sb.tender_id = dt.id
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE sb.supplier_id = ?
+                 ORDER BY sb.created_at DESC`,
+                [supplierId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json({ bids });
+
+    } catch (error) {
+        console.error('Get supplier bids error:', error);
+        res.status(500).json({ error: 'Failed to fetch supplier bids' });
+    }
 };
 
 // Legacy functions for backward compatibility (can be removed later)

@@ -94,7 +94,8 @@ const Login = ({ onLogin }) => {
       // Check if supplier needs to complete registration process
       if (data.requiresRegistration) {
         localStorage.setItem('supplierToken', data.token);
-        localStorage.setItem('supplier', JSON.stringify(data.supplier));
+        const supplierWithRole = { ...data.supplier, role: 'supplier' };
+        localStorage.setItem('supplier', JSON.stringify(supplierWithRole));
         setNewSupplierId(data.supplier.id);
         setIsResubmission(data.isResubmission || false);
         setShowRegistrationProcess(true);
@@ -104,7 +105,8 @@ const Login = ({ onLogin }) => {
       // Check if email verification is required
       if (data.requiresEmailVerification) {
         localStorage.setItem('supplierToken', data.token);
-        localStorage.setItem('supplier', JSON.stringify(data.supplier));
+        const supplierWithRole = { ...data.supplier, role: 'supplier' };
+        localStorage.setItem('supplier', JSON.stringify(supplierWithRole));
         setNewSupplierId(data.supplier.id);
         setIsResubmission(data.isResubmission || false);
         setShowRegistrationProcess(true);
@@ -112,9 +114,11 @@ const Login = ({ onLogin }) => {
       }
 
       localStorage.setItem('supplierToken', data.token);
-      localStorage.setItem('supplier', JSON.stringify(data.supplier));
+      const supplierWithRole = { ...data.supplier, role: 'supplier' };
+      localStorage.setItem('supplier', JSON.stringify(supplierWithRole));
 
-      if (onLogin) onLogin(data.supplier);
+      // Ensure supplier has the correct role for routing
+      if (onLogin) onLogin(supplierWithRole);
 
       navigate('/supplier-dashboard');
     } catch (err) {
@@ -194,6 +198,18 @@ const Login = ({ onLogin }) => {
 
   const handleRegistrationComplete = () => {
     setShowRegistrationProcess(false);
+    
+    // Get supplier data from localStorage and set it in the App component
+    const supplierData = localStorage.getItem('supplier');
+    if (supplierData && onLogin) {
+      const parsedSupplier = JSON.parse(supplierData);
+      const supplierWithRole = {
+        ...parsedSupplier,
+        role: 'supplier'
+      };
+      onLogin(supplierWithRole);
+    }
+    
     navigate('/supplier-dashboard');
   };
 

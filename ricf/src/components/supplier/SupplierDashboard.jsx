@@ -22,7 +22,8 @@ const SupplierDashboard = () => {
     const fetchData = useCallback(async () => {
         try {
             setError('');
-            const token = localStorage.getItem('token');
+            // Check for both regular token and supplier token
+            const token = localStorage.getItem('token') || localStorage.getItem('supplierToken');
             
             if (!token) {
                 return { error: 'no-token' };
@@ -78,10 +79,13 @@ const SupplierDashboard = () => {
 
     useEffect(() => {
         const initializeComponent = async () => {
-            const stored = localStorage.getItem('user');
-            if (stored) {
+            // Check for user data in localStorage (could be from regular login or supplier login)
+            const storedUser = localStorage.getItem('user');
+            const storedSupplier = localStorage.getItem('supplier');
+            
+            if (storedUser) {
                 try {
-                    const userData = JSON.parse(stored);
+                    const userData = JSON.parse(storedUser);
                     if (userData.role === 'supplier') {
                         setSupplier(userData);
                         const result = await fetchData();
@@ -93,6 +97,23 @@ const SupplierDashboard = () => {
                     }
                 } catch (err) {
                     console.error('Error parsing user data:', err);
+                    navigate('/');
+                }
+            } else if (storedSupplier) {
+                // Handle supplier login data
+                try {
+                    const supplierData = JSON.parse(storedSupplier);
+                    const supplierUser = {
+                        ...supplierData,
+                        role: 'supplier'
+                    };
+                    setSupplier(supplierUser);
+                    const result = await fetchData();
+                    if (result.error === 'no-token') {
+                        navigate('/');
+                    }
+                } catch (err) {
+                    console.error('Error parsing supplier data:', err);
                     navigate('/');
                 }
             } else {
@@ -107,7 +128,7 @@ const SupplierDashboard = () => {
     // Refresh function using the memoized fetchData
     const setup2FA = useCallback(async () => {
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('token') || localStorage.getItem('supplierToken');
             const response = await fetch(`${apiUrl}/auth/2fa/setup`, {
                 method: 'POST',
                 headers: {
@@ -421,7 +442,7 @@ const SupplierDashboard = () => {
 
     const downloadTenderDocument = useCallback(async (tenderId) => {
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('token') || localStorage.getItem('supplierToken');
             const response = await fetch(`${apiUrl}/demands/tenders/${tenderId}/tender-document`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -445,7 +466,7 @@ const SupplierDashboard = () => {
 
     const downloadItemsList = useCallback(async (tenderId) => {
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('token') || localStorage.getItem('supplierToken');
             const response = await fetch(`${apiUrl}/demands/tenders/${tenderId}/items-list`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });

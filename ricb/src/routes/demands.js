@@ -22,11 +22,6 @@ const {
 } = require('../controllers/storeController');
 
 const {
-    getVettingDemands,
-    evaluateDemandVetting
-} = require('../controllers/vettingController');
-
-const {
     getPurchaseDemands,
     evaluateDemandPurchase,
     approveDemand,
@@ -106,10 +101,6 @@ router.get('/all', auth, getAllDemands);
 // Get all demands with items (for store management)
 router.get('/with-items', auth, getAllDemandsWithItems);
 
-// Get demands for vetting committee (must be before /:id route)
-router.get('/vetting', auth, getVettingDemands);
-router.get('/vetting/pending', auth, getVettingDemands);
-
 // Get demands for purchase department
 router.get('/purchase', auth, getPurchaseDemands);
 router.get('/purchase/pending', auth, getPurchaseDemands);
@@ -137,9 +128,6 @@ router.put('/:id/items-status', auth, updateItemStatuses);
 
 // Update demand items status with partial quantities
 router.put('/:id/items', auth, updateDemandItemsStatus);
-
-// Evaluate demand in vetting
-router.put('/:id/vetting', auth, evaluateDemandVetting);
 
 // Evaluate demand in purchase department
 router.put('/:id/purchase', auth, evaluateDemandPurchase);

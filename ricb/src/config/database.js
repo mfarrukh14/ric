@@ -89,12 +89,11 @@ const initializeDatabase = async () => {
                 description TEXT NOT NULL,
                 urgency TEXT NOT NULL DEFAULT 'normal',
                 required_by DATE NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, vetting, vetting_approved, purchase_review, approved, rejected, bidding_open, bidding_closed, awarded
+                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, purchase_pending, purchase_approved, purchase_rejected, approved, rejected, bidding_open, bidding_closed, awarded
                 store_response TEXT,
                 store_response_at DATETIME,
                 store_response_by INTEGER,
-                vetting_status TEXT DEFAULT 'pending', -- pending, approved, rejected
-                vetting_rejection_reason TEXT,                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
+                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
                 purchase_rejection_reason TEXT,
                 purchase_response TEXT,
                 purchase_response_by INTEGER,
@@ -430,13 +429,13 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
-        });        // Create demand evaluations table (tracks vetting committee and purchase department evaluations)
+        });        // Create demand evaluations table (tracks purchase department evaluations)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS demand_evaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 demand_id INTEGER NOT NULL,
                 evaluator_id INTEGER NOT NULL,
-                committee_type TEXT NOT NULL, -- 'vetting' or 'purchase'
+                committee_type TEXT NOT NULL, -- 'purchase'
                 status TEXT NOT NULL, -- approved, rejected
                 comments TEXT,
                 updated_demand_data TEXT, -- JSON string of updated demand fields
@@ -801,30 +800,6 @@ const initializeDatabase = async () => {
                         if (err) reject(err);
                         else {
                             console.log('Evaluation Committee created successfully');
-                            resolve();
-                        }
-                    }
-                );
-            });
-        }
-
-        // Check if Vetting Committee exists
-        const vettingCommitteeRow = await new Promise((resolve, reject) => {
-            db.get("SELECT * FROM committees WHERE name = 'Vetting Committee'", (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        if (!vettingCommitteeRow) {
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO committees (name) VALUES (?)',
-                    ['Vetting Committee'],
-                    (err) => {
-                        if (err) reject(err);
-                        else {
-                            console.log('Vetting Committee created successfully');
                             resolve();
                         }
                     }

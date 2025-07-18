@@ -472,15 +472,15 @@ const PurchaseDepartment = () => {
 
     const getStatusBadge = (status) => {
         const statusColors = {
-            'vetting_approved': 'bg-blue-100 text-blue-800',
             'purchase_pending': 'bg-yellow-100 text-yellow-800',
+            'available': 'bg-green-100 text-green-800',
             'purchase_approved': 'bg-green-100 text-green-800',
             'rejected': 'bg-red-100 text-red-800'
         };
 
         const statusLabels = {
-            'vetting_approved': 'Approved by Vetting',
-            'purchase_pending': 'Purchase Pending',
+            'purchase_pending': 'Store Response - Pending Purchase',
+            'available': 'Store Fulfilled - Available',
             'purchase_approved': 'Purchase Approved',
             'rejected': 'Rejected'
         };
@@ -531,7 +531,7 @@ const PurchaseDepartment = () => {
                 <div className="px-4 py-6 sm:px-0">
                     <div className="mb-6">
                         <h1 className="text-3xl font-bold text-gray-900">Purchase Department</h1>
-                        <p className="text-gray-600">Review and process demands approved by vetting committee</p>
+                        <p className="text-gray-600">Review and process demands from store department</p>
                     </div>
 
                     {error && (
