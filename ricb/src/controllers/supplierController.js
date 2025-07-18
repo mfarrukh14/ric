@@ -300,7 +300,25 @@ const verifyEmailOTP = async (req, res) => {
 const saveRegistrationStep = async (req, res) => {
     const { supplierId, step, data } = req.body;
     
+    console.log('🔍 Save registration step called:');
+    console.log('  Supplier ID:', supplierId);
+    console.log('  Step:', step);
+    console.log('  Data keys:', Object.keys(data || {}));
+    if (data && data.businessProfile) {
+        console.log('  Business profile data:', data.businessProfile);
+    }
+    if (data && data.registrationBodies) {
+        console.log('  Registration bodies data:', data.registrationBodies);
+    }
+    if (data && data.addresses) {
+        console.log('  Addresses data:', data.addresses);
+    }
+    if (data && data.pastExperience) {
+        console.log('  Past experience data:', data.pastExperience);
+    }
+    
     if (!supplierId || !step || !data) {
+        console.log('❌ Missing required fields');
         return res.status(400).json({ error: 'Supplier ID, step, and data are required' });
     }
 
@@ -314,9 +332,9 @@ const saveRegistrationStep = async (req, res) => {
                     db.run(
                         `INSERT OR REPLACE INTO supplier_business_profile 
                          (supplier_id, business_entity_type, business_category, business_industry, 
-                          description, iban_number, business_name, origin_classification, origin_country, 
+                          description, iban_number, business_name, contact_person_name, origin_classification, origin_country, 
                           date_of_incorporation, website_url, business_mobile_number, business_fax_number, updated_at) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
                         [
                             supplierId,
                             data.businessProfile.businessEntityType,
@@ -325,6 +343,7 @@ const saveRegistrationStep = async (req, res) => {
                             data.businessProfile.description,
                             data.businessProfile.ibanNumber,
                             data.businessProfile.businessName,
+                            data.businessProfile.contactPersonName,
                             data.businessProfile.originClassification,
                             data.businessProfile.originCountry,
                             data.businessProfile.dateOfIncorporation,
@@ -734,10 +753,23 @@ const getSupplierDetails = async (req, res) => {
         res.json({
             supplier,
             businessProfile,
-            registrationBodies,
+            registrationBodies: Array.isArray(registrationBodies) ? registrationBodies.map(body => ({
+                id: body.id,
+                registrationBody: body.registration_body,
+                registrationNumber: body.registration_number,
+                registrationDate: body.registration_date,
+                createdAt: body.created_at
+            })) : [],
             documents,
             addresses,
-            ppraRegistrations
+            ppraRegistrations: Array.isArray(ppraRegistrations) ? ppraRegistrations.map(ppra => ({
+                id: ppra.id,
+                ppraType: ppra.ppra_type,
+                registrationNumber: ppra.registration_number,
+                registrationDate: ppra.registration_date,
+                expiryDate: ppra.expiry_date,
+                createdAt: ppra.created_at
+            })) : []
         });
 
     } catch (error) {
@@ -971,7 +1003,7 @@ const getComprehensiveSupplierData = async (req, res) => {
             country_of_origin: businessProfileRaw.origin_country || '',
             date_of_establishment: businessProfileRaw.date_of_incorporation || '',
             website_url: businessProfileRaw.website_url || '',
-            contact_person_name: 'N/A', // Not available in current schema
+            contact_person_name: businessProfileRaw.contact_person_name || '',
             phone_number: businessProfileRaw.business_mobile_number || '',
             alternate_phone: businessProfileRaw.business_fax_number || ''
         } : null;
@@ -1101,8 +1133,25 @@ const getComprehensiveSupplierData = async (req, res) => {
             businessProfile: businessProfile || null,
             addresses: Array.isArray(addresses) ? addresses : [],
             documents: Array.isArray(documents) ? documents : [],
-            registrationBodies: Array.isArray(registrationBodies) ? registrationBodies.filter(body => body !== null && body !== undefined) : [],
-            ppraRegistrations: Array.isArray(ppraRegistrations) ? ppraRegistrations.filter(ppra => ppra !== null && ppra !== undefined) : [],
+            registrationBodies: Array.isArray(registrationBodies) ? registrationBodies
+                .filter(body => body !== null && body !== undefined)
+                .map(body => ({
+                    id: body.id,
+                    registrationBody: body.registration_body,
+                    registrationNumber: body.registration_number,
+                    registrationDate: body.registration_date,
+                    createdAt: body.created_at
+                })) : [],
+            ppraRegistrations: Array.isArray(ppraRegistrations) ? ppraRegistrations
+                .filter(ppra => ppra !== null && ppra !== undefined)
+                .map(ppra => ({
+                    id: ppra.id,
+                    ppraType: ppra.ppra_type,
+                    registrationNumber: ppra.registration_number,
+                    registrationDate: ppra.registration_date,
+                    expiryDate: ppra.expiry_date,
+                    createdAt: ppra.created_at
+                })) : [],
             pastExperience: Array.isArray(pastExperience) ? pastExperience.filter(exp => exp !== null && exp !== undefined) : [],
             clientReferences: Array.isArray(clientReferences) ? clientReferences.filter(ref => ref !== null && ref !== undefined) : [],
             workProofImages: Array.isArray(workProofImages) ? workProofImages.filter(img => img !== null && img !== undefined) : [],
@@ -1232,6 +1281,7 @@ const getSupplierRegistrationData = async (req, res) => {
                 description: businessProfile.description || '',
                 ibanNumber: businessProfile.iban_number || '',
                 businessName: businessProfile.business_name || '',
+                contactPersonName: businessProfile.contact_person_name || '',
                 originClassification: businessProfile.origin_classification || '',
                 originCountry: businessProfile.origin_country || '',
                 dateOfIncorporation: businessProfile.date_of_incorporation || '',

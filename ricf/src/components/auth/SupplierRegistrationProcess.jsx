@@ -13,6 +13,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       description: '',
       ibanNumber: '',
       businessName: '',
+      contactPersonName: '',
       originClassification: '',
       originCountry: '',
       dateOfIncorporation: '',
@@ -46,6 +47,8 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
   const [declaration, setDeclaration] = useState(false);
   const [resubmissionFeedback, setResubmissionFeedback] = useState(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState(''); // 'saving', 'saved', 'error', ''
+  const [autoSaveTimeout, setAutoSaveTimeout] = useState(null); // Debounced auto-save timeout
 
   // Fetch existing registration data on component mount
   useEffect(() => {
@@ -150,6 +153,26 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
     fetchExistingData();
   }, [supplierId, isResubmission]);
 
+  // Auto-save effect - saves data every 2 minutes
+  useEffect(() => {
+    const autoSaveInterval = setInterval(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 120000); // Auto-save every 2 minutes
+
+    return () => clearInterval(autoSaveInterval);
+  }, [currentStep, formData, dataLoaded, loading]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeout) {
+        clearTimeout(autoSaveTimeout);
+      }
+    };
+  }, [autoSaveTimeout]);
+
   const navigate = useNavigate();
 
   const businessEntityTypes = [
@@ -244,6 +267,20 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
         [field]: value
       }
     }));
+
+    // Clear existing timeout
+    if (autoSaveTimeout) {
+      clearTimeout(autoSaveTimeout);
+    }
+
+    // Set new timeout for auto-save
+    const newTimeout = setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 3000); // Auto-save 3 seconds after user stops typing
+
+    setAutoSaveTimeout(newTimeout);
   };
 
   const handleFileChange = (documentType, file) => {
@@ -254,6 +291,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
         [documentType]: file
       }
     }));
+    // Note: Documents are typically saved during final submission, not in step auto-save
   };
 
   const saveStep = async (stepNumber) => {
@@ -290,15 +328,161 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
     }
   };
 
-  const nextStep = () => {
+  const validateCurrentStep = () => {
+    const errors = [];
+    
+    switch (currentStep) {
+      case 1:
+        const bp = formData.businessProfile;
+        if (!bp.businessEntityType) errors.push('Business Entity Type is required');
+        if (!bp.businessCategory) errors.push('Business Category is required');
+        if (!bp.businessIndustry) errors.push('Business Industry is required');
+        if (!bp.description) errors.push('Business Description is required');
+        if (!bp.ibanNumber) errors.push('IBAN Number is required');
+        if (!bp.businessName) errors.push('Business Name is required');
+        if (!bp.contactPersonName) errors.push('Focal Person Full Name is required');
+        if (!bp.originClassification) errors.push('Origin Classification is required');
+        if (!bp.originCountry) errors.push('Origin Country is required');
+        if (!bp.dateOfIncorporation) errors.push('Date of Incorporation is required');
+        if (!bp.websiteUrl) errors.push('Website URL is required');
+        if (!bp.businessMobileNumber) errors.push('Business Mobile Number is required');
+        if (!bp.businessFaxNumber) errors.push('Business Fax Number is required');
+        break;
+      case 2:
+        if (!emailVerified && !isResubmission) {
+          errors.push('Email verification is required');
+        }
+        break;
+      case 3:
+        if (!formData.registrationBodies || formData.registrationBodies.length === 0) {
+          errors.push('At least one Registration Body is required');
+        }
+        break;
+      case 4:
+        const requiredDocs = ['professionalTaxCert', 'ntnDocument', 'drugSaleLicense', 'pecDocument', 'gstDocument'];
+        requiredDocs.forEach(docType => {
+          if (!formData.documents[docType] || (!formData.documents[docType].isExisting && !formData.documents[docType].name)) {
+            const docLabels = {
+              'professionalTaxCert': 'Professional Tax Certificate',
+              'ntnDocument': 'NTN Document',
+              'drugSaleLicense': 'Drug Sale License',
+              'pecDocument': 'PEC Document',
+              'gstDocument': 'GST Document'
+            };
+            errors.push(`${docLabels[docType]} is required`);
+          }
+        });
+        break;
+      case 5:
+        if (!formData.addresses || formData.addresses.length === 0) {
+          errors.push('At least one Business Address is required');
+        }
+        break;
+      case 6:
+        // Past experience is optional as per user request
+        break;
+      case 7:
+        if (!formData.ppraRegistrations || formData.ppraRegistrations.length === 0) {
+          errors.push('At least one PPRA Registration is required');
+        }
+        break;
+    }
+    
+    return errors;
+  };
+
+  const nextStep = async () => {
     if (currentStep < 7) {
+      // Validate current step before moving to next
+      const stepErrors = validateCurrentStep();
+      if (stepErrors.length > 0) {
+        const errorMessage = `Please complete the following required fields for Step ${currentStep}:\n\n${stepErrors.map(error => `• ${error}`).join('\n')}`;
+        setError(errorMessage);
+        return;
+      }
+      
+      setError(''); // Clear any previous errors
+      // Auto-save current step data before moving to next step
+      await autoSaveCurrentStep();
       setCurrentStep(currentStep + 1);
     }
   };
 
-  const prevStep = () => {
+  const prevStep = async () => {
     if (currentStep > 1) {
+      // Auto-save current step data before moving to previous step
+      await autoSaveCurrentStep();
       setCurrentStep(currentStep - 1);
+    }
+  };
+
+  // Auto-save function to save current step data
+  const autoSaveCurrentStep = async () => {
+    try {
+      let dataToSave = null;
+      let stepNumber = currentStep;
+
+      switch (currentStep) {
+        case 1:
+          if (formData.businessProfile && Object.keys(formData.businessProfile).some(key => formData.businessProfile[key])) {
+            dataToSave = { businessProfile: formData.businessProfile };
+          }
+          break;
+        case 3:
+          if (formData.registrationBodies && formData.registrationBodies.length > 0) {
+            dataToSave = { registrationBodies: formData.registrationBodies };
+          }
+          break;
+        case 5:
+          if (formData.addresses && formData.addresses.length > 0) {
+            dataToSave = { addresses: formData.addresses };
+          }
+          break;
+        case 6:
+          if ((formData.pastExperience && formData.pastExperience.length > 0) || 
+              (formData.clientReferences && formData.clientReferences.length > 0) ||
+              (formData.workProofImages && formData.workProofImages.length > 0)) {
+            dataToSave = { 
+              pastExperience: formData.pastExperience || [],
+              clientReferences: formData.clientReferences || [],
+              workProofImages: formData.workProofImages || []
+            };
+          }
+          break;
+        case 7:
+          if (formData.ppraRegistrations && formData.ppraRegistrations.length > 0) {
+            dataToSave = { ppraRegistrations: formData.ppraRegistrations };
+          }
+          break;
+        default:
+          return; // No auto-save for other steps
+      }
+
+      // Save the data if there's something to save
+      if (dataToSave) {
+        console.log(`🔄 Auto-saving step ${stepNumber} data...`);
+        setAutoSaveStatus('saving');
+        
+        await saveStepData(stepNumber, dataToSave);
+        
+        console.log(`✅ Step ${stepNumber} auto-saved successfully`);
+        setAutoSaveStatus('saved');
+        
+        // Clear the saved status after 2 seconds
+        setTimeout(() => {
+          setAutoSaveStatus('');
+        }, 2000);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Auto-save failed for step ${currentStep}:`, error);
+      setAutoSaveStatus('error');
+      
+      // Clear the error status after 3 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('');
+      }, 3000);
+      
+      // Don't block navigation if auto-save fails
     }
   };
 
@@ -369,27 +553,66 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
   };
 
   const addRegistrationBody = (data) => {
+    // Validate required fields
+    if (!data.registrationBody || !data.registrationNumber || !data.registrationDate) {
+      setError('Please fill in all required fields for Registration Body');
+      return;
+    }
+    
     setFormData(prev => ({
       ...prev,
       registrationBodies: [...prev.registrationBodies, { ...data, id: Date.now() }]
     }));
     closeModal();
+    setError(''); // Clear any previous errors
+    // Trigger auto-save after adding registration body
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const addAddress = (data) => {
+    // Validate required fields
+    if (!data.addressType || !data.addressLine1 || !data.city || !data.stateProvince || !data.postalCode || !data.country) {
+      setError('Please fill in all required fields for Business Address');
+      return;
+    }
+    
     setFormData(prev => ({
       ...prev,
       addresses: [...prev.addresses, { ...data, id: Date.now() }]
     }));
     closeModal();
+    setError(''); // Clear any previous errors
+    // Trigger auto-save after adding address
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const addPPRARegistration = (data) => {
+    // Validate required fields
+    if (!data.ppraType || !data.registrationNumber || !data.registrationDate) {
+      setError('Please fill in all required fields for PPRA Registration');
+      return;
+    }
+    
     setFormData(prev => ({
       ...prev,
       ppraRegistrations: [...prev.ppraRegistrations, { ...data, id: Date.now() }]
     }));
     closeModal();
+    setError(''); // Clear any previous errors
+    // Trigger auto-save after adding PPRA registration
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const addPastExperience = (data) => {
@@ -398,6 +621,12 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       pastExperience: [...prev.pastExperience, { ...data, id: Date.now() }]
     }));
     closeModal();
+    // Trigger auto-save after adding past experience
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const addClientReference = (data) => {
@@ -406,6 +635,12 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       clientReferences: [...prev.clientReferences, { ...data, id: Date.now() }]
     }));
     closeModal();
+    // Trigger auto-save after adding client reference
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const handleWorkProofImageChange = (files) => {
@@ -419,6 +654,13 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       ...prev,
       workProofImages: [...prev.workProofImages, ...newImages]
     }));
+    
+    // Trigger auto-save after adding work proof images
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const removeWorkProofImage = (id) => {
@@ -431,6 +673,13 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
         return img.id !== id;
       })
     }));
+    
+    // Trigger auto-save after removing work proof image
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
   };
 
   const removeItem = (section, id) => {
@@ -438,6 +687,93 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       ...prev,
       [section]: prev[section].filter(item => item.id !== id)
     }));
+    // Trigger auto-save after removing item
+    setTimeout(() => {
+      if (dataLoaded && !loading) {
+        autoSaveCurrentStep();
+      }
+    }, 500);
+  };
+
+  const validateRequiredFields = () => {
+    const errors = [];
+    
+    // Step 1 - Business Profile validation
+    const bp = formData.businessProfile;
+    if (!bp.businessEntityType) errors.push('Business Entity Type is required');
+    if (!bp.businessCategory) errors.push('Business Category is required');
+    if (!bp.businessIndustry) errors.push('Business Industry is required');
+    if (!bp.description) errors.push('Business Description is required');
+    if (!bp.ibanNumber) errors.push('IBAN Number is required');
+    if (!bp.businessName) errors.push('Business Name is required');
+    if (!bp.contactPersonName) errors.push('Focal Person Full Name is required');
+    if (!bp.originClassification) errors.push('Origin Classification is required');
+    if (!bp.originCountry) errors.push('Origin Country is required');
+    if (!bp.dateOfIncorporation) errors.push('Date of Incorporation is required');
+    if (!bp.websiteUrl) errors.push('Website URL is required');
+    if (!bp.businessMobileNumber) errors.push('Business Mobile Number is required');
+    if (!bp.businessFaxNumber) errors.push('Business Fax Number is required');
+
+    // Step 2 - Email verification
+    if (!emailVerified && !isResubmission) {
+      errors.push('Email verification is required');
+    }
+
+    // Step 3 - Registration Bodies validation
+    if (!formData.registrationBodies || formData.registrationBodies.length === 0) {
+      errors.push('At least one Registration Body is required');
+    } else {
+      formData.registrationBodies.forEach((body, index) => {
+        if (!body.registrationBody) errors.push(`Registration Body #${index + 1}: Registration Body is required`);
+        if (!body.registrationNumber) errors.push(`Registration Body #${index + 1}: Registration Number is required`);
+        if (!body.registrationDate) errors.push(`Registration Body #${index + 1}: Registration Date is required`);
+      });
+    }
+
+    // Step 4 - Documents validation
+    const requiredDocs = ['professionalTaxCert', 'ntnDocument', 'drugSaleLicense', 'pecDocument', 'gstDocument'];
+    requiredDocs.forEach(docType => {
+      if (!formData.documents[docType] || (!formData.documents[docType].isExisting && !formData.documents[docType].name)) {
+        const docLabels = {
+          'professionalTaxCert': 'Professional Tax Certificate',
+          'ntnDocument': 'NTN Document',
+          'drugSaleLicense': 'Drug Sale License',
+          'pecDocument': 'PEC Document',
+          'gstDocument': 'GST Document'
+        };
+        errors.push(`${docLabels[docType]} is required`);
+      }
+    });
+
+    // Step 5 - Business Addresses validation
+    if (!formData.addresses || formData.addresses.length === 0) {
+      errors.push('At least one Business Address is required');
+    } else {
+      formData.addresses.forEach((address, index) => {
+        if (!address.addressType) errors.push(`Address #${index + 1}: Address Type is required`);
+        if (!address.addressLine1) errors.push(`Address #${index + 1}: Address Line 1 is required`);
+        if (!address.city) errors.push(`Address #${index + 1}: City is required`);
+        if (!address.stateProvince) errors.push(`Address #${index + 1}: State/Province is required`);
+        if (!address.postalCode) errors.push(`Address #${index + 1}: Postal Code is required`);
+        if (!address.country) errors.push(`Address #${index + 1}: Country is required`);
+      });
+    }
+
+    // Step 6 - Past Experience is optional as per user request
+    // No validation needed for past experience
+
+    // Step 7 - PPRA Registration validation
+    if (!formData.ppraRegistrations || formData.ppraRegistrations.length === 0) {
+      errors.push('At least one PPRA Registration is required');
+    } else {
+      formData.ppraRegistrations.forEach((ppra, index) => {
+        if (!ppra.ppraType) errors.push(`PPRA Registration #${index + 1}: PPRA Type is required`);
+        if (!ppra.registrationNumber) errors.push(`PPRA Registration #${index + 1}: Registration Number is required`);
+        if (!ppra.registrationDate) errors.push(`PPRA Registration #${index + 1}: Registration Date is required`);
+      });
+    }
+
+    return errors;
   };
 
   const submitApplication = async () => {
@@ -446,8 +782,60 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       return;
     }
 
+    // Validate all required fields
+    const validationErrors = validateRequiredFields();
+    if (validationErrors.length > 0) {
+      const errorMessage = `Please complete the following required fields:\n\n${validationErrors.map(error => `• ${error}`).join('\n')}`;
+      setError(errorMessage);
+      return;
+    }
+
     try {
       setLoading(true);
+      setError('');
+
+      // Save all steps before submitting to ensure all data is stored
+      console.log('🔄 Saving all registration steps before submission...');
+      
+      // Save Step 1 - Business Profile
+      if (formData.businessProfile && Object.keys(formData.businessProfile).length > 0) {
+        console.log('💾 Saving Step 1 - Business Profile...');
+        await saveStepData(1, { businessProfile: formData.businessProfile });
+      }
+
+      // Save Step 3 - Registration Bodies
+      if (formData.registrationBodies && formData.registrationBodies.length > 0) {
+        console.log('💾 Saving Step 3 - Registration Bodies...');
+        await saveStepData(3, { registrationBodies: formData.registrationBodies });
+      }
+
+      // Save Step 5 - Business Addresses
+      if (formData.addresses && formData.addresses.length > 0) {
+        console.log('💾 Saving Step 5 - Business Addresses...');
+        await saveStepData(5, { addresses: formData.addresses });
+      }
+
+      // Save Step 6 - Past Experience
+      if ((formData.pastExperience && formData.pastExperience.length > 0) || 
+          (formData.clientReferences && formData.clientReferences.length > 0) ||
+          (formData.workProofImages && formData.workProofImages.length > 0)) {
+        console.log('💾 Saving Step 6 - Past Experience...');
+        await saveStepData(6, { 
+          pastExperience: formData.pastExperience || [],
+          clientReferences: formData.clientReferences || [],
+          workProofImages: formData.workProofImages || []
+        });
+      }
+
+      // Save Step 7 - PPRA Registrations
+      if (formData.ppraRegistrations && formData.ppraRegistrations.length > 0) {
+        console.log('💾 Saving Step 7 - PPRA Registrations...');
+        await saveStepData(7, { ppraRegistrations: formData.ppraRegistrations });
+      }
+
+      console.log('✅ All registration steps saved successfully');
+
+      // Now submit the application
       const formDataToSend = new FormData();
       
       // Add all form data
@@ -456,7 +844,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       
       // Add documents
       Object.keys(formData.documents).forEach(docType => {
-        if (formData.documents[docType]) {
+        if (formData.documents[docType] && !formData.documents[docType].isExisting) {
           formDataToSend.append(docType, formData.documents[docType]);
         }
       });
@@ -474,15 +862,46 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
         throw new Error(errorData.error || 'Failed to submit application');
       }
 
+      console.log('🎉 Application submitted successfully');
+
       if (onComplete) {
         onComplete();
       } else {
         navigate('/supplier-dashboard');
       }
     } catch (err) {
+      console.error('❌ Submit application error:', err);
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Helper function to save step data
+  const saveStepData = async (stepNumber, data) => {
+    try {
+      const response = await fetch(`${apiUrl}/suppliers/registration/save-step`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('supplierToken')}`
+        },
+        body: JSON.stringify({
+          supplierId,
+          step: stepNumber,
+          data: data
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to save step ${stepNumber}: ${errorData.error || 'Unknown error'}`);
+      }
+
+      console.log(`✅ Step ${stepNumber} saved successfully`);
+    } catch (error) {
+      console.error(`❌ Error saving step ${stepNumber}:`, error);
+      throw error;
     }
   };
 
@@ -585,6 +1004,20 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
               onChange={(e) => handleInputChange('businessProfile', 'businessName', e.target.value)}
               className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Enter business name"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Focal Person Full Name *
+            </label>
+            <input
+              type="text"
+              value={formData.businessProfile.contactPersonName}
+              onChange={(e) => handleInputChange('businessProfile', 'contactPersonName', e.target.value)}
+              className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Enter full name of focal person"
               required
             />
           </div>
@@ -1251,12 +1684,13 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Registration Body
+                  Registration Body *
                 </label>
                 <select
                   value={modalData.registrationBody || ''}
                   onChange={(e) => setModalData({ ...modalData, registrationBody: e.target.value })}
                   className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
+                  required
                 >
                   <option value="">Select Registration Body</option>
                   {registrationBodies.map(body => (
@@ -1266,7 +1700,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Registration Number
+                  Registration Number *
                 </label>
                 <input
                   type="text"
@@ -1274,17 +1708,19 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
                   onChange={(e) => setModalData({ ...modalData, registrationNumber: e.target.value })}
                   className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
                   placeholder="Enter registration number"
+                  required
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Registration Date
+                  Registration Date *
                 </label>
                 <input
                   type="date"
                   value={modalData.registrationDate || ''}
                   onChange={(e) => setModalData({ ...modalData, registrationDate: e.target.value })}
                   className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
+                  required
                 />
               </div>
             </div>
@@ -1316,12 +1752,13 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Address Type
+                  Address Type *
                 </label>
                 <select
                   value={modalData.addressType || ''}
                   onChange={(e) => setModalData({ ...modalData, addressType: e.target.value })}
                   className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
+                  required
                 >
                   <option value="">Select Address Type</option>
                   <option value="Head Office">Head Office</option>
@@ -1333,7 +1770,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Address Line 1
+                  Address Line 1 *
                 </label>
                 <input
                   type="text"
@@ -1341,6 +1778,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
                   onChange={(e) => setModalData({ ...modalData, addressLine1: e.target.value })}
                   className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
                   placeholder="Street address"
+                  required
                 />
               </div>
               <div>
@@ -1358,7 +1796,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    City
+                    City *
                   </label>
                   <input
                     type="text"
@@ -1366,11 +1804,12 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
                     onChange={(e) => setModalData({ ...modalData, city: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
                     placeholder="City"
+                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    State/Province
+                    State/Province *
                   </label>
                   <input
                     type="text"
@@ -1378,13 +1817,14 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
                     onChange={(e) => setModalData({ ...modalData, stateProvince: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
                     placeholder="State/Province"
+                    required
                   />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Postal Code
+                    Postal Code *
                   </label>
                   <input
                     type="text"
@@ -1392,16 +1832,18 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
                     onChange={(e) => setModalData({ ...modalData, postalCode: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
                     placeholder="Postal code"
+                    required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Country
+                    Country *
                   </label>
                   <select
                     value={modalData.country || ''}
                     onChange={(e) => setModalData({ ...modalData, country: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-gray-800 text-white border border-gray-600"
+                    required
                   >
                     <option value="">Select Country</option>
                     {countries.map(country => (
@@ -1914,6 +2356,43 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
               </div>
             )}
             
+            {/* Auto-save Status Indicator */}
+            {autoSaveStatus && (
+              <div className="flex justify-end mb-4">
+                <div className={`flex items-center space-x-2 px-3 py-1 rounded-lg text-sm ${
+                  autoSaveStatus === 'saving' ? 'bg-blue-600 text-white' :
+                  autoSaveStatus === 'saved' ? 'bg-green-600 text-white' :
+                  autoSaveStatus === 'error' ? 'bg-red-600 text-white' : ''
+                }`}>
+                  {autoSaveStatus === 'saving' && (
+                    <>
+                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Auto-saving...</span>
+                    </>
+                  )}
+                  {autoSaveStatus === 'saved' && (
+                    <>
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                      </svg>
+                      <span>Auto-saved</span>
+                    </>
+                  )}
+                  {autoSaveStatus === 'error' && (
+                    <>
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                      </svg>
+                      <span>Auto-save failed</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+            
           <div className="flex items-center justify-between mb-4">
             {steps.map((step, index) => (
               <div key={step.number} className="flex flex-col items-center">
@@ -1943,7 +2422,25 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
         {/* Error Message */}
         {error && (
           <div className="mb-6 p-4 bg-red-500 bg-opacity-20 border border-red-500 rounded-md">
-            <p className="text-red-300">{error}</p>
+            <div className="flex items-start space-x-3">
+              <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <div className="text-red-300">
+                {error.includes('\n') ? (
+                  <div>
+                    <p className="font-medium mb-2">Validation Error</p>
+                    <div className="space-y-1">
+                      {error.split('\n').filter(line => line.trim()).map((line, index) => (
+                        <p key={index} className="text-sm">{line}</p>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p>{error}</p>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

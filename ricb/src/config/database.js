@@ -144,6 +144,7 @@ const initializeDatabase = async () => {
                 description TEXT,
                 iban_number TEXT,
                 business_name TEXT,
+                contact_person_name TEXT,
                 origin_classification TEXT, -- local, international
                 origin_country TEXT,
                 date_of_incorporation DATE,
@@ -1383,6 +1384,35 @@ const runMigrations = async () => {
                             resolve();
                         }
                     });
+                }
+            });
+        });
+
+        // Migration 8: Add contact_person_name to supplier_business_profile table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(supplier_business_profile)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasContactPersonName = columnNames.includes('contact_person_name');
+                
+                if (!hasContactPersonName) {
+                    console.log('Adding contact_person_name column to supplier_business_profile table...');
+                    db.run("ALTER TABLE supplier_business_profile ADD COLUMN contact_person_name TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding contact_person_name column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added contact_person_name column');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('contact_person_name column already exists');
+                    resolve();
                 }
             });
         });

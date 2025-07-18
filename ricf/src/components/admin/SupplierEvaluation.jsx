@@ -421,10 +421,10 @@ const SupplierEvaluation = () => {
                     <h3 className="text-lg font-semibold text-gray-900 mb-3">Registration Bodies</h3>
                     <div className="grid gap-3">
                         {supplierDetails.registrationBodies.map((body, index) => (
-                            <div key={index} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                                <InfoField label="Body" value={body.body_name} />
-                                <InfoField label="Registration #" value={body.registration_number} />
-                                <InfoField label="Valid Until" value={new Date(body.expiry_date).toLocaleDateString()} />
+                            <div key={index} className="border border-green-200 rounded-lg p-3 bg-green-100">
+                                <InfoField label="Body" value={body.registrationBody} />
+                                <InfoField label="Registration #" value={body.registrationNumber} />
+                                <InfoField label="Registration Date" value={new Date(body.registrationDate).toLocaleDateString()} />
                             </div>
                         ))}
                     </div>
@@ -572,10 +572,10 @@ const SupplierEvaluation = () => {
                     <h3 className="text-lg font-semibold text-gray-900 mb-3">PPRA Registrations</h3>
                     <div className="grid gap-3">
                         {supplierDetails.ppraRegistrations.map((ppra, index) => (
-                            <div key={index} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                                <InfoField label="Category" value={ppra.registration_category} />
-                                <InfoField label="Registration #" value={ppra.registration_number} />
-                                <InfoField label="Valid Until" value={new Date(ppra.expiry_date).toLocaleDateString()} />
+                            <div key={index} className="border border-green-200 rounded-lg p-3 bg-green-100">
+                                <InfoField label="Category" value={ppra.ppraType} />
+                                <InfoField label="Registration #" value={ppra.registrationNumber} />
+                                <InfoField label="Valid Until" value={new Date(ppra.expiryDate).toLocaleDateString()} />
                             </div>
                         ))}
                     </div>
