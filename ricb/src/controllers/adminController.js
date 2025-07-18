@@ -1,4 +1,4 @@
-const { getDatabase, generateCredentials } = require('../config/database');
+const { getDatabase, generateCredentials, generateUserBasedCredentials } = require('../config/database');
 const bcrypt = require('bcryptjs');
 
 // Department Controllers
@@ -83,8 +83,8 @@ exports.createUser = async (req, res) => {
     }
 
     try {
-        // Generate credentials
-        const { username, password } = generateCredentials();
+        // Generate credentials based on user's name
+        const { username, password } = await generateUserBasedCredentials(name);
         const hashedPassword = await bcrypt.hash(password, 10);
         await new Promise((resolve, reject) => {
             db.run(

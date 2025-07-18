@@ -173,3 +173,49 @@ exports.complete2FALogin = async (req, res) => {
         res.status(500).json({ error: 'Error completing 2FA login' });
     }
 };
+
+// Get current user profile
+exports.getProfile = async (req, res) => {
+    const db = getDatabase();
+    const userId = req.user.id;
+
+    try {
+        const user = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, 
+                        u.eligible_for_demand_creation, u.two_factor_enabled,
+                        d.name as department_name, c.name as committee_name
+                 FROM users u 
+                 LEFT JOIN departments d ON u.department_id = d.id
+                 LEFT JOIN committees c ON u.committee_id = c.id
+                 WHERE u.id = ?`,
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        res.json({
+            id: user.id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+            department_id: user.department_id,
+            committee_id: user.committee_id,
+            departmentName: user.department_name,
+            committeeName: user.committee_name,
+            eligibleForDemandCreation: !!user.eligible_for_demand_creation,
+            two_factor_enabled: !!user.two_factor_enabled
+        });
+
+    } catch (err) {
+        console.error('Profile fetch error:', err);
+        res.status(500).json({ error: 'Error fetching profile' });
+    }
+};

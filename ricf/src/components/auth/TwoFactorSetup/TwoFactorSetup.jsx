@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { setup2FA, enable2FA, get2FAStatus, disable2FA, regenerateBackupCodes } from '../../../config/api';
 
-const TwoFactorSetup = ({ onClose }) => {
+const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
   const [step, setStep] = useState(1); // 1: status, 2: setup, 3: verify, 4: backup codes
   const [qrCode, setQrCode] = useState('');
   const [secret, setSecret] = useState('');
@@ -52,6 +52,11 @@ const TwoFactorSetup = ({ onClose }) => {
       setBackupCodes(result.backupCodes);
       setStatus({ enabled: true, backupCodesCount: result.backupCodes.length });
       setStep(4);
+      
+      // Call onComplete if provided (for mandatory 2FA setup)
+      if (onComplete) {
+        onComplete();
+      }
     } catch (err) {
       setError(err.error || 'Failed to enable 2FA');
     } finally {
@@ -420,16 +425,18 @@ const TwoFactorSetup = ({ onClose }) => {
       <div className="max-w-md w-full bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto border border-white border-opacity-30">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-gray-800">
-            Security Settings
+            {mandatory ? 'Required: Set Up 2FA' : 'Security Settings'}
           </h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition duration-200"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          {!mandatory && (
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition duration-200"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {error && (

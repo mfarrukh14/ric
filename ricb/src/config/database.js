@@ -36,6 +36,67 @@ const generateCredentials = () => {
     return { username, password };
 };
 
+const generateUserBasedCredentials = async (name) => {
+    const db = getDatabase();
+    
+    // Split name into words and get the second word if available, otherwise use the first word
+    const words = name.trim().split(/\s+/);
+    const nameToUse = words.length > 1 ? words[1] : words[0];
+    
+    // Clean the name: remove spaces, special characters, and convert to lowercase
+    const cleanName = nameToUse.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    // Generate a random 2-digit number
+    const randomNumber = Math.floor(Math.random() * 90) + 10; // 10-99
+    
+    // Create base username
+    const baseUsername = `${cleanName}${randomNumber}.ric`;
+    
+    // Check if username already exists and generate a unique one
+    let username = baseUsername;
+    let counter = 1;
+    
+    while (await checkUsernameExists(username)) {
+        username = `${cleanName}${randomNumber + counter}.ric`;
+        counter++;
+        
+        // If we've tried too many combinations, use a random approach
+        if (counter > 100) {
+            const randomSuffix = Math.floor(Math.random() * 9000) + 1000; // 1000-9999
+            username = `${cleanName}${randomSuffix}.ric`;
+            
+            // Final check - if still exists, use timestamp
+            if (await checkUsernameExists(username)) {
+                username = `${cleanName}${Date.now().toString().slice(-4)}.ric`;
+            }
+            break;
+        }
+    }
+    
+    // Generate random password (8 characters)
+    const password = crypto.randomBytes(4).toString('hex');
+    
+    return { username, password };
+};
+
+const checkUsernameExists = async (username) => {
+    const db = getDatabase();
+    
+    return new Promise((resolve, reject) => {
+        db.get(
+            'SELECT username FROM users WHERE username = ?',
+            [username],
+            (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(!!row); // Convert to boolean
+                }
+            }
+        );
+    });
+};
+
 const initializeDatabase = async () => {
     try {
         // Create departments table
@@ -1402,5 +1463,6 @@ const runMigrations = async () => {
 module.exports = {
     connectDatabase,
     getDatabase,
-    generateCredentials
+    generateCredentials,
+    generateUserBasedCredentials
 };

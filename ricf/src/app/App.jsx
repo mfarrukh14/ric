@@ -13,6 +13,7 @@ import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew
 import CreateDemandForm from '../components/demand/CreateDemandForm';
 import FulfillmentPage from '../components/store/FulfillmentPage';
 import Header from '../components/layout/header/Header';
+import TwoFactorEnforcementWrapper from '../components/auth/TwoFactorEnforcementWrapper';
 
 const ProtectedRoute = ({ children, allowedRoles, currentUser }) => {
   if (!currentUser) {
@@ -109,7 +110,9 @@ function App() {
             path="/admin"
             element={
               <ProtectedRoute allowedRoles={['superadmin']} currentUser={user}>
-                <AdminDashboard />
+                <TwoFactorEnforcementWrapper>
+                  <AdminDashboard />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -117,7 +120,9 @@ function App() {
             path="/dashboard"
             element={
               <ProtectedRoute currentUser={user}>
-                <UserDashboard />
+                <TwoFactorEnforcementWrapper>
+                  <UserDashboard />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -125,7 +130,9 @@ function App() {
             path="/committee/technical-evaluation"
             element={
               <ProtectedRoute currentUser={user}>
-                <TechnicalEvaluation />
+                <TwoFactorEnforcementWrapper>
+                  <TechnicalEvaluation />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -133,7 +140,9 @@ function App() {
             path="/committee/technical-evaluation/:tenderId/evaluate"
             element={
               <ProtectedRoute currentUser={user}>
-                <ItemWiseEvaluation />
+                <TwoFactorEnforcementWrapper>
+                  <ItemWiseEvaluation />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -141,7 +150,9 @@ function App() {
             path="/committee/grievance"
             element={
               <ProtectedRoute currentUser={user}>
-                <GrievanceCommitteeNew />
+                <TwoFactorEnforcementWrapper>
+                  <GrievanceCommitteeNew />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -149,7 +160,9 @@ function App() {
             path="/supplier-dashboard"
             element={
               <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
-                <SupplierDashboard />
+                <TwoFactorEnforcementWrapper>
+                  <SupplierDashboard />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -157,7 +170,9 @@ function App() {
             path="/supplier/apply-bid/:tenderId"
             element={
               <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
-                <BidApplication />
+                <TwoFactorEnforcementWrapper>
+                  <BidApplication />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -165,7 +180,9 @@ function App() {
             path="/create-demand"
             element={
               <ProtectedRoute currentUser={user}>
-                <CreateDemandForm />
+                <TwoFactorEnforcementWrapper>
+                  <CreateDemandForm />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
@@ -173,7 +190,9 @@ function App() {
             path="/store/fulfillment/:demandId"
             element={
               <ProtectedRoute currentUser={user}>
-                <FulfillmentPage />
+                <TwoFactorEnforcementWrapper>
+                  <FulfillmentPage />
+                </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }
           />
