@@ -828,40 +828,42 @@ const submitEvaluation = async (req, res) => {
             const EmailService = require('../utils/emailService');
             const emailService = new EmailService();
             
-            const subject = action === 'approve' 
-                ? 'Supplier Registration Approved - Welcome to RIC Portal'
-                : 'Supplier Registration Status Update';
-            
-            const message = action === 'approve' 
-                ? `Dear ${supplier.username},
+            if (action === 'approve') {
+                await emailService.sendSupplierApprovalEmail(supplier.business_email, supplier.username);
+                console.log(`Approval email sent to ${supplier.business_email}`);
+            } else {
+                // For rejection, we'll use a generic HTML email since there's no specific method
+                const nodemailer = require('nodemailer');
+                const transporter = nodemailer.createTransporter({
+                    service: 'gmail',
+                    auth: {
+                        user: process.env.EMAIL_USER,
+                        pass: process.env.EMAIL_PASSWORD
+                    }
+                });
 
-We are pleased to inform you that your supplier registration with Rawalpindi Institute of Cardiology has been APPROVED.
+                const mailOptions = {
+                    from: {
+                        name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
+                        address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+                    },
+                    to: supplier.business_email,
+                    subject: 'Supplier Registration Status Update',
+                    html: `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                            <h2 style="color: #dc3545;">Registration Status Update</h2>
+                            <p>Dear ${supplier.username},</p>
+                            <p>We regret to inform you that your supplier registration with Rawalpindi Institute of Cardiology has been <strong>REJECTED</strong>.</p>
+                            <p><strong>Reason:</strong> ${rejectionReason}</p>
+                            <p>If you believe this is an error or would like to reapply, please contact our support team.</p>
+                            <p>Best regards,<br>RIC Procurement Team</p>
+                        </div>
+                    `
+                };
 
-You can now:
-• Access your supplier dashboard
-• View and participate in active tenders
-• Update your company profile
-• Manage your bids and applications
-
-Please log in to your supplier portal to get started: ${process.env.FRONTEND_URL || 'http://localhost:5173'}
-
-Welcome to the RIC Supplier Network!
-
-Best regards,
-RIC Procurement Team`
-                : `Dear ${supplier.username},
-
-We regret to inform you that your supplier registration with Rawalpindi Institute of Cardiology has been REJECTED.
-
-Reason: ${rejectionReason}
-
-If you believe this is an error or would like to reapply, please contact our support team.
-
-Best regards,
-RIC Procurement Team`;
-
-            await emailService.sendEmail(supplier.business_email, subject, message);
-            console.log(`${action} email sent to ${supplier.business_email}`);
+                await transporter.sendMail(mailOptions);
+                console.log(`Rejection email sent to ${supplier.business_email}`);
+            }
         } catch (emailError) {
             console.error('Failed to send email notification:', emailError);
             // Don't fail the whole operation if email fails
