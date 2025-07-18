@@ -13,13 +13,41 @@ const auth = async (req, res, next) => {
         }
 
         const decoded = jwt.verify(token, JWT_SECRET);
-        console.log('🔍 Auth middleware - User ID:', decoded.id, 'Path:', req.path);
+        console.log('🔍 Auth middleware - Decoded token:', decoded, 'Path:', req.path);
         
         const db = getDatabase();
         
-        // Check if this is a supplier token
-        if (decoded.type === 'supplier') {
+        // Check if this is a supplier token (new format)
+        if (decoded.supplierId) {
             // Fetch supplier information
+            const supplier = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT * FROM suppliers WHERE id = ?',
+                    [decoded.supplierId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            if (!supplier) {
+                throw new Error('Supplier not found');
+            }
+
+            // Set supplier as user with role 'supplier'
+            req.user = {
+                id: supplier.id,
+                supplierId: supplier.id,
+                role: 'supplier',
+                username: supplier.username,
+                businessEmail: supplier.business_email,
+                emailVerified: supplier.email_verified === 1,
+                registrationStep: supplier.registration_step,
+                status: supplier.status
+            };
+        } else if (decoded.type === 'supplier') {
+            // Legacy supplier token format
             const supplier = await new Promise((resolve, reject) => {
                 db.get(
                     'SELECT * FROM suppliers WHERE id = ?',
@@ -35,13 +63,12 @@ const auth = async (req, res, next) => {
                 throw new Error('Supplier not found');
             }
 
-            // Set supplier as user with role 'supplier'
             req.user = {
                 id: supplier.id,
+                supplierId: supplier.id,
                 role: 'supplier',
-                email: supplier.company_email,
-                company_name: supplier.company_name,
-                company_email: supplier.company_email,
+                username: supplier.username || 'legacy',
+                businessEmail: supplier.business_email || supplier.company_email,
                 status: supplier.status
             };
         } else {
@@ -59,7 +86,9 @@ const auth = async (req, res, next) => {
                         else resolve(row);
                     }
                 );
-            });            if (!user) {
+            });
+
+            if (!user) {
                 throw new Error('User not found');
             }
 

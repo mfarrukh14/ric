@@ -117,23 +117,205 @@ const initializeDatabase = async () => {
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS suppliers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_name TEXT NOT NULL,
-                company_email TEXT UNIQUE NOT NULL,
-                contact_person TEXT,
-                contact_number TEXT,
+                username TEXT UNIQUE NOT NULL,
+                business_email TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL,
-                company_statement TEXT NOT NULL,
-                company_mission TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected
-                professional_tax_cert TEXT, -- file path
-                ntn_document TEXT, -- file path
-                drug_sale_license TEXT, -- file path
-                pec_document TEXT, -- file path
-                gst_document TEXT, -- file path
+                email_verified INTEGER DEFAULT 0,
+                registration_step INTEGER DEFAULT 0, -- 0: pending initial OTP, 1-6: registration steps
+                status TEXT NOT NULL DEFAULT 'draft', -- draft, pending, approved, rejected
                 rejection_reason TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 approved_at DATETIME,
                 rejected_at DATETIME
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_business_profile table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_business_profile (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER UNIQUE NOT NULL,
+                business_entity_type TEXT,
+                business_category TEXT,
+                business_industry TEXT,
+                description TEXT,
+                iban_number TEXT,
+                business_name TEXT,
+                origin_classification TEXT, -- local, international
+                origin_country TEXT,
+                date_of_incorporation DATE,
+                website_url TEXT,
+                business_mobile_number TEXT,
+                business_fax_number TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_registration_bodies table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_registration_bodies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                registration_body TEXT NOT NULL,
+                registration_number TEXT NOT NULL,
+                registration_date DATE NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_documents table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                document_type TEXT NOT NULL, -- professional_tax_cert, ntn_document, drug_sale_license, pec_document, gst_document
+                file_path TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_addresses table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_addresses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                address_type TEXT NOT NULL, -- head_office, branch, warehouse, etc.
+                address_line_1 TEXT NOT NULL,
+                address_line_2 TEXT,
+                city TEXT NOT NULL,
+                state_province TEXT NOT NULL,
+                postal_code TEXT NOT NULL,
+                country TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_ppra_registrations table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_ppra_registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                ppra_type TEXT NOT NULL,
+                registration_number TEXT NOT NULL,
+                registration_date DATE NOT NULL,
+                expiry_date DATE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_past_experience table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_past_experience (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                project_title TEXT NOT NULL,
+                client_name TEXT NOT NULL,
+                work_type TEXT NOT NULL,
+                project_value TEXT,
+                duration TEXT,
+                start_date DATE,
+                end_date DATE,
+                status TEXT DEFAULT 'Completed',
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_client_references table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_client_references (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                contact_name TEXT NOT NULL,
+                organization TEXT NOT NULL,
+                position TEXT,
+                phone TEXT,
+                email TEXT,
+                relationship TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_work_proof_images table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_work_proof_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                image_url TEXT NOT NULL,
+                description TEXT,
+                project_reference TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_resubmission_feedback table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_resubmission_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                evaluator_id INTEGER NOT NULL,
+                evaluator_name TEXT NOT NULL,
+                failed_criteria TEXT NOT NULL, -- JSON string of failed criteria
+                overall_comment TEXT,
+                requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 1,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                FOREIGN KEY (evaluator_id) REFERENCES users (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_otp_verifications table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_otp_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER,
+                email TEXT NOT NULL,
+                otp_code TEXT NOT NULL,
+                otp_type TEXT NOT NULL, -- registration, email_verification
+                expires_at DATETIME NOT NULL,
+                verified INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();

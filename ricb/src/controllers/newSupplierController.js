@@ -70,7 +70,7 @@ const registerSupplier = async (req, res) => {
         // Generate JWT token
         const token = jwt.sign(
             { supplierId, username, businessEmail },
-            process.env.JWT_SECRET || 'your-secret-key',
+            process.env.JWT_SECRET || 'fallback_secret',
             { expiresIn: '24h' }
         );
 
@@ -130,16 +130,14 @@ const loginSupplier = async (req, res) => {
         // Generate JWT token
         const token = jwt.sign(
             { supplierId: supplier.id, username: supplier.username, businessEmail: supplier.business_email },
-            process.env.JWT_SECRET || 'your-secret-key',
+            process.env.JWT_SECRET || 'fallback_secret',
             { expiresIn: '24h' }
         );
 
-        // Check if supplier needs to complete registration or resubmit
-        if (supplier.registration_step < 6 || supplier.status === 'draft' || supplier.status === 'pending_resubmission') {
+        // Check if supplier needs to complete registration
+        if (supplier.registration_step < 6 || supplier.status === 'draft') {
             return res.json({
-                message: supplier.status === 'pending_resubmission' 
-                    ? 'Login successful. Please review feedback and resubmit your application.'
-                    : 'Login successful. Please complete your registration.',
+                message: 'Login successful. Please complete your registration.',
                 token,
                 supplier: {
                     id: supplier.id,
@@ -150,8 +148,7 @@ const loginSupplier = async (req, res) => {
                     status: supplier.status
                 },
                 requiresRegistration: true,
-                requiresEmailVerification: supplier.email_verified === 0,
-                isResubmission: supplier.status === 'pending_resubmission'
+                requiresEmailVerification: supplier.email_verified === 0
             });
         }
 
@@ -408,114 +405,7 @@ const saveRegistrationStep = async (req, res) => {
                 break;
 
             case 6:
-                // Save Past Experience (Step 6)
-                if (data.pastExperience && data.pastExperience.length > 0) {
-                    // Clear existing past experience
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_past_experience WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
-
-                    // Insert new past experience
-                    for (const experience of data.pastExperience) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_past_experience 
-                                 (supplier_id, project_title, client_name, work_type, project_value, duration, start_date, end_date, status, description) 
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    experience.projectTitle,
-                                    experience.clientName,
-                                    experience.workType,
-                                    experience.projectValue || null,
-                                    experience.duration || null,
-                                    experience.startDate || null,
-                                    experience.endDate || null,
-                                    experience.status || 'Completed',
-                                    experience.description || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
-                    }
-                }
-
-                // Save Client References
-                if (data.clientReferences && data.clientReferences.length > 0) {
-                    // Clear existing client references
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_client_references WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
-
-                    // Insert new client references
-                    for (const reference of data.clientReferences) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_client_references 
-                                 (supplier_id, contact_name, organization, position, phone, email, relationship) 
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    reference.contactName,
-                                    reference.organization,
-                                    reference.position || null,
-                                    reference.phone || null,
-                                    reference.email || null,
-                                    reference.relationship || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
-                    }
-                }
-
-                // Save Work Proof Images (for now just store URLs/paths)
-                if (data.workProofImages && data.workProofImages.length > 0) {
-                    // Clear existing work proof images
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_work_proof_images WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
-
-                    // Insert new work proof images
-                    for (const image of data.workProofImages) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_work_proof_images 
-                                 (supplier_id, image_url, description, project_reference) 
-                                 VALUES (?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    image.preview || image.file?.name || 'uploaded_image',
-                                    image.description || null,
-                                    image.project_reference || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
-                    }
-                }
-                break;
-
-            case 7:
-                // Save PPRA registrations (Step 7)
+                // Save PPRA registrations
                 if (data.ppraRegistrations && data.ppraRegistrations.length > 0) {
                     // Clear existing PPRA registrations
                     await new Promise((resolve, reject) => {
@@ -604,16 +494,6 @@ const submitApplication = async (req, res) => {
             }
         }
 
-        // Check if this is a resubmission before updating status
-        const currentSupplier = await new Promise((resolve, reject) => {
-            db.get('SELECT status FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        const isResubmission = currentSupplier && currentSupplier.status === 'pending_resubmission';
-
         // Update supplier status to pending and registration step to 6
         await new Promise((resolve, reject) => {
             db.run(
@@ -625,12 +505,8 @@ const submitApplication = async (req, res) => {
                 }
             );
         });
-        
-        res.json({ 
-            message: isResubmission 
-                ? 'Application resubmitted successfully and is now pending review' 
-                : 'Application submitted successfully and is now pending approval' 
-        });
+
+        res.json({ message: 'Application submitted successfully and is now pending approval' });
 
     } catch (error) {
         console.error('Submit application error:', error);
@@ -656,7 +532,7 @@ const getPendingSuppliers = async (req, res) => {
                     s.created_at
                  FROM suppliers s 
                  LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id 
-                 WHERE s.status IN ('pending', 'pending_resubmission') 
+                 WHERE s.status = 'pending' 
                  ORDER BY s.created_at DESC`,
                 (err, rows) => {
                     if (err) reject(err);
@@ -765,19 +641,6 @@ const submitEvaluation = async (req, res) => {
         const status = action === 'approve' ? 'approved' : 'rejected';
         const timestamp = new Date().toISOString();
 
-        // First, get supplier details for email
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        if (!supplier) {
-            return res.status(404).json({ error: 'Supplier not found' });
-        }
-
-        // Update supplier status
         await new Promise((resolve, reject) => {
             db.run(
                 `UPDATE suppliers SET status = ?, rejection_reason = ?, 
@@ -790,50 +653,6 @@ const submitEvaluation = async (req, res) => {
                 }
             );
         });
-
-        // Send email notification
-        try {
-            const EmailService = require('../utils/emailService');
-            const emailService = new EmailService();
-            
-            const subject = action === 'approve' 
-                ? 'Supplier Registration Approved - Welcome to RIC Portal'
-                : 'Supplier Registration Status Update';
-            
-            const message = action === 'approve' 
-                ? `Dear ${supplier.username},
-
-We are pleased to inform you that your supplier registration with Rawalpindi Institute of Cardiology has been APPROVED.
-
-You can now:
-• Access your supplier dashboard
-• View and participate in active tenders
-• Update your company profile
-• Manage your bids and applications
-
-Please log in to your supplier portal to get started: ${process.env.FRONTEND_URL || 'http://localhost:5173'}
-
-Welcome to the RIC Supplier Network!
-
-Best regards,
-RIC Procurement Team`
-                : `Dear ${supplier.username},
-
-We regret to inform you that your supplier registration with Rawalpindi Institute of Cardiology has been REJECTED.
-
-Reason: ${rejectionReason}
-
-If you believe this is an error or would like to reapply, please contact our support team.
-
-Best regards,
-RIC Procurement Team`;
-
-            await emailService.sendEmail(supplier.business_email, subject, message);
-            console.log(`${action} email sent to ${supplier.business_email}`);
-        } catch (emailError) {
-            console.error('Failed to send email notification:', emailError);
-            // Don't fail the whole operation if email fails
-        }
 
         res.json({ 
             message: `Supplier ${action}d successfully`,
@@ -928,19 +747,16 @@ const resendOTP = sendEmailOTP;
 
 // Get comprehensive supplier data for evaluation
 const getComprehensiveSupplierData = async (req, res) => {
-    const { id } = req.params;
+    const { id } = req.params; // Changed from supplierId to id to match route
     console.log('Getting comprehensive data for supplier ID:', id);
     const db = getDatabase();
 
     try {
         // Get supplier basic information
         console.log('Querying supplier basic info...');
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const supplier = db.prepare(`
+            SELECT * FROM suppliers WHERE id = ?
+        `).get(id);
         console.log('Supplier result:', supplier);
 
         if (!supplier) {
@@ -950,12 +766,9 @@ const getComprehensiveSupplierData = async (req, res) => {
 
         // Get business profile
         console.log('Querying business profile...');
-        const businessProfileRaw = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const businessProfileRaw = db.prepare(`
+            SELECT * FROM supplier_business_profile WHERE supplier_id = ?
+        `).get(id);
         console.log('Business profile raw result:', businessProfileRaw);
         
         // Map business profile to expected format
@@ -965,12 +778,11 @@ const getComprehensiveSupplierData = async (req, res) => {
             business_category: businessProfileRaw.business_category || '',
             business_subcategory: businessProfileRaw.business_industry || '',
             business_description: businessProfileRaw.description || '',
-            business_tax_id: businessProfileRaw.iban_number || '',
+            business_tax_id: businessProfileRaw.iban_number || '', // Mapping IBAN to tax ID for now
             business_registration_number: businessProfileRaw.iban_number || '',
             origin_classification: businessProfileRaw.origin_classification || '',
             country_of_origin: businessProfileRaw.origin_country || '',
             date_of_establishment: businessProfileRaw.date_of_incorporation || '',
-            website_url: businessProfileRaw.website_url || '',
             contact_person_name: 'N/A', // Not available in current schema
             phone_number: businessProfileRaw.business_mobile_number || '',
             alternate_phone: businessProfileRaw.business_fax_number || ''
@@ -978,16 +790,13 @@ const getComprehensiveSupplierData = async (req, res) => {
 
         // Get addresses
         console.log('Querying addresses...');
-        const addressesRaw = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const addressesRaw = db.prepare(`
+            SELECT * FROM supplier_addresses WHERE supplier_id = ?
+        `).all(id);
         console.log('Addresses raw result:', addressesRaw);
         
-        // Map addresses to expected format
-        const addresses = Array.isArray(addressesRaw) ? addressesRaw
+        // Map addresses to expected format (filter out null values and add null checks)
+        const addresses = (addressesRaw || [])
             .filter(addr => addr !== null && addr !== undefined)
             .map(addr => ({
                 address_type: addr.address_type || '',
@@ -996,117 +805,57 @@ const getComprehensiveSupplierData = async (req, res) => {
                 state: addr.state_province || '',
                 postal_code: addr.postal_code || '',
                 country: addr.country || ''
-            })) : [];
+            }));
 
         // Get documents
         console.log('Querying documents...');
-        const documentsRaw = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_documents WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Documents result:', documentsRaw);
-        
-        // Map documents to expected format
-        const documents = Array.isArray(documentsRaw) ? documentsRaw
-            .filter(doc => doc !== null && doc !== undefined)
-            .map(doc => ({
-                document_type: doc.document_type || '',
-                file_path: doc.file_path || '',
-                original_name: doc.original_name || '',
-                uploaded_at: doc.uploaded_at || ''
-            })) : [];
+        const documents = db.prepare(`
+            SELECT * FROM supplier_documents WHERE supplier_id = ?
+        `).all(id);
+        console.log('Documents result:', documents);
 
         // Get registration bodies
         console.log('Querying registration bodies...');
-        const registrationBodies = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const registrationBodies = db.prepare(`
+            SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?
+        `).all(id);
         console.log('Registration bodies result:', registrationBodies);
 
         // Get PPRA registrations
         console.log('Querying PPRA registrations...');
-        const ppraRegistrations = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const ppraRegistrations = db.prepare(`
+            SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?
+        `).all(id);
         console.log('PPRA registrations result:', ppraRegistrations);
-
-        // Get past experience
-        console.log('Querying past experience...');
-        const pastExperience = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_past_experience WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Past experience result:', pastExperience);
-
-        // Get client references
-        console.log('Querying client references...');
-        const clientReferences = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_client_references WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Client references result:', clientReferences);
-
-        // Get work proof images
-        console.log('Querying work proof images...');
-        const workProofImages = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_work_proof_images WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Work proof images result:', workProofImages);
 
         // Get existing evaluations
         console.log('Querying evaluations...');
-        const evaluations = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT 
-                    se.*,
-                    u.username as evaluator_name
-                FROM supplier_evaluations se
-                LEFT JOIN users u ON se.evaluator_id = u.id
-                WHERE se.supplier_id = ?
-                ORDER BY se.created_at DESC
-            `, [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const evaluations = db.prepare(`
+            SELECT 
+                se.*,
+                u.username as evaluator_name
+            FROM supplier_evaluations se
+            LEFT JOIN users u ON se.evaluator_id = u.id
+            WHERE se.supplier_id = ?
+            ORDER BY se.created_at DESC
+        `).all(id);
         console.log('Evaluations result:', evaluations);
 
-        // Get committee count for progress tracking
+        // Get committee count for progress tracking (assuming committee members are users with role = 'committee')
         console.log('Querying committee count...');
-        const committeeCount = await new Promise((resolve, reject) => {
-            db.get('SELECT COUNT(*) as count FROM users WHERE role = ?', ['committee'], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const committeeCount = db.prepare(`
+            SELECT COUNT(*) as count FROM users WHERE role = 'committee'
+        `).get();
         console.log('Committee count result:', committeeCount);
 
         const comprehensiveData = {
             supplier: supplier || null,
             businessProfile: businessProfile || null,
-            addresses: Array.isArray(addresses) ? addresses : [],
-            documents: Array.isArray(documents) ? documents : [],
-            registrationBodies: Array.isArray(registrationBodies) ? registrationBodies.filter(body => body !== null && body !== undefined) : [],
-            ppraRegistrations: Array.isArray(ppraRegistrations) ? ppraRegistrations.filter(ppra => ppra !== null && ppra !== undefined) : [],
-            pastExperience: Array.isArray(pastExperience) ? pastExperience.filter(exp => exp !== null && exp !== undefined) : [],
-            clientReferences: Array.isArray(clientReferences) ? clientReferences.filter(ref => ref !== null && ref !== undefined) : [],
-            workProofImages: Array.isArray(workProofImages) ? workProofImages.filter(img => img !== null && img !== undefined) : [],
-            evaluations: Array.isArray(evaluations) ? evaluations.filter(eval => eval !== null && eval !== undefined) : [],
+            addresses: addresses || [],
+            documents: (documents || []).filter(doc => doc !== null && doc !== undefined),
+            registrationBodies: (registrationBodies || []).filter(body => body !== null && body !== undefined),
+            ppraRegistrations: (ppraRegistrations || []).filter(ppra => ppra !== null && ppra !== undefined),
+            evaluations: (evaluations || []).filter(eval => eval !== null && eval !== undefined),
             committeeCount: committeeCount?.count || 0
         };
 
@@ -1119,330 +868,61 @@ const getComprehensiveSupplierData = async (req, res) => {
     }
 };
 
-// Get supplier registration data for autofilling forms
-const getSupplierRegistrationData = async (req, res) => {
-    console.log('🔍 getSupplierRegistrationData called');
-    console.log('👤 req.user:', req.user);
-    console.log('📋 req.params:', req.params);
-    
-    const supplierId = req.user?.supplierId || req.params.supplierId;
-    
-    console.log('🔢 Resolved supplierId:', supplierId);
-    
-    if (!supplierId) {
-        console.log('❌ No supplier ID found');
-        return res.status(400).json({ error: 'Supplier ID is required' });
-    }
-
-    const db = getDatabase();
-
-    try {
-        console.log('Fetching registration data for supplier ID:', supplierId);
-
-        // Get supplier basic info
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        if (!supplier) {
-            return res.status(404).json({ error: 'Supplier not found' });
-        }
-
-        // Get business profile
-        const businessProfile = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        // Get registration bodies
-        const registrationBodies = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Get addresses
-        const addresses = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Get PPRA registrations
-        const ppraRegistrations = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Get past experience
-        const pastExperience = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_past_experience WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Get client references
-        const clientReferences = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_client_references WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Get work proof images
-        const workProofImages = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_work_proof_images WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Get resubmission feedback
-        const resubmissionFeedback = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_resubmission_feedback WHERE supplier_id = ? AND is_active = 1 ORDER BY requested_at DESC', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        // Get documents
-        const documents = await new Promise((resolve, reject) => {
-            db.all('SELECT document_type, file_path, original_name FROM supplier_documents WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        // Format the data for the frontend form
-        const formattedData = {
-            businessProfile: businessProfile ? {
-                businessEntityType: businessProfile.business_entity_type || '',
-                businessCategory: businessProfile.business_category || '',
-                businessIndustry: businessProfile.business_industry || '',
-                description: businessProfile.description || '',
-                ibanNumber: businessProfile.iban_number || '',
-                businessName: businessProfile.business_name || '',
-                originClassification: businessProfile.origin_classification || '',
-                originCountry: businessProfile.origin_country || '',
-                dateOfIncorporation: businessProfile.date_of_incorporation || '',
-                websiteUrl: businessProfile.website_url || '',
-                businessMobileNumber: businessProfile.business_mobile_number || '',
-                businessFaxNumber: businessProfile.business_fax_number || ''
-            } : null,
-            registrationBodies: (registrationBodies || []).map(body => ({
-                id: body.id,
-                registrationBody: body.registration_body,
-                registrationNumber: body.registration_number,
-                registrationDate: body.registration_date
-            })),
-            addresses: (addresses || []).map(addr => ({
-                id: addr.id,
-                addressType: addr.address_type,
-                addressLine1: addr.address_line_1,
-                addressLine2: addr.address_line_2,
-                city: addr.city,
-                stateProvince: addr.state_province,
-                postalCode: addr.postal_code,
-                country: addr.country
-            })),
-            ppraRegistrations: (ppraRegistrations || []).map(ppra => ({
-                id: ppra.id,
-                ppraType: ppra.ppra_type,
-                registrationNumber: ppra.registration_number,
-                registrationDate: ppra.registration_date,
-                expiryDate: ppra.expiry_date
-            })),
-            pastExperience: (pastExperience || []).map(exp => ({
-                id: exp.id,
-                projectTitle: exp.project_title,
-                clientName: exp.client_name,
-                workType: exp.work_type,
-                projectValue: exp.project_value,
-                duration: exp.duration,
-                startDate: exp.start_date,
-                endDate: exp.end_date,
-                status: exp.status,
-                description: exp.description
-            })),
-            clientReferences: (clientReferences || []).map(ref => ({
-                id: ref.id,
-                contactName: ref.contact_name,
-                organization: ref.organization,
-                position: ref.position,
-                phone: ref.phone,
-                email: ref.email,
-                relationship: ref.relationship
-            })),
-            workProofImages: (workProofImages || []).map(img => ({
-                id: img.id,
-                imageUrl: img.image_url,
-                description: img.description,
-                projectReference: img.project_reference
-            })),
-            documents: (documents || []).reduce((acc, doc) => {
-                acc[doc.document_type] = {
-                    fileName: doc.original_name,
-                    filePath: doc.file_path
-                };
-                return acc;
-            }, {}),
-            resubmissionFeedback: resubmissionFeedback ? {
-                ...JSON.parse(resubmissionFeedback.failed_criteria),
-                evaluatorName: resubmissionFeedback.evaluator_name,
-                requestedAt: resubmissionFeedback.requested_at,
-                overallComment: resubmissionFeedback.overall_comment
-            } : null,
-            supplier: {
-                id: supplier.id,
-                username: supplier.username,
-                businessEmail: supplier.business_email,
-                emailVerified: supplier.email_verified === 1,
-                registrationStep: supplier.registration_step,
-                status: supplier.status
-            }
-        };
-
-        console.log('Registration data fetched successfully');
-        res.json(formattedData);
-
-    } catch (error) {
-        console.error('Error fetching supplier registration data:', error);
-        res.status(500).json({ error: 'Failed to fetch registration data' });
-    }
-};
-
 // Request resubmission from supplier
 const requestResubmission = async (req, res) => {
     const { supplierId } = req.params;
-    const { issues, additionalMessage, failedCriteria } = req.body;
+    const { issues, additionalMessage } = req.body;
     const evaluatorId = req.user.id;
-    const evaluatorName = req.user.username || req.user.name || 'Evaluation Committee';
     const db = getDatabase();
 
     try {
-        console.log('Resubmission request data:', { supplierId, issues, additionalMessage, failedCriteria });
-
         // Get supplier information
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const supplier = db.prepare(`
+            SELECT * FROM suppliers WHERE id = ?
+        `).get(supplierId);
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
         // Get business profile for email
-        const businessProfile = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const businessProfile = db.prepare(`
+            SELECT * FROM supplier_business_profile WHERE supplier_id = ?
+        `).get(supplierId);
 
         // Update supplier status to pending_resubmission
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE suppliers SET status = ? WHERE id = ?', ['pending_resubmission', supplierId], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+        db.prepare(`
+            UPDATE suppliers 
+            SET status = 'pending_resubmission', 
+                updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        `).run(supplierId);
 
-        // Store detailed resubmission feedback
-        const feedbackData = {
-            failedCriteria: failedCriteria || [],
-            issues: issues || [],
-            additionalMessage: additionalMessage || '',
-            evaluatorName: evaluatorName,
-            requestedAt: new Date().toISOString()
-        };
-
-        // Clear any existing active feedback for this supplier
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE supplier_resubmission_feedback SET is_active = 0 WHERE supplier_id = ?', [supplierId], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        // Insert new feedback
-        await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO supplier_resubmission_feedback 
-                 (supplier_id, evaluator_id, evaluator_name, failed_criteria, overall_comment, is_active) 
-                 VALUES (?, ?, ?, ?, ?, 1)`,
-                [
-                    supplierId,
-                    evaluatorId,
-                    evaluatorName,
-                    JSON.stringify(feedbackData),
-                    additionalMessage || null
-                ],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
-
-        // Log the resubmission request in evaluations table
-        await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT OR REPLACE INTO supplier_evaluations (
-                    supplier_id, 
-                    evaluator_id, 
-                    status, 
-                    comments,
-                    created_at
-                ) VALUES (?, ?, 'resubmission_requested', ?, CURRENT_TIMESTAMP)`,
-                [
-                    supplierId, 
-                    evaluatorId, 
-                    `Resubmission requested: ${additionalMessage || 'Please review and resubmit application'}`
-                ],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        // Log the resubmission request
+        db.prepare(`
+            INSERT INTO supplier_evaluations (
+                supplier_id, 
+                evaluator_id, 
+                status, 
+                comments,
+                created_at
+            ) VALUES (?, ?, 'resubmission_requested', ?, CURRENT_TIMESTAMP)
+        `).run(
+            supplierId, 
+            evaluatorId, 
+            `Resubmission requested: ${additionalMessage || 'Please review and resubmit application'}`
+        );
 
         // Send email notification to supplier
         try {
             const EmailService = require('../utils/emailService');
             const emailService = new EmailService();
-            
-            // Use the business_email field (the only email field that exists)
-            const supplierEmail = supplier.business_email;
-            
-            if (!supplierEmail) {
-                console.warn('No email address found for supplier:', supplierId);
-                return res.json({ 
-                    message: 'Resubmission request logged successfully, but no email sent (no email address on file)',
-                    status: 'pending_resubmission'
-                });
-            }
-            
-            console.log('Sending resubmission email to:', supplierEmail);
             await emailService.sendSupplierResubmissionEmail(
-                supplierEmail,
-                businessProfile?.business_name || supplier.username || 'Supplier',
+                supplier.business_email || supplier.company_email,
+                businessProfile?.business_name || supplier.company_name,
                 issues || [],
                 additionalMessage || ''
             );
-            console.log('Resubmission email sent successfully');
         } catch (emailError) {
             console.error('Failed to send resubmission email:', emailError);
             // Don't fail the request if email fails
@@ -1480,6 +960,5 @@ module.exports = {
     completeRegistration,
     resendOTP,
     getComprehensiveSupplierData,
-    getSupplierRegistrationData,
     requestResubmission
 };

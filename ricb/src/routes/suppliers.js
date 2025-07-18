@@ -4,20 +4,28 @@ const path = require('path');
 const fs = require('fs');
 const auth = require('../middleware/auth');
 const {
-    sendRegistrationOTP,
-    verifyEmailOTP,
-    verifySMSOTP,
-    completeRegistration,
-    resendOTP,
-    legacyRegisterSupplier,
+    registerSupplier,
     loginSupplier,
+    sendEmailOTP,
+    verifyEmailOTP,
+    saveRegistrationStep,
+    submitApplication,
     getPendingSuppliers,
     getSupplierDetails,
     submitEvaluation,
     downloadDocument,
     getActiveTenders,
     submitBid,
-    getSupplierBids
+    getSupplierBids,
+    getComprehensiveSupplierData,
+    getSupplierRegistrationData,
+    requestResubmission,
+    // Legacy functions for backward compatibility
+    sendRegistrationOTP,
+    verifySMSOTP,
+    completeRegistration,
+    resendOTP,
+    legacyRegisterSupplier
 } = require('../controllers/supplierController');
 
 const router = express.Router();
@@ -74,21 +82,30 @@ const uploadBidFields = upload.fields([
 ]);
 
 // Public routes
+router.post('/register', registerSupplier);
+router.post('/login', loginSupplier);
+router.post('/send-email-otp', sendEmailOTP);
+router.post('/verify-email-otp', verifyEmailOTP);
+router.post('/registration/save-step', saveRegistrationStep);
+router.post('/registration/submit', uploadRegistrationFields, submitApplication);
+
+// Legacy routes for backward compatibility
 router.post('/register/send-otp', uploadRegistrationFields, sendRegistrationOTP);
 router.post('/register/verify-email-otp', verifyEmailOTP);
 router.post('/register/verify-sms-otp', verifySMSOTP);
 router.post('/register/complete', completeRegistration);
 router.post('/register/resend-otp', resendOTP);
-router.post('/login', loginSupplier);
 
 // Protected routes (for evaluation committee)
 router.get('/pending', auth, getPendingSuppliers);
-router.get('/:id', auth, getSupplierDetails);
-router.post('/:supplierId/evaluate', auth, submitEvaluation);
-router.get('/:supplierId/document/:documentType', auth, downloadDocument);
-
-// Get active tenders for suppliers
+router.get('/registration-data', auth, getSupplierRegistrationData);
 router.get('/tenders/active', auth, getActiveTenders);
+router.get('/:id', auth, getSupplierDetails);
+router.get('/:id/comprehensive', auth, getComprehensiveSupplierData);
+router.get('/:supplierId/registration-data', auth, getSupplierRegistrationData);
+router.post('/:supplierId/evaluate', auth, submitEvaluation);
+router.post('/:supplierId/request-resubmit', auth, requestResubmission);
+router.get('/:supplierId/document/:documentType', auth, downloadDocument);
 
 // Submit bid for a tender
 router.post('/tenders/:tenderId/bid', auth, uploadBidFields, submitBid);
@@ -120,6 +137,9 @@ router.post('/test-email', auth, async (req, res) => {
         res.status(500).json({ error: 'Failed to send test email: ' + error.message });
     }
 });
+
+// Test route without authentication for debugging
+router.get('/test-comprehensive/:id', getComprehensiveSupplierData);
 
 // Error handling middleware for multer errors
 router.use((error, req, res, next) => {

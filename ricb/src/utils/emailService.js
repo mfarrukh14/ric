@@ -1961,6 +1961,132 @@ class EmailService {
             </html>
         `;
     }
+
+    // Send supplier resubmission request email
+    async sendSupplierResubmissionEmail(supplierEmail, companyName, issues, additionalMessage) {
+        const htmlContent = this.generateResubmissionEmailHTML(companyName, issues, additionalMessage);
+
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: 'Action Required: Resubmission Request - RIC Supplier Registration',
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Resubmission email sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending resubmission email:', error);
+            throw error;
+        }
+    }
+
+    generateResubmissionEmailHTML(companyName, issues, additionalMessage) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        let issuesHTML = '';
+        if (issues && issues.length > 0) {
+            issuesHTML = `
+                <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                    <h3 style="color: #856404; margin: 0 0 10px 0; font-size: 16px;">Issues to Address:</h3>
+                    <ul style="margin: 0; padding-left: 20px; color: #856404;">
+                        ${issues.map(issue => `
+                            <li style="margin-bottom: 8px;">
+                                <strong>${issue.title}:</strong> ${issue.description}
+                                ${issue.comments ? `<br><em style="color: #6c757d;">${issue.comments}</em>` : ''}
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
+        return `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Resubmission Required</title>
+            </head>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+                    <h1 style="margin: 0; font-size: 28px; font-weight: bold;">Resubmission Required</h1>
+                    <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">RIC E-Tender System</p>
+                </div>
+                
+                <div style="background-color: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+                    <p style="margin: 0 0 20px 0; font-size: 16px;">Dear <strong>${companyName}</strong>,</p>
+                    
+                    <p style="margin: 0 0 20px 0;">We have reviewed your supplier registration application and require some additional information or corrections before we can proceed with the approval process.</p>
+                    
+                    ${issuesHTML}
+                    
+                    ${additionalMessage ? `
+                        <div style="background-color: #e7f3ff; border: 1px solid #b6d4fe; border-radius: 6px; padding: 15px; margin: 20px 0;">
+                            <h3 style="color: #004085; margin: 0 0 10px 0; font-size: 16px;">Additional Instructions:</h3>
+                            <p style="margin: 0; color: #004085;">${additionalMessage}</p>
+                        </div>
+                    ` : ''}
+                    
+                    <div style="background-color: #ffffff; border: 1px solid #dee2e6; border-radius: 6px; padding: 20px; margin: 20px 0;">
+                        <h3 style="color: #333; margin: 0 0 15px 0; font-size: 18px;">What You Need to Do:</h3>
+                        <ol style="margin: 0; padding-left: 20px; color: #333;">
+                            <li style="margin-bottom: 8px;">Log in to your supplier portal</li>
+                            <li style="margin-bottom: 8px;">Update your application with the required information</li>
+                            <li style="margin-bottom: 8px;">Upload any missing or corrected documents</li>
+                            <li style="margin-bottom: 8px;">Resubmit your application for review</li>
+                        </ol>
+                    </div>
+                    
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/supplier/login" 
+                           style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block; font-size: 16px;">
+                            Access Supplier Portal
+                        </a>
+                    </div>
+                    
+                    <div style="border-top: 1px solid #dee2e6; padding-top: 20px; margin-top: 30px;">
+                        <p style="margin: 0 0 10px 0; font-size: 14px; color: #6c757d;">
+                            <strong>Important:</strong> Please address all the issues mentioned above and resubmit your application as soon as possible. If you have any questions, please contact our support team.
+                        </p>
+                        
+                        <p style="margin: 0; font-size: 14px; color: #6c757d;">
+                            This is an automated message from the RIC E-Tender System. Please do not reply to this email.
+                        </p>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #dee2e6;">
+                        <p style="margin: 0; font-size: 12px; color: #6c757d;">
+                            © ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.
+                        </p>
+                        <p style="margin: 5px 0 0 0; font-size: 12px; color: #6c757d;">
+                            Date: ${currentDate}
+                        </p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `;
+    }
 }
 
+// Create instance and export common functions
+const emailService = new EmailService();
+
+const sendOTPEmail = async (email, otp, companyName = '') => {
+    return await emailService.sendOTPEmail(email, otp, companyName);
+};
+
 module.exports = EmailService;
+module.exports.sendOTPEmail = sendOTPEmail;

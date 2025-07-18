@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'http://192.168.1.19:5000/api';
+const API_URL = 'http://localhost:5000/api';
 
 const api = axios.create({
     baseURL: API_URL,
@@ -280,6 +280,61 @@ export const updateItemName = async (id, itemNameData) => {
 export const deleteItemName = async (id) => {
     const response = await api.delete(`/items/names/${id}`);
     return response.data;
+};
+
+// Supplier Registration
+export const registerSupplier = async (supplierData) => {
+    try {
+        const response = await api.post('/suppliers/register', supplierData);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const loginSupplier = async (username, password) => {
+    try {
+        const response = await api.post('/suppliers/login', { username, password });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const sendEmailOTP = async (email) => {
+    try {
+        const response = await api.post('/suppliers/send-email-otp', { email });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const verifyEmailOTP = async (email, otp) => {
+    try {
+        const response = await api.post('/suppliers/verify-email-otp', { email, otp });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const saveRegistrationStep = async (stepData) => {
+    try {
+        const response = await api.post('/suppliers/save-step', stepData);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
+};
+
+export const submitSupplierApplication = async (applicationData) => {
+    try {
+        const response = await api.post('/suppliers/submit-application', applicationData);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Network error' };
+    }
 };
 
 // Export API URL for direct fetch calls if needed

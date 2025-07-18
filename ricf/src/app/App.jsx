@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import '../index.css';
 import Login from '../components/auth/Login/Login';
 import SupplierRegister from '../components/auth/SupplierRegister';
@@ -14,14 +14,12 @@ import CreateDemandForm from '../components/demand/CreateDemandForm';
 import FulfillmentPage from '../components/store/FulfillmentPage';
 import Header from '../components/layout/header/Header';
 
-const ProtectedRoute = ({ children, allowedRoles }) => {
-  const user = JSON.parse(localStorage.getItem('user'));
-
-  if (!user) {
+const ProtectedRoute = ({ children, allowedRoles, currentUser }) => {
+  if (!currentUser) {
     return <Navigate to="/login" replace />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
+  if (allowedRoles && !allowedRoles.includes(currentUser.role)) {
     return <Navigate to="/" replace />;
   }
 
@@ -30,19 +28,42 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
+    try {
+      const storedUser = localStorage.getItem('user');
+      if (storedUser) {
+        setUser(JSON.parse(storedUser));
+      }
+    } catch (error) {
+      console.error('Error parsing user data:', error);
+      localStorage.removeItem('user');
+    } finally {
+      setLoading(false);
     }
+  }, []); // Empty dependency array to prevent infinite loops
+
+  const handleLogin = useCallback((newUser) => {
+    setUser(newUser);
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('user');
     localStorage.removeItem('token');
     setUser(null);
-  };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Router>
@@ -56,7 +77,7 @@ function App() {
               user ? (
                 <Navigate to="/" replace />
               ) : (
-                <Login onLogin={setUser} /> 
+                <Login onLogin={handleLogin} /> 
               )
             }
           />
@@ -73,7 +94,7 @@ function App() {
           <Route
             path="/admin"
             element={
-              <ProtectedRoute allowedRoles={['superadmin']}>
+              <ProtectedRoute allowedRoles={['superadmin']} currentUser={user}>
                 <AdminDashboard />
               </ProtectedRoute>
             }
@@ -81,7 +102,7 @@ function App() {
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute currentUser={user}>
                 <UserDashboard />
               </ProtectedRoute>
             }
@@ -89,7 +110,7 @@ function App() {
           <Route
             path="/committee/technical-evaluation"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute currentUser={user}>
                 <TechnicalEvaluation />
               </ProtectedRoute>
             }
@@ -97,7 +118,7 @@ function App() {
           <Route
             path="/committee/technical-evaluation/:tenderId/evaluate"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute currentUser={user}>
                 <ItemWiseEvaluation />
               </ProtectedRoute>
             }
@@ -105,7 +126,7 @@ function App() {
           <Route
             path="/committee/grievance"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute currentUser={user}>
                 <GrievanceCommitteeNew />
               </ProtectedRoute>
             }
@@ -113,7 +134,7 @@ function App() {
           <Route
             path="/supplier-dashboard"
             element={
-              <ProtectedRoute allowedRoles={['supplier']}>
+              <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
                 <SupplierDashboard />
               </ProtectedRoute>
             }
@@ -121,7 +142,7 @@ function App() {
           <Route
             path="/supplier/apply-bid/:tenderId"
             element={
-              <ProtectedRoute allowedRoles={['supplier']}>
+              <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
                 <BidApplication />
               </ProtectedRoute>
             }
@@ -129,7 +150,7 @@ function App() {
           <Route
             path="/create-demand"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute currentUser={user}>
                 <CreateDemandForm />
               </ProtectedRoute>
             }
@@ -137,7 +158,7 @@ function App() {
           <Route
             path="/store/fulfillment/:demandId"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute currentUser={user}>
                 <FulfillmentPage />
               </ProtectedRoute>
             }
