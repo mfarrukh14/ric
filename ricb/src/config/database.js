@@ -461,6 +461,7 @@ const initializeDatabase = async () => {
                 quantity INTEGER NOT NULL,
                 estimated_cost DECIMAL(10,2) NOT NULL,
                 remarks TEXT,
+                specifications TEXT,
                 unit TEXT DEFAULT 'pieces',
                 store_available_quantity INTEGER DEFAULT 0,
                 store_status TEXT DEFAULT 'pending', -- pending, available, partial, not_available
@@ -1450,6 +1451,408 @@ const runMigrations = async () => {
                     console.log('contact_person_name column already exists');
                     resolve();
                 }
+            });
+        });
+
+        // Migration 9: Create detailed item categorization tables
+        await new Promise((resolve, reject) => {
+            console.log('Creating detailed item categorization tables...');
+            
+            // Create drug categories table (for medicine items)
+            db.run(`CREATE TABLE IF NOT EXISTS drug_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating drug_categories table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created drug_categories table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create drug names table
+            db.run(`CREATE TABLE IF NOT EXISTS drug_names (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                drug_category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (drug_category_id) REFERENCES drug_categories (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating drug_names table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created drug_names table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create strength units table
+            db.run(`CREATE TABLE IF NOT EXISTS strength_units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                abbreviation TEXT NOT NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating strength_units table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created strength_units table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create dosage forms table
+            db.run(`CREATE TABLE IF NOT EXISTS dosage_forms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating dosage_forms table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created dosage_forms table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create preparations table
+            db.run(`CREATE TABLE IF NOT EXISTS preparations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating preparations table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created preparations table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create equipment categories table (for medical equipment items)
+            db.run(`CREATE TABLE IF NOT EXISTS equipment_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating equipment_categories table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created equipment_categories table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create equipment types table
+            db.run(`CREATE TABLE IF NOT EXISTS equipment_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                equipment_category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (equipment_category_id) REFERENCES equipment_categories (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating equipment_types table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created equipment_types table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 10: Update demand_items table structure for detailed categorization
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demand_items)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const needsDetailedColumns = !columnNames.includes('drug_category_id');
+                
+                if (needsDetailedColumns) {
+                    console.log('Adding detailed categorization columns to demand_items table...');
+                    
+                    // Add all new columns for detailed item categorization
+                    const alterQueries = [
+                        "ALTER TABLE demand_items ADD COLUMN drug_category_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN drug_name_id INTEGER", 
+                        "ALTER TABLE demand_items ADD COLUMN strength_value DECIMAL(10,2)",
+                        "ALTER TABLE demand_items ADD COLUMN strength_unit_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN dosage_form_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN preparation_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN equipment_category_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN equipment_type_id INTEGER"
+                    ];
+                    
+                    let completed = 0;
+                    
+                    alterQueries.forEach((query, index) => {
+                        db.run(query, (err) => {
+                            if (err) {
+                                console.error(`Error executing query ${query}:`, err);
+                                reject(err);
+                            } else {
+                                completed++;
+                                if (completed === alterQueries.length) {
+                                    console.log('Successfully added detailed categorization columns');
+                                    resolve();
+                                }
+                            }
+                        });
+                    });
+                } else {
+                    console.log('Detailed categorization columns already exist');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 11: Insert default drug categories and related data
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default drug categories...');
+            
+            const drugCategories = [
+                { name: 'Nitrates', description: 'Vasodilators for heart conditions' },
+                { name: 'Beta-blockers', description: 'Heart rate and blood pressure medications' },
+                { name: 'Calcium-antagonists', description: 'Calcium channel blockers' },
+                { name: 'ACE inhibitors', description: 'Angiotensin-converting enzyme inhibitors' },
+                { name: 'Antibiotics', description: 'Anti-bacterial medications' },
+                { name: 'Analgesics', description: 'Pain relief medications' },
+                { name: 'Anti-inflammatory', description: 'Anti-inflammatory medications' }
+            ];
+            
+            let insertedCategories = 0;
+            
+            drugCategories.forEach(category => {
+                db.run(
+                    'INSERT OR IGNORE INTO drug_categories (name, description) VALUES (?, ?)',
+                    [category.name, category.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting drug category ${category.name}:`, err);
+                        } else {
+                            insertedCategories++;
+                            if (insertedCategories === drugCategories.length) {
+                                console.log('Successfully inserted default drug categories');
+                                resolve();
+                            }
+                        }
+                    }
+                );
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default drug names...');
+            
+            // First get the drug category IDs
+            db.all('SELECT id, name FROM drug_categories', [], (err, categories) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const categoryMap = {};
+                categories.forEach(cat => {
+                    categoryMap[cat.name] = cat.id;
+                });
+                
+                const drugNames = [
+                    { category: 'Nitrates', name: 'Glyceryl trinitrate', description: 'Short-acting nitrate' },
+                    { category: 'Nitrates', name: 'Isosorbide dinitrate', description: 'Long-acting nitrate' },
+                    { category: 'Beta-blockers', name: 'Propranolol', description: 'Non-selective beta blocker' },
+                    { category: 'Beta-blockers', name: 'Metoprolol', description: 'Selective beta blocker' },
+                    { category: 'Calcium-antagonists', name: 'Amlodipine', description: 'Calcium channel blocker' },
+                    { category: 'Calcium-antagonists', name: 'Nifedipine', description: 'Calcium channel blocker' },
+                    { category: 'ACE inhibitors', name: 'Lisinopril', description: 'ACE inhibitor for hypertension' },
+                    { category: 'ACE inhibitors', name: 'Enalapril', description: 'ACE inhibitor for heart failure' }
+                ];
+                
+                let insertedNames = 0;
+                
+                drugNames.forEach(drug => {
+                    const categoryId = categoryMap[drug.category];
+                    if (categoryId) {
+                        db.run(
+                            'INSERT OR IGNORE INTO drug_names (drug_category_id, name, description) VALUES (?, ?, ?)',
+                            [categoryId, drug.name, drug.description],
+                            (err) => {
+                                if (err) {
+                                    console.error(`Error inserting drug name ${drug.name}:`, err);
+                                } else {
+                                    insertedNames++;
+                                    if (insertedNames === drugNames.length) {
+                                        console.log('Successfully inserted default drug names');
+                                        resolve();
+                                    }
+                                }
+                            }
+                        );
+                    }
+                });
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default strength units...');
+            
+            const strengthUnits = [
+                { name: 'milligram', abbreviation: 'mg' },
+                { name: 'gram', abbreviation: 'g' },
+                { name: 'microgram', abbreviation: 'mcg' },
+                { name: 'unit', abbreviation: 'IU' },
+                { name: 'milliliter', abbreviation: 'ml' },
+                { name: 'percentage', abbreviation: '%' }
+            ];
+            
+            let insertedUnits = 0;
+            
+            strengthUnits.forEach(unit => {
+                db.run(
+                    'INSERT OR IGNORE INTO strength_units (name, abbreviation) VALUES (?, ?)',
+                    [unit.name, unit.abbreviation],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting strength unit ${unit.name}:`, err);
+                        } else {
+                            insertedUnits++;
+                            if (insertedUnits === strengthUnits.length) {
+                                console.log('Successfully inserted default strength units');
+                                resolve();
+                            }
+                        }
+                    }
+                );
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default dosage forms...');
+            
+            const dosageForms = [
+                { name: 'Tablet', description: 'Solid dosage form' },
+                { name: 'Syrup', description: 'Liquid dosage form' },
+                { name: 'Injection', description: 'Injectable form' },
+                { name: 'Ampule', description: 'Glass container for injection' },
+                { name: 'Sublingual tablet', description: 'Under-tongue tablet' },
+                { name: 'Capsule', description: 'Encapsulated form' },
+                { name: 'Cream', description: 'Topical form' },
+                { name: 'Ointment', description: 'Topical semi-solid form' }
+            ];
+            
+            let insertedForms = 0;
+            
+            dosageForms.forEach(form => {
+                db.run(
+                    'INSERT OR IGNORE INTO dosage_forms (name, description) VALUES (?, ?)',
+                    [form.name, form.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting dosage form ${form.name}:`, err);
+                        } else {
+                            insertedForms++;
+                            if (insertedForms === dosageForms.length) {
+                                console.log('Successfully inserted default dosage forms');
+                                resolve();
+                            }
+                        }
+                    }
+                );
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default preparations...');
+            
+            const preparations = [
+                { name: 'Oral', description: 'Taken by mouth' },
+                { name: 'Parenteral', description: 'Administered by injection' },
+                { name: 'Topical', description: 'Applied to skin or surface' },
+                { name: 'Inhaler', description: 'Inhaled into lungs' },
+                { name: 'Suspension for nebulization', description: 'For nebulizer use' },
+                { name: 'Sublingual', description: 'Under the tongue' },
+                { name: 'Rectal', description: 'Administered rectally' }
+            ];
+            
+            let insertedPreparations = 0;
+            
+            preparations.forEach(prep => {
+                db.run(
+                    'INSERT OR IGNORE INTO preparations (name, description) VALUES (?, ?)',
+                    [prep.name, prep.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting preparation ${prep.name}:`, err);
+                        } else {
+                            insertedPreparations++;
+                            if (insertedPreparations === preparations.length) {
+                                console.log('Successfully inserted default preparations');
+                                resolve();
+                            }
+                        }
+                    }
+                );
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default equipment categories...');
+            
+            const equipmentCategories = [
+                { name: 'Diagnostic Equipment', description: 'Equipment for medical diagnosis' },
+                { name: 'Surgical Instruments', description: 'Instruments used in surgery' },
+                { name: 'Patient Monitoring', description: 'Equipment for monitoring patient vitals' },
+                { name: 'Laboratory Equipment', description: 'Equipment for laboratory testing' },
+                { name: 'Imaging Equipment', description: 'Equipment for medical imaging' }
+            ];
+            
+            let insertedEquipCategories = 0;
+            
+            equipmentCategories.forEach(category => {
+                db.run(
+                    'INSERT OR IGNORE INTO equipment_categories (name, description) VALUES (?, ?)',
+                    [category.name, category.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting equipment category ${category.name}:`, err);
+                        } else {
+                            insertedEquipCategories++;
+                            if (insertedEquipCategories === equipmentCategories.length) {
+                                console.log('Successfully inserted default equipment categories');
+                                resolve();
+                            }
+                        }
+                    }
+                );
             });
         });
         

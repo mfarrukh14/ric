@@ -57,10 +57,30 @@ const CreateDemandForm = () => {
         unit: 'numbers', 
         prevYearCost: '', 
         currentYearCost: '', 
-        remarks: '' 
+        specifications: '',
+        remarks: '',
+        // Medicine-specific fields
+        drugCategoryId: '',
+        drugNameId: '',
+        strengthValue: '',
+        strengthUnitId: '',
+        dosageFormId: '',
+        preparationId: '',
+        // Equipment-specific fields
+        equipmentCategoryId: '',
+        equipmentTypeId: ''
       }
     ]
   });
+
+  // Additional state for dropdown data
+  const [drugCategories, setDrugCategories] = useState([]);
+  const [drugNamesByCategory, setDrugNamesByCategory] = useState({});
+  const [strengthUnits, setStrengthUnits] = useState([]);
+  const [dosageForms, setDosageForms] = useState([]);
+  const [preparations, setPreparations] = useState([]);
+  const [equipmentCategories, setEquipmentCategories] = useState([]);
+  const [equipmentTypesByCategory, setEquipmentTypesByCategory] = useState({});
 
   // Validation state
   const [errors, setErrors] = useState({});
@@ -68,6 +88,7 @@ const CreateDemandForm = () => {
   // Load categories on component mount
   useEffect(() => {
     loadCategories();
+    loadDetailedCategorizationData();
   }, []);
 
   const loadCategories = async () => {
@@ -90,6 +111,98 @@ const CreateDemandForm = () => {
     } catch (error) {
       console.error('Error loading item names:', error);
       setError('Failed to load item names');
+    }
+  };
+
+  const loadDetailedCategorizationData = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      // Load drug categories
+      const drugCategoriesResponse = await fetch(`${apiUrl}/item-categorization/drug-categories`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (drugCategoriesResponse.ok) {
+        const drugCategoriesData = await drugCategoriesResponse.json();
+        setDrugCategories(drugCategoriesData);
+      }
+
+      // Load strength units
+      const strengthUnitsResponse = await fetch(`${apiUrl}/item-categorization/strength-units`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (strengthUnitsResponse.ok) {
+        const strengthUnitsData = await strengthUnitsResponse.json();
+        setStrengthUnits(strengthUnitsData);
+      }
+
+      // Load dosage forms
+      const dosageFormsResponse = await fetch(`${apiUrl}/item-categorization/dosage-forms`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (dosageFormsResponse.ok) {
+        const dosageFormsData = await dosageFormsResponse.json();
+        setDosageForms(dosageFormsData);
+      }
+
+      // Load preparations
+      const preparationsResponse = await fetch(`${apiUrl}/item-categorization/preparations`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (preparationsResponse.ok) {
+        const preparationsData = await preparationsResponse.json();
+        setPreparations(preparationsData);
+      }
+
+      // Load equipment categories
+      const equipmentCategoriesResponse = await fetch(`${apiUrl}/item-categorization/equipment-categories`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (equipmentCategoriesResponse.ok) {
+        const equipmentCategoriesData = await equipmentCategoriesResponse.json();
+        setEquipmentCategories(equipmentCategoriesData);
+      }
+    } catch (error) {
+      console.error('Error loading detailed categorization data:', error);
+      setError('Failed to load categorization data');
+    }
+  };
+
+  const loadDrugNames = async (drugCategoryId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${apiUrl}/item-categorization/drug-names/${drugCategoryId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const drugNames = await response.json();
+        setDrugNamesByCategory(prev => ({
+          ...prev,
+          [drugCategoryId]: drugNames
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading drug names:', error);
+      setError('Failed to load drug names');
+    }
+  };
+
+  const loadEquipmentTypes = async (equipmentCategoryId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${apiUrl}/item-categorization/equipment-types/${equipmentCategoryId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const equipmentTypes = await response.json();
+        setEquipmentTypesByCategory(prev => ({
+          ...prev,
+          [equipmentCategoryId]: equipmentTypes
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading equipment types:', error);
+      setError('Failed to load equipment types');
     }
   };
 
@@ -121,6 +234,22 @@ const CreateDemandForm = () => {
       }
     }
     
+    // If drug category is changed, load drug names and reset drug name
+    if (field === 'drugCategoryId') {
+      newItems[index]['drugNameId'] = '';
+      if (value) {
+        loadDrugNames(value);
+      }
+    }
+    
+    // If equipment category is changed, load equipment types and reset equipment type
+    if (field === 'equipmentCategoryId') {
+      newItems[index]['equipmentTypeId'] = '';
+      if (value) {
+        loadEquipmentTypes(value);
+      }
+    }
+    
     setFormData(prev => ({
       ...prev,
       items: newItems
@@ -146,7 +275,18 @@ const CreateDemandForm = () => {
         unit: 'numbers', 
         prevYearCost: '', 
         currentYearCost: '', 
-        remarks: '' 
+        specifications: '',
+        remarks: '',
+        // Medicine-specific fields
+        drugCategoryId: '',
+        drugNameId: '',
+        strengthValue: '',
+        strengthUnitId: '',
+        dosageFormId: '',
+        preparationId: '',
+        // Equipment-specific fields
+        equipmentCategoryId: '',
+        equipmentTypeId: ''
       }]
     }));
   };
@@ -188,6 +328,9 @@ const CreateDemandForm = () => {
         }
         if (!item.unit) {
           newErrors[`item_${index}_unit`] = 'Unit is required';
+        }
+        if (!item.specifications || item.specifications.trim() === '') {
+          newErrors[`item_${index}_specifications`] = 'Item specifications are required';
         }
         if (item.prevYearCost === '' || item.prevYearCost < 0) {
           newErrors[`item_${index}_prevYearCost`] = 'Previous year cost is required';
@@ -459,6 +602,209 @@ const CreateDemandForm = () => {
                         )}
                       </div>
 
+                      {/* Detailed categorization based on main category */}
+                      {item.categoryId && (
+                        <>
+                          {/* Pharmaceuticals Category - Show detailed drug fields */}
+                          {(categories.find(cat => cat.id == item.categoryId)?.name?.toLowerCase().includes('pharmaceutical') || 
+                            categories.find(cat => cat.id == item.categoryId)?.name?.toLowerCase().includes('medicine')) && (
+                            <>
+                              {/* Drug Category */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Drug Category *
+                                </label>
+                                <select
+                                  value={item.drugCategoryId}
+                                  onChange={(e) => handleItemChange(index, 'drugCategoryId', e.target.value)}
+                                  className={`w-full px-3 py-2 border rounded-md text-sm ${
+                                    errors[`item_${index}_drugCategoryId`] ? 'border-red-500' : 'border-gray-300'
+                                  }`}
+                                >
+                                  <option value="">Select Drug Category</option>
+                                  {drugCategories.map((drugCategory) => (
+                                    <option key={drugCategory.id} value={drugCategory.id}>
+                                      {drugCategory.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {errors[`item_${index}_drugCategoryId`] && (
+                                  <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_drugCategoryId`]}</p>
+                                )}
+                              </div>
+
+                              {/* Drug Name */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Drug Name *
+                                </label>
+                                <select
+                                  value={item.drugNameId}
+                                  onChange={(e) => handleItemChange(index, 'drugNameId', e.target.value)}
+                                  disabled={!item.drugCategoryId}
+                                  className={`w-full px-3 py-2 border rounded-md text-sm ${
+                                    errors[`item_${index}_drugNameId`] ? 'border-red-500' : 'border-gray-300'
+                                  } ${!item.drugCategoryId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                >
+                                  <option value="">Select Drug Name</option>
+                                  {item.drugCategoryId && drugNamesByCategory[item.drugCategoryId] && 
+                                   drugNamesByCategory[item.drugCategoryId].map((drugName) => (
+                                    <option key={drugName.id} value={drugName.id}>
+                                      {drugName.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {errors[`item_${index}_drugNameId`] && (
+                                  <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_drugNameId`]}</p>
+                                )}
+                              </div>
+
+                              {/* Strength Value and Unit */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Strength *
+                                </label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="number"
+                                    value={item.strengthValue}
+                                    onChange={(e) => handleItemChange(index, 'strengthValue', e.target.value)}
+                                    min="0"
+                                    step="0.01"
+                                    className={`flex-1 px-3 py-2 border rounded-md text-sm ${
+                                      errors[`item_${index}_strengthValue`] ? 'border-red-500' : 'border-gray-300'
+                                    }`}
+                                    placeholder="Amount"
+                                  />
+                                  <select
+                                    value={item.strengthUnitId}
+                                    onChange={(e) => handleItemChange(index, 'strengthUnitId', e.target.value)}
+                                    className={`flex-1 px-3 py-2 border rounded-md text-sm ${
+                                      errors[`item_${index}_strengthUnitId`] ? 'border-red-500' : 'border-gray-300'
+                                    }`}
+                                  >
+                                    <option value="">Unit</option>
+                                    {strengthUnits.map((unit) => (
+                                      <option key={unit.id} value={unit.id}>
+                                        {unit.abbreviation}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                {(errors[`item_${index}_strengthValue`] || errors[`item_${index}_strengthUnitId`]) && (
+                                  <p className="text-red-500 text-xs mt-1">
+                                    {errors[`item_${index}_strengthValue`] || errors[`item_${index}_strengthUnitId`]}
+                                  </p>
+                                )}
+                              </div>
+
+                              {/* Dosage Form */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Dosage Form *
+                                </label>
+                                <select
+                                  value={item.dosageFormId}
+                                  onChange={(e) => handleItemChange(index, 'dosageFormId', e.target.value)}
+                                  className={`w-full px-3 py-2 border rounded-md text-sm ${
+                                    errors[`item_${index}_dosageFormId`] ? 'border-red-500' : 'border-gray-300'
+                                  }`}
+                                >
+                                  <option value="">Select Dosage Form</option>
+                                  {dosageForms.map((form) => (
+                                    <option key={form.id} value={form.id}>
+                                      {form.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {errors[`item_${index}_dosageFormId`] && (
+                                  <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_dosageFormId`]}</p>
+                                )}
+                              </div>
+
+                              {/* Preparation */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Preparation *
+                                </label>
+                                <select
+                                  value={item.preparationId}
+                                  onChange={(e) => handleItemChange(index, 'preparationId', e.target.value)}
+                                  className={`w-full px-3 py-2 border rounded-md text-sm ${
+                                    errors[`item_${index}_preparationId`] ? 'border-red-500' : 'border-gray-300'
+                                  }`}
+                                >
+                                  <option value="">Select Preparation</option>
+                                  {preparations.map((prep) => (
+                                    <option key={prep.id} value={prep.id}>
+                                      {prep.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {errors[`item_${index}_preparationId`] && (
+                                  <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_preparationId`]}</p>
+                                )}
+                              </div>
+                            </>
+                          )}
+
+                          {/* Medical Equipment Category - Show detailed equipment fields */}
+                          {categories.find(cat => cat.id == item.categoryId)?.name?.toLowerCase().includes('equipment') && (
+                            <>
+                              {/* Equipment Category */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Equipment Category *
+                                </label>
+                                <select
+                                  value={item.equipmentCategoryId}
+                                  onChange={(e) => handleItemChange(index, 'equipmentCategoryId', e.target.value)}
+                                  className={`w-full px-3 py-2 border rounded-md text-sm ${
+                                    errors[`item_${index}_equipmentCategoryId`] ? 'border-red-500' : 'border-gray-300'
+                                  }`}
+                                >
+                                  <option value="">Select Equipment Category</option>
+                                  {equipmentCategories.map((equipCategory) => (
+                                    <option key={equipCategory.id} value={equipCategory.id}>
+                                      {equipCategory.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {errors[`item_${index}_equipmentCategoryId`] && (
+                                  <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_equipmentCategoryId`]}</p>
+                                )}
+                              </div>
+
+                              {/* Equipment Type */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  Equipment Type *
+                                </label>
+                                <select
+                                  value={item.equipmentTypeId}
+                                  onChange={(e) => handleItemChange(index, 'equipmentTypeId', e.target.value)}
+                                  disabled={!item.equipmentCategoryId}
+                                  className={`w-full px-3 py-2 border rounded-md text-sm ${
+                                    errors[`item_${index}_equipmentTypeId`] ? 'border-red-500' : 'border-gray-300'
+                                  } ${!item.equipmentCategoryId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                >
+                                  <option value="">Select Equipment Type</option>
+                                  {item.equipmentCategoryId && equipmentTypesByCategory[item.equipmentCategoryId] && 
+                                   equipmentTypesByCategory[item.equipmentCategoryId].map((equipType) => (
+                                    <option key={equipType.id} value={equipType.id}>
+                                      {equipType.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {errors[`item_${index}_equipmentTypeId`] && (
+                                  <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_equipmentTypeId`]}</p>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+
                       {/* Previous Year Cost */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -498,6 +844,25 @@ const CreateDemandForm = () => {
                         />
                         {errors[`item_${index}_currentYearCost`] && (
                           <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_currentYearCost`]}</p>
+                        )}
+                      </div>
+
+                      {/* Specifications */}
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Item Specifications *
+                        </label>
+                        <textarea
+                          value={item.specifications}
+                          onChange={(e) => handleItemChange(index, 'specifications', e.target.value)}
+                          className={`w-full px-3 py-2 border rounded-md text-sm resize-vertical ${
+                            errors[`item_${index}_specifications`] ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="Enter detailed specifications for this item"
+                          rows="3"
+                        />
+                        {errors[`item_${index}_specifications`] && (
+                          <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_specifications`]}</p>
                         )}
                       </div>
 

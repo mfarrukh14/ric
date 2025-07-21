@@ -13,6 +13,7 @@ const financialOpeningRoutes = require('./src/routes/financialOpening');
 const itemRoutes = require('./src/routes/items');
 const twoFactorRoutes = require('./src/routes/twoFactor');
 const twoFactorEnforcementRoutes = require('./src/routes/twoFactorEnforcement');
+const itemCategorizationRoutes = require('./src/routes/itemCategorization');
 
 const app = express();
 const PORT = 5000;
@@ -34,6 +35,7 @@ app.use('/api/financial-opening', financialOpeningRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/2fa', twoFactorRoutes);
 app.use('/api/2fa-enforcement', twoFactorEnforcementRoutes);
+app.use('/api/item-categorization', itemCategorizationRoutes);
 
 // Test route
 app.get('/', (req, res) => {

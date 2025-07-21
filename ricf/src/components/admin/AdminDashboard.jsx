@@ -24,8 +24,9 @@ import UserListModal from '../modals/UserListModal';
 import DemandManagement from './DemandManagement';
 import GrievanceDeadlineManagement from './GrievanceDeadlineManagement';
 import SecurityManagement from './SecurityManagement';
+import ItemCategorizationAdmin from './ItemCategorizationAdmin';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
-import { UserPlus, Trash2, Eye, Package, Clock } from 'lucide-react';
+import { UserPlus, Trash2, Eye, Package, Clock, Settings } from 'lucide-react';
 
 const glassTableClass = `
   w-full table-auto bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg
@@ -39,7 +40,7 @@ const AdminDashboard = () => {
     const [users, setUsers] = useState([]);
     const [itemCategories, setItemCategories] = useState([]);
     const [itemNames, setItemNames] = useState([]);
-    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances
+    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances, security, categorization
     const [showDepartmentModal, setShowDepartmentModal] = useState(false);
     const [showCommitteeModal, setShowCommitteeModal] = useState(false);
     const [showUserModal, setShowUserModal] = useState(false);
@@ -336,6 +337,16 @@ const AdminDashboard = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
                     <span>Security Settings</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('categorization')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'categorization'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Settings size={20} />
+                    <span>Category Management</span>
                 </button>
             </div>
 
@@ -718,6 +729,11 @@ const AdminDashboard = () => {
             {/* Demand Management Tab */}
             {activeTab === 'demands' && (
                 <DemandManagement />
+            )}
+
+            {/* Category Management Tab */}
+            {activeTab === 'categorization' && (
+                <ItemCategorizationAdmin />
             )}
 
             {/* 2FA Setup Modal */}

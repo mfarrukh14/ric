@@ -80,8 +80,10 @@ const createDemand = async (req, res) => {
             await new Promise((resolve, reject) => {
                 db.run(
                     `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, remarks, unit, 
-                     category_id, item_name_id, prev_year_cost, current_year_cost) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     category_id, item_name_id, prev_year_cost, current_year_cost, specifications,
+                     drug_category_id, drug_name_id, strength_value, strength_unit_id, dosage_form_id, 
+                     preparation_id, equipment_category_id, equipment_type_id) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         demandId, 
                         itemName, 
@@ -92,7 +94,16 @@ const createDemand = async (req, res) => {
                         item.categoryId,
                         item.itemNameId,
                         item.prevYearCost,
-                        item.currentYearCost
+                        item.currentYearCost,
+                        item.specifications || null,
+                        item.drugCategoryId || null,
+                        item.drugNameId || null,
+                        item.strengthValue || null,
+                        item.strengthUnitId || null,
+                        item.dosageFormId || null,
+                        item.preparationId || null,
+                        item.equipmentCategoryId || null,
+                        item.equipmentTypeId || null
                     ],
                     (err) => {
                         if (err) reject(err);
@@ -282,15 +293,30 @@ const getDemandWithItems = async (req, res) => {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
-        // Get items for the demand with category names
+        // Get items for the demand with category names and detailed categorization
         const items = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT di.*, 
                         ic.name as category_name,
-                        in_t.name as item_name_full
+                        in_t.name as item_name_full,
+                        dc.name as drug_category_name,
+                        dn.name as drug_name,
+                        su.name as strength_unit_name,
+                        su.abbreviation as strength_unit_abbr,
+                        df.name as dosage_form_name,
+                        p.name as preparation_name,
+                        ec.name as equipment_category_name,
+                        et.name as equipment_type_name
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
+                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
+                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
+                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
+                 LEFT JOIN preparations p ON di.preparation_id = p.id
+                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
+                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
                  WHERE di.demand_id = ? 
                  ORDER BY di.id`,
                 [id],

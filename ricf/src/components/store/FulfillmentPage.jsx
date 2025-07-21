@@ -79,7 +79,8 @@ const FulfillmentPage = () => {
                     categoryName: item.category_name || 'N/A',
                     itemName: item.item_name_full || item.item_name || 'Unknown Item',
                     categoryId: item.category_id,
-                    itemNameId: item.item_name_id
+                    itemNameId: item.item_name_id,
+                    specifications: item.specifications || ''
                 };
             });
 
@@ -102,6 +103,7 @@ const FulfillmentPage = () => {
             availableQuantity: parseInt(item.quantity),
             status: 'available',
             remarks: '',
+            specifications: item.specifications || '',
             estimatedCost: parseFloat(item.estimated_cost || 0),
             unit: item.unit || 'pcs',
             stockInHand: parseInt(item.stock_in_hand || 0),
@@ -918,6 +920,23 @@ const FulfillmentPage = () => {
                                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                                         />
                                         <div className="text-xs text-gray-500 mt-1">Rs (Editable)</div>
+                                    </div>
+                                </div>
+
+                                {/* Item Specifications */}
+                                <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Item Specifications (Editable by Store)
+                                    </label>
+                                    <textarea
+                                        value={currentItemStatus.specifications}
+                                        onChange={(e) => updateCurrentItemStatus('specifications', e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-vertical"
+                                        placeholder="Enter or modify item specifications..."
+                                        rows="4"
+                                    />
+                                    <div className="text-xs text-gray-500 mt-1">
+                                        Store users can modify specifications as needed
                                     </div>
                                 </div>
 
