@@ -2,6 +2,7 @@ const { getDatabase } = require('../config/database');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const crypto = require('crypto');
+const auditLogger = require('../utils/auditLogger');
 
 // Generate 2FA secret and QR code for setup
 exports.setup2FA = async (req, res) => {
@@ -119,6 +120,16 @@ exports.enable2FA = async (req, res) => {
                 }
             );
         });
+
+        // Log 2FA enablement
+        await auditLogger.log2FA(
+            userId,
+            req.user.role,
+            req.user.name,
+            '2FA_ENABLED',
+            'Two-factor authentication successfully enabled',
+            req
+        );
 
         res.json({
             message: '2FA enabled successfully',
@@ -255,6 +266,16 @@ exports.disable2FA = async (req, res) => {
                 }
             );
         });
+
+        // Log 2FA disabling
+        await auditLogger.log2FA(
+            userId,
+            req.user.role,
+            req.user.name,
+            '2FA_DISABLED',
+            'Two-factor authentication disabled',
+            req
+        );
 
         res.json({ message: '2FA disabled successfully' });
 

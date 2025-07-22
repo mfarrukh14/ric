@@ -383,10 +383,404 @@ const generateSupplyOrderPDFById = async (req, res) => {
     }
 };
 
+// Create tender with evaluation criteria (new endpoint for multi-step wizard)
+const createTenderWithCriteria = async (req, res) => {
+    const db = getDatabase();
+    
+    try {
+        const { demandId, biddingEndTime, minimumSuppliers, evaluationCriteria } = req.body;
+        const createdBy = req.user?.id || 1; // Get from auth middleware
+        
+        // Parse evaluation criteria if it's a string
+        let parsedCriteria = [];
+        try {
+            parsedCriteria = typeof evaluationCriteria === 'string' 
+                ? JSON.parse(evaluationCriteria) 
+                : evaluationCriteria || [];
+        } catch (parseError) {
+            console.error('Error parsing evaluation criteria:', parseError);
+            return res.status(400).json({ message: 'Invalid evaluation criteria format' });
+        }
+
+        console.log('Creating tender with data:', {
+            demandId,
+            biddingEndTime,
+            minimumSuppliers,
+            criteriaCount: parsedCriteria.length
+        });
+
+        // Validate required fields
+        if (!demandId || !biddingEndTime) {
+            return res.status(400).json({ message: 'Demand ID and bidding end time are required' });
+        }
+
+        // Check if tender already exists for this demand
+        const existingTender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id FROM demand_tenders WHERE demand_id = ?',
+                [demandId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (existingTender) {
+            return res.status(400).json({ message: 'Tender already exists for this demand' });
+        }
+
+        // Handle file uploads
+        let tenderDocumentPath = null;
+        let itemsListPath = null;
+
+        if (req.files?.tenderDocument) {
+            tenderDocumentPath = req.files.tenderDocument[0].path;
+        }
+        
+        if (req.files?.itemsList) {
+            itemsListPath = req.files.itemsList[0].path;
+        }
+
+        // Start transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Create tender
+            const tenderResult = await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO demand_tenders (
+                        demand_id, bidding_end_time, minimum_suppliers, 
+                        tender_document_path, items_list_path, created_by,
+                        tender_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        demandId,
+                        biddingEndTime,
+                        minimumSuppliers || 3,
+                        tenderDocumentPath,
+                        itemsListPath,
+                        createdBy,
+                        'active'
+                    ],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve({ tenderId: this.lastID });
+                    }
+                );
+            });
+
+            const tenderId = tenderResult.tenderId;
+
+            // Update demand status to indicate tender has been created
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE demands SET 
+                     status = 'tender_created',
+                     purchase_response = 'Tender created and published',
+                     purchase_response_by = ?,
+                     purchase_response_date = CURRENT_TIMESTAMP,
+                     updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
+                    [createdBy, demandId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Add evaluation criteria
+            for (const criteria of parsedCriteria) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO tender_evaluation_criteria (
+                            tender_id, criteria_title, criteria_description,
+                            is_knockout, minimum_requirement, weightage, created_by
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            tenderId,
+                            criteria.title,
+                            criteria.description,
+                            criteria.isKnockout ? 1 : 0,
+                            criteria.minimumRequirement || null,
+                            criteria.weightage || 0,
+                            createdBy
+                        ],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+
+            // Add status history
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO tender_status_history (
+                        tender_id, status, comments, changed_by
+                    ) VALUES (?, ?, ?, ?)`,
+                    [tenderId, 'published', 'Tender created and published', createdBy],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            // Get complete tender data
+            const completeData = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT dt.*, d.item_name, d.description as demand_description
+                     FROM demand_tenders dt
+                     JOIN demands d ON dt.demand_id = d.id
+                     WHERE dt.id = ?`,
+                    [tenderId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            console.log(`Tender ${tenderId} created successfully with ${parsedCriteria.length} evaluation criteria`);
+
+            res.status(201).json({
+                message: 'Tender created successfully',
+                tender: {
+                    id: tenderId,
+                    ...completeData,
+                    evaluationCriteriaCount: parsedCriteria.length
+                }
+            });
+
+        } catch (transactionError) {
+            // Rollback on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw transactionError;
+        }
+
+    } catch (error) {
+        console.error('Error creating tender:', error);
+        res.status(500).json({ 
+            message: 'Failed to create tender', 
+            error: error.message 
+        });
+    }
+};
+
+// Get tender details with evaluation criteria for suppliers
+const getTenderWithCriteria = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const supplierId = req.user?.id; // Get from auth middleware
+
+    try {
+        // Get tender details
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT dt.*, d.description as demand_description
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE dt.id = ? AND dt.tender_status = 'active'`,
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not active' });
+        }
+
+        // Get demand items for this tender (only unfulfilled items) with detailed information
+        const items = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT di.*, 
+                        ic.name as category_name,
+                        in_t.name as item_name_full,
+                        dc.name as drug_category_name,
+                        dn.name as drug_name,
+                        su.name as strength_unit_name,
+                        df.name as dosage_form_name,
+                        p.name as preparation_name,
+                        ec.name as equipment_category_name,
+                        et.name as equipment_type_name
+                 FROM demand_items di
+                 LEFT JOIN item_categories ic ON di.category_id = ic.id
+                 LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
+                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
+                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
+                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
+                 LEFT JOIN preparations p ON di.preparation_id = p.id
+                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
+                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
+                 WHERE di.demand_id = ? 
+                 AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
+                 AND (di.is_removed IS NULL OR di.is_removed = 0)
+                 ORDER BY di.id`,
+                [tender.demand_id],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Format items with detailed information
+        const formattedItems = items.map(item => {
+            const categoryName = item.category_name?.toLowerCase() || '';
+            const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
+            const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
+            
+            let formattedItem = {
+                id: item.id,
+                item_name: item.item_name || item.item_name_full || item.drug_name || item.equipment_type_name || 'Unknown Item',
+                category: item.category_name || 'Unknown Category',
+                quantity: item.quantity,
+                unit: item.unit,
+                specifications: item.specifications,
+                estimated_cost: item.current_year_cost,
+                item_type: isPharmaCategory ? 'pharmaceutical' : isEquipmentCategory ? 'equipment' : 'general'
+            };
+
+            // Add pharmaceutical-specific details
+            if (isPharmaCategory) {
+                formattedItem.pharmaceutical_details = {
+                    drug_category: item.drug_category_name,
+                    drug_name: item.drug_name,
+                    strength: item.strength_value ? `${item.strength_value} ${item.strength_unit_name || ''}`.trim() : null,
+                    dosage_form: item.dosage_form_name,
+                    preparation: item.preparation_name
+                };
+            }
+
+            // Add equipment-specific details
+            if (isEquipmentCategory) {
+                formattedItem.equipment_details = {
+                    equipment_category: item.equipment_category_name,
+                    equipment_type: item.equipment_type_name
+                };
+            }
+
+            return formattedItem;
+        });
+
+        // Get evaluation criteria
+        const criteria = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT id, criteria_title, criteria_description, is_knockout,
+                        minimum_requirement, weightage
+                 FROM tender_evaluation_criteria
+                 WHERE tender_id = ?
+                 ORDER BY is_knockout DESC, id ASC`,
+                [tenderId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Record supplier view if supplierId is available
+        if (supplierId) {
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT OR REPLACE INTO supplier_tender_views 
+                         (tender_id, supplier_id, viewed_at) VALUES (?, ?, datetime('now'))`,
+                        [tenderId, supplierId],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            } catch (viewError) {
+                console.error('Error recording supplier view:', viewError);
+            }
+        }
+
+        // Format criteria for frontend
+        const knockoutClauses = criteria.filter(c => c.is_knockout);
+        const scoringCriteria = criteria.filter(c => !c.is_knockout);
+
+        res.json({
+            tender: {
+                ...tender,
+                items: formattedItems,
+                knockoutClauses,
+                scoringCriteria,
+                totalCriteria: criteria.length
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching tender with criteria:', error);
+        res.status(500).json({ 
+            message: 'Failed to fetch tender details', 
+            error: error.message 
+        });
+    }
+};
+
+// Acknowledge evaluation criteria by supplier
+const acknowledgeCriteria = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const supplierId = req.user?.id; // Get from auth middleware
+
+    try {
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE supplier_tender_views 
+                 SET criteria_acknowledged = 1 
+                 WHERE tender_id = ? AND supplier_id = ?`,
+                [tenderId, supplierId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ message: 'Evaluation criteria acknowledged successfully' });
+
+    } catch (error) {
+        console.error('Error acknowledging criteria:', error);
+        res.status(500).json({ 
+            message: 'Failed to acknowledge criteria', 
+            error: error.message 
+        });
+    }
+};
+
 module.exports = {
     processExpiredTenders,
     getAwardedTenders,
     generateSupplyOrderPDF,
     generateSupplyOrderPDFById,
-    markExpiredTendersForEvaluation // Export new function
+    markExpiredTendersForEvaluation,
+    createTenderWithCriteria,
+    getTenderWithCriteria,
+    acknowledgeCriteria
 };

@@ -1,4 +1,5 @@
 const { getDatabase } = require('../config/database');
+const auditLogger = require('../utils/auditLogger');
 
 // Update demand status (for store department users only)
 const updateDemandStatus = async (req, res) => {
@@ -55,6 +56,17 @@ const updateDemandStatus = async (req, res) => {
                 }
             );
         });
+
+        // Log store demand status update
+        await auditLogger.logDemandManagement(
+            user.id,
+            user.role,
+            user.name,
+            'DEMAND_STATUS_UPDATED',
+            id,
+            `Status: ${status} | Response: ${response || 'None'} | Previous Status: ${demand.status}`,
+            req
+        );
 
         res.json({ message: 'Demand status updated successfully' });
     } catch (error) {
@@ -265,59 +277,58 @@ const updateItemStatuses = async (req, res) => {
                     });
                 });
 
-                // If partially fulfilled, handle the split properly
-                if (update.status === 'partial' && update.availableQuantity < update.requestedQuantity) {
-                    const remainingQty = update.requestedQuantity - update.availableQuantity;
-                    
-                    // Get original item details
-                    const originalItem = await new Promise((resolve, reject) => {
-                        db.get('SELECT * FROM demand_items WHERE id = ?', [update.itemId], (err, row) => {
-                            if (err) reject(err);
-                            else resolve(row);
-                        });
-                    });
+                // Handle quantity calculation based on consumption logic
+                let finalRequiredQty = 0;
+                let shouldGoToTender = false;
 
-                    // Mark the original item as fulfilled (store_fulfilled = true) with available quantity
+                if (update.status === 'available') {
+                    // Item is fully available in store - no tender needed
+                    finalRequiredQty = 0;
+                    shouldGoToTender = false;
+                } else if (update.status === 'not_available') {
+                    // Item is not available in store - full quantity goes to tender
+                    finalRequiredQty = update.requestedQuantity;
+                    shouldGoToTender = true;
+                } else if (update.status === 'partial') {
+                    // Calculate required quantity based on consumption logic
+                    const stockInHand = update.stockInHand || 0;
+                    const consumptionAmount = update.consumptionAmount || 0;
+                    const requestedQuantity = update.requestedQuantity;
+
+                    if (consumptionAmount === 0) {
+                        // If monthly consumption is 0, compare against requested quantity
+                        finalRequiredQty = Math.max(0, requestedQuantity - stockInHand);
+                    } else {
+                        // If monthly consumption is set, compare against consumption
+                        finalRequiredQty = Math.max(0, consumptionAmount - stockInHand);
+                    }
+                    
+                    shouldGoToTender = finalRequiredQty > 0;
+                }
+
+                // Update the original item with calculated values
+                if (shouldGoToTender && finalRequiredQty > 0) {
+                    // Update item to go to tender with calculated required quantity
                     await new Promise((resolve, reject) => {
                         db.run(`UPDATE demand_items 
-                                SET quantity = ?, 
-                                    store_fulfilled = 1,
-                                    store_status = 'available'
+                                SET quantity = ?,
+                                    store_fulfilled = 0,
+                                    store_status = 'not_available'
                                 WHERE id = ?`, [
-                            update.availableQuantity,
+                            finalRequiredQty,
                             update.itemId
                         ], (err) => {
                             if (err) reject(err);
                             else resolve();
                         });
                     });
-
-                    // Create new item for remaining quantity that needs tender
-                    const insertItemQuery = `
-                        INSERT INTO demand_items (
-                            demand_id, item_name, quantity, estimated_cost, unit, 
-                            store_status, store_fulfilled
-                        ) VALUES (?, ?, ?, ?, ?, 'not_available', 0)
-                    `;
-                    
-                    const remainingCost = (parseFloat(originalItem.estimated_cost) / originalItem.quantity) * remainingQty;
-                    
+                } else {
+                    // Mark as fulfilled by store - no tender needed
                     await new Promise((resolve, reject) => {
-                        db.run(insertItemQuery, [
-                            id,
-                            originalItem.item_name,
-                            remainingQty,
-                            remainingCost.toFixed(2),
-                            originalItem.unit
-                        ], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
-                } else if (update.status === 'available') {
-                    // Mark as fulfilled by store
-                    await new Promise((resolve, reject) => {
-                        db.run('UPDATE demand_items SET store_fulfilled = 1 WHERE id = ?', [
+                        db.run(`UPDATE demand_items 
+                                SET store_fulfilled = 1,
+                                    store_status = 'available'
+                                WHERE id = ?`, [
                             update.itemId
                         ], (err) => {
                             if (err) reject(err);
@@ -327,16 +338,25 @@ const updateItemStatuses = async (req, res) => {
                 }
             }
 
-            // Determine overall demand status
-            let demandStatus = 'available'; // Default to available
+            // Determine overall demand status based on final database state
+            const finalItems = await new Promise((resolve, reject) => {
+                db.all(
+                    'SELECT store_fulfilled FROM demand_items WHERE demand_id = ? AND is_removed != 1',
+                    [id],
+                    (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows);
+                    }
+                );
+            });
+
+            let demandStatus;
+            const hasUnfulfilledItems = finalItems.some(item => item.store_fulfilled === 0);
             
-            // Check if any items are not fully available
-            const hasPartialOrUnavailable = itemUpdates.some(item => 
-                item.status === 'partial' || item.status === 'not_available'
-            );
-            
-            if (hasPartialOrUnavailable) {
-                demandStatus = 'purchase_pending';
+            if (hasUnfulfilledItems) {
+                demandStatus = 'purchase_pending'; // Items need to go to tender
+            } else {
+                demandStatus = 'available'; // All items fulfilled by store
             }
 
             // Update demand status and store response

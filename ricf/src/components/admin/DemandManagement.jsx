@@ -48,6 +48,7 @@ const DemandManagement = () => {
             'not_available': 'bg-red-100 text-red-800',
             'purchase_pending': 'bg-indigo-100 text-indigo-800',
             'purchase_approved': 'bg-green-100 text-green-800',
+            'tender_created': 'bg-blue-100 text-blue-800',
             'rejected': 'bg-red-100 text-red-800'
         };
 
@@ -61,6 +62,7 @@ const DemandManagement = () => {
             'vetting_rejected': 'Vetting Rejected',
             'purchase_pending': 'Purchase Review',
             'purchase_approved': 'Purchase Approved',
+            'tender_created': 'Tender Created',
             'rejected': 'Rejected'
         };
 

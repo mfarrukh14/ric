@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiUrl } from '../../config/api';
 import CostAnalysisChart from './CostAnalysisChart';
+import { generateDemandReport } from '../../utils/excelReportGenerator';
 
 const FulfillmentPage = () => {
     const { demandId } = useParams();
@@ -345,13 +346,28 @@ const FulfillmentPage = () => {
 
             const result = await response_data.json();
             
-            // Navigate back to dashboard with success message
-            navigate('/dashboard', { 
-                state: { 
-                    message: 'Fulfillment updated successfully',
-                    type: 'success'
-                }
-            });
+            // Generate Excel report after successful submission
+            try {
+                const reportFilename = generateDemandReport(demand, items);
+                console.log('Excel report generated:', reportFilename);
+                
+                // Show success message with report info
+                navigate('/dashboard', { 
+                    state: { 
+                        message: `Fulfillment submitted successfully! Excel report "${reportFilename}" has been downloaded.`,
+                        type: 'success'
+                    }
+                });
+            } catch (reportError) {
+                console.error('Error generating report:', reportError);
+                // Still navigate with success, but mention report issue
+                navigate('/dashboard', { 
+                    state: { 
+                        message: 'Fulfillment submitted successfully! (Report generation failed)',
+                        type: 'success'
+                    }
+                });
+            }
             
         } catch (err) {
             setError(err.message);
@@ -1144,7 +1160,7 @@ const FulfillmentPage = () => {
                                                 className="px-8 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                                                 disabled={submitting}
                                             >
-                                                {submitting ? 'Submitting...' : 'Submit Fulfillment Review'}
+                                                {submitting ? 'Submitting...' : 'Submit Fulfillment'}
                                             </button>
                                         </div>
                                     </div>

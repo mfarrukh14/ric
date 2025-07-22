@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { apiUrl } from '../../config/api';
+import { toast } from 'react-toastify';
+import api, { apiUrl } from '../../config/api';
+import { generateDemandReport } from '../../utils/excelReportGenerator';
+import TenderCreationWizard from '../purchase/TenderCreationWizard';
 
 const PurchaseDepartment = () => {
     const [demands, setDemands] = useState([]);
@@ -12,6 +15,8 @@ const PurchaseDepartment = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [processingTenderIds, setProcessingTenderIds] = useState([]);
+    const [showTenderWizard, setShowTenderWizard] = useState(false);
+    const [selectedDemandForTender, setSelectedDemandForTender] = useState(null);
 
     const [evaluationForm, setEvaluationForm] = useState({
         status: '',
@@ -37,6 +42,20 @@ const PurchaseDepartment = () => {
         fetchReadyTenders();
         fetchScheduledOpenings();
     }, []);
+
+    // Auto-redirect after success modal
+    useEffect(() => {
+        if (showSuccessModal) {
+            const timer = setTimeout(() => {
+                setShowSuccessModal(false);
+                setShowEvaluationModal(false);
+                setSelectedDemand(null);
+                setActiveTab('demands');
+            }, 3000);
+
+            return () => clearTimeout(timer);
+        }
+    }, [showSuccessModal]);
 
     const fetchPurchaseDemands = async () => {
         try {
@@ -120,21 +139,38 @@ const PurchaseDepartment = () => {
         }
     };
 
-    const handleEvaluate = (demand) => {
-        setSelectedDemand(demand);
-        setEvaluationForm({
-            status: '',
-            comments: '',
-            biddingExpiryTime: '',
-            tenderDocument: null,
-            itemsList: null,
-            updatedDemand: {
-                description: demand.description,
-                urgency: demand.urgency,
-                required_by: demand.required_by
+    const handleEvaluate = async (demand) => {
+        try {
+            // Check if a tender already exists for this demand
+            const response = await api.get(`/demands/${demand.id}/tender/exists`);
+            
+            if (response.data.exists) {
+                // Tender already exists, show a message
+                toast.info(`A tender already exists for this demand (Tender ID: ${response.data.tenderId}). You can view or manage the existing tender.`);
+                return;
             }
-        });
-        setShowEvaluationModal(true);
+        } catch (error) {
+            console.error('Error checking existing tender:', error);
+            toast.error('Error checking existing tender. Please try again.');
+            return;
+        }
+        
+        // No existing tender found, proceed with creation
+        setSelectedDemandForTender(demand);
+        setShowTenderWizard(true);
+    };
+
+    const handleTenderCreated = (tender) => {
+        console.log('Tender created successfully:', tender);
+        // Refresh the data
+        fetchPurchaseDemands();
+        fetchReadyTenders();
+        setShowSuccessModal(true);
+    };
+
+    const handleCloseTenderWizard = () => {
+        setShowTenderWizard(false);
+        setSelectedDemandForTender(null);
     };
 
     const handleEvaluationSubmit = async (e) => {
@@ -414,6 +450,30 @@ const PurchaseDepartment = () => {
         }
     };
 
+    const downloadDemandReport = async (demand) => {
+        try {
+            const token = localStorage.getItem('token');
+            // Fetch detailed demand data with items
+            const response = await fetch(`${apiUrl}/demands/${demand.id}/with-items`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to fetch demand details');
+            }
+            
+            const demandData = await response.json();
+            
+            // Generate Excel report
+            const reportFilename = generateDemandReport(demandData, demandData.items || []);
+            console.log('Excel report downloaded:', reportFilename);
+            
+        } catch (error) {
+            console.error('Error downloading demand report:', error);
+            setError('Failed to download demand report');
+        }
+    };
+
     const handleFormChange = (e) => {
         const { name, value } = e.target;
         if (name.startsWith('demand_')) {
@@ -475,6 +535,7 @@ const PurchaseDepartment = () => {
             'purchase_pending': 'bg-yellow-100 text-yellow-800',
             'available': 'bg-green-100 text-green-800',
             'purchase_approved': 'bg-green-100 text-green-800',
+            'tender_created': 'bg-blue-100 text-blue-800',
             'rejected': 'bg-red-100 text-red-800'
         };
 
@@ -482,6 +543,7 @@ const PurchaseDepartment = () => {
             'purchase_pending': 'Store Response - Pending Purchase',
             'available': 'Store Fulfilled - Available',
             'purchase_approved': 'Purchase Approved',
+            'tender_created': 'Tender Created',
             'rejected': 'Rejected'
         };
 
@@ -527,18 +589,27 @@ const PurchaseDepartment = () => {
 
     return (
         <div className="min-h-screen bg-gray-50">
-            <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                <div className="px-4 py-6 sm:px-0">
-                    <div className="mb-6">
-                        <h1 className="text-3xl font-bold text-gray-900">Purchase Department</h1>
-                        <p className="text-gray-600">Review and process demands from store department</p>
-                    </div>
-
-                    {error && (
-                        <div className="mb-4 rounded-md bg-red-50 p-4">
-                            <div className="text-sm text-red-700">{error}</div>
+            {/* Show Tender Creation Wizard as integrated view */}
+            {showTenderWizard && selectedDemandForTender ? (
+                <TenderCreationWizard
+                    demandId={selectedDemandForTender.id}
+                    onClose={handleCloseTenderWizard}
+                    onTenderCreated={handleTenderCreated}
+                />
+            ) : (
+                /* Main Dashboard Content */
+                <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+                    <div className="px-4 py-6 sm:px-0">
+                        <div className="mb-6">
+                            <h1 className="text-3xl font-bold text-gray-900">Purchase Department</h1>
+                            <p className="text-gray-600">Review and process demands from store department</p>
                         </div>
-                    )}
+
+                        {error && (
+                            <div className="mb-4 rounded-md bg-red-50 p-4">
+                                <div className="text-sm text-red-700">{error}</div>
+                            </div>
+                        )}
 
                     {/* Tab Navigation */}
                     <div className="mb-6">
@@ -550,7 +621,7 @@ const PurchaseDepartment = () => {
                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
                             >
-                                Pending Demands
+                                Pending Demands (Excel Reports)
                                 {demands.length > 0 && (
                                     <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
                                         {demands.length}
@@ -589,11 +660,11 @@ const PurchaseDepartment = () => {
                     {activeTab === 'demands' && (
                         <div className="bg-white shadow overflow-hidden sm:rounded-md">
                             <div className="px-4 py-5 sm:p-6">
-                                <h2 className="text-lg font-medium text-gray-900 mb-4">Demands for Purchase Review</h2>
+                                <h2 className="text-lg font-medium text-gray-900 mb-4">Demands for Purchase Review & Excel Reports</h2>
 
                                 {demands.length === 0 ? (
                                     <div className="text-center py-12">
-                                        <div className="text-gray-500">No demands available for purchase review at this time.</div>
+                                        <div className="text-gray-500">No demands available for purchase review at this time. Store department will submit fulfillment reports that appear here with downloadable Excel reports.</div>
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
@@ -718,12 +789,18 @@ const PurchaseDepartment = () => {
                                                     </div>
                                                 )}
 
-                                                <div className="flex justify-end">
+                                                <div className="flex justify-end space-x-3">
+                                                    <button
+                                                        onClick={() => downloadDemandReport(demand)}
+                                                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                    >
+                                                        📊 Download Excel Report
+                                                    </button>
                                                     <button
                                                         onClick={() => handleEvaluate(demand)}
                                                         className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                                     >
-                                                        Review Demand
+                                                        Create Tender
                                                     </button>
                                                 </div>
                                             </div>
@@ -1018,6 +1095,7 @@ const PurchaseDepartment = () => {
                     )}
                 </div>
             </div>
+            )}
 
             {/* Evaluation Modal */}
             {showEvaluationModal && (
@@ -1260,7 +1338,9 @@ const PurchaseDepartment = () => {
                                 </svg>
                             </div>
                             <h3 className="text-lg font-bold text-gray-900 mb-2">Evaluation Submitted!</h3>
-                            <p className="text-gray-600">Your purchase review has been successfully submitted.</p>                        </div>
+                            <p className="text-gray-600 mb-4">Your purchase review has been successfully submitted.</p>
+                            <p className="text-sm text-gray-500">Redirecting to dashboard in 3 seconds...</p>
+                        </div>
                     </div>
                 </div>
             )}

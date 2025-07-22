@@ -38,14 +38,33 @@ const getExpiredTenders = async (req, res) => {
 
         // For each tender, get the demand items and bids
         for (const tender of expiredTenders) {
-            // Get demand items
+            // Get demand items with detailed information
             const items = await new Promise((resolve, reject) => {
                 db.all(
-                    `SELECT * FROM demand_items 
-                     WHERE demand_id = ? 
-                     AND (store_fulfilled IS NULL OR store_fulfilled = 0)
-                     AND (store_status != 'available' OR store_status IS NULL)
-                     ORDER BY id`,
+                    `SELECT di.*, 
+                            ic.name as category_name,
+                            in_t.name as item_name_full,
+                            dc.name as drug_category_name,
+                            dn.name as drug_name,
+                            su.name as strength_unit_name,
+                            df.name as dosage_form_name,
+                            p.name as preparation_name,
+                            ec.name as equipment_category_name,
+                            et.name as equipment_type_name
+                     FROM demand_items di
+                     LEFT JOIN item_categories ic ON di.category_id = ic.id
+                     LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                     LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
+                     LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
+                     LEFT JOIN strength_units su ON di.strength_unit_id = su.id
+                     LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
+                     LEFT JOIN preparations p ON di.preparation_id = p.id
+                     LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
+                     LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
+                     WHERE di.demand_id = ? 
+                     AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
+                     AND (di.store_status != 'available' OR di.store_status IS NULL)
+                     ORDER BY di.id`,
                     [tender.demand_id],
                     (err, rows) => {
                         if (err) reject(err);
@@ -54,17 +73,48 @@ const getExpiredTenders = async (req, res) => {
                 );
             });
 
+            // Format items with detailed information
+            const formattedItems = items.map(item => {
+                const categoryName = item.category_name?.toLowerCase() || '';
+                const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
+                const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
+                
+                return {
+                    id: item.id,
+                    item_name: item.item_name || item.item_name_full || item.drug_name || item.equipment_type_name || 'Unknown Item',
+                    category: item.category_name || 'Unknown Category',
+                    quantity: item.quantity,
+                    unit: item.unit,
+                    specifications: item.specifications,
+                    estimated_cost: item.current_year_cost,
+                    item_type: isPharmaCategory ? 'pharmaceutical' : isEquipmentCategory ? 'equipment' : 'general',
+                    pharmaceutical_details: isPharmaCategory ? {
+                        drug_category: item.drug_category_name,
+                        drug_name: item.drug_name,
+                        strength: item.strength_value ? `${item.strength_value} ${item.strength_unit_name || ''}`.trim() : null,
+                        dosage_form: item.dosage_form_name,
+                        preparation: item.preparation_name
+                    } : null,
+                    equipment_details: isEquipmentCategory ? {
+                        equipment_category: item.equipment_category_name,
+                        equipment_type: item.equipment_type_name
+                    } : null
+                };
+            });
+
             // If no items found (legacy single-item demand), create from main demand
-            if (items.length === 0) {
+            if (formattedItems.length === 0) {
                 tender.items = [{
                     id: 0,
                     item_name: tender.item_name,
+                    category: 'General',
                     quantity: tender.quantity || 0,
                     estimated_cost: tender.estimated_cost || 0,
-                    unit: 'pieces'
+                    unit: 'pieces',
+                    item_type: 'general'
                 }];
             } else {
-                tender.items = items;
+                tender.items = formattedItems;
             }
 
             // Get all bids for this tender with supplier details
@@ -130,14 +180,33 @@ const getTenderDetails = async (req, res) => {
             return res.status(404).json({ message: 'Tender not found' });
         }
 
-        // Get demand items
+        // Get demand items with detailed information
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT * FROM demand_items 
-                 WHERE demand_id = ? 
-                 AND (store_fulfilled IS NULL OR store_fulfilled = 0)
-                 AND (store_status != 'available' OR store_status IS NULL)
-                 ORDER BY id`,
+                `SELECT di.*, 
+                        ic.name as category_name,
+                        in_t.name as item_name_full,
+                        dc.name as drug_category_name,
+                        dn.name as drug_name,
+                        su.name as strength_unit_name,
+                        df.name as dosage_form_name,
+                        p.name as preparation_name,
+                        ec.name as equipment_category_name,
+                        et.name as equipment_type_name
+                 FROM demand_items di
+                 LEFT JOIN item_categories ic ON di.category_id = ic.id
+                 LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
+                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
+                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
+                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
+                 LEFT JOIN preparations p ON di.preparation_id = p.id
+                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
+                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
+                 WHERE di.demand_id = ? 
+                 AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
+                 AND (di.store_status != 'available' OR di.store_status IS NULL)
+                 ORDER BY di.id`,
                 [tender.demand_id],
                 (err, rows) => {
                     if (err) reject(err);
@@ -146,17 +215,58 @@ const getTenderDetails = async (req, res) => {
             );
         });
 
+        // Format items with detailed information
+        const formattedItems = items.map(item => {
+            const categoryName = item.category_name?.toLowerCase() || '';
+            const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
+            const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
+            
+            let formattedItem = {
+                id: item.id,
+                item_name: item.item_name || item.item_name_full || item.drug_name || item.equipment_type_name || 'Unknown Item',
+                category: item.category_name || 'Unknown Category',
+                quantity: item.quantity,
+                unit: item.unit,
+                specifications: item.specifications,
+                estimated_cost: item.current_year_cost,
+                item_type: isPharmaCategory ? 'pharmaceutical' : isEquipmentCategory ? 'equipment' : 'general'
+            };
+
+            // Add pharmaceutical-specific details
+            if (isPharmaCategory) {
+                formattedItem.pharmaceutical_details = {
+                    drug_category: item.drug_category_name,
+                    drug_name: item.drug_name,
+                    strength: item.strength_value ? `${item.strength_value} ${item.strength_unit_name || ''}`.trim() : null,
+                    dosage_form: item.dosage_form_name,
+                    preparation: item.preparation_name
+                };
+            }
+
+            // Add equipment-specific details
+            if (isEquipmentCategory) {
+                formattedItem.equipment_details = {
+                    equipment_category: item.equipment_category_name,
+                    equipment_type: item.equipment_type_name
+                };
+            }
+
+            return formattedItem;
+        });
+
         // If no items found (legacy single-item demand), create from main demand
-        if (items.length === 0) {
+        if (formattedItems.length === 0) {
             tender.items = [{
                 id: 0,
                 item_name: tender.item_name,
+                category: 'General',
                 quantity: tender.quantity || 0,
                 estimated_cost: tender.estimated_cost || 0,
-                unit: 'pieces'
+                unit: 'pieces',
+                item_type: 'general'
             }];
         } else {
-            tender.items = items;
+            tender.items = formattedItems;
         }
 
         // Get all bids with supplier details and their item-specific bids

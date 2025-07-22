@@ -24,9 +24,10 @@ import UserListModal from '../modals/UserListModal';
 import DemandManagement from './DemandManagement';
 import GrievanceDeadlineManagement from './GrievanceDeadlineManagement';
 import SecurityManagement from './SecurityManagement';
-import ItemCategorizationAdmin from './ItemCategorizationAdmin';
+import UnifiedItemManagement from './UnifiedItemManagement';
+import AuditManagement from './AuditManagement';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
-import { UserPlus, Trash2, Eye, Package, Clock, Settings } from 'lucide-react';
+import { UserPlus, Trash2, Eye, Package, Clock, Settings, Shield } from 'lucide-react';
 
 const glassTableClass = `
   w-full table-auto bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg
@@ -40,7 +41,7 @@ const AdminDashboard = () => {
     const [users, setUsers] = useState([]);
     const [itemCategories, setItemCategories] = useState([]);
     const [itemNames, setItemNames] = useState([]);
-    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances, security, categorization
+    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances, security
     const [showDepartmentModal, setShowDepartmentModal] = useState(false);
     const [showCommitteeModal, setShowCommitteeModal] = useState(false);
     const [showUserModal, setShowUserModal] = useState(false);
@@ -305,7 +306,7 @@ const AdminDashboard = () => {
                         }`}
                 >
                     <Package size={20} />
-                    <span>Item Management</span>
+                    <span>Unified Item Management</span>
                 </button>
                 <button
                     onClick={() => setActiveTab('demands')}
@@ -339,14 +340,14 @@ const AdminDashboard = () => {
                     <span>Security Settings</span>
                 </button>
                 <button
-                    onClick={() => setActiveTab('categorization')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'categorization'
+                    onClick={() => setActiveTab('audit')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'audit'
                             ? 'bg-white bg-opacity-30 text-black font-medium'
                             : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
                         }`}
                 >
-                    <Settings size={20} />
-                    <span>Category Management</span>
+                    <Shield size={20} />
+                    <span>Audit Trail</span>
                 </button>
             </div>
 
@@ -433,113 +434,9 @@ const AdminDashboard = () => {
                 </div>
             )}
 
-            {/* Item Management Tab */}
+            {/* Unified Item Management Tab */}
             {activeTab === 'items' && (
-                <div className="space-y-6">
-                    {/* Item Categories Table */}
-                    <div className={glassTableClass}>
-                        <div className="flex justify-between items-center p-4">
-                            <h2 className="text-xl font-semibold text-black">Item Categories</h2>
-                            <button
-                                onClick={() => setShowCategoryModal(true)}
-                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
-                            >
-                                <UserPlus size={16} />
-                                <span>Add Category</span>
-                            </button>
-                        </div>
-                        <table className="w-full">
-                            <thead>
-                                <tr className="bg-black bg-opacity-10">
-                                    <th className="text-left p-3 text-black font-medium">Name</th>
-                                    <th className="text-left p-3 text-black font-medium">Description</th>
-                                    <th className="text-left p-3 text-black font-medium">Items Count</th>
-                                    <th className="text-left p-3 text-black font-medium">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {itemCategories.length === 0 ? (
-                                    <tr><td colSpan="4" className="text-center p-6 text-black">No categories found</td></tr>
-                                ) : (
-                                    itemCategories.map(category => (
-                                        <tr key={category.id} className="border-t border-white border-opacity-20">
-                                            <td className="p-3 text-black">{category.name}</td>
-                                            <td className="p-3 text-black">{category.description || 'No description'}</td>
-                                            <td className="p-3 text-black">
-                                                {itemNames.filter(item => item.category_id === category.id).length}
-                                            </td>
-                                            <td className="p-3 space-x-2">
-                                                <button
-                                                    onClick={() => handleEditCategory(category)}
-                                                    className="text-blue-600 hover:text-blue-800"
-                                                >
-                                                    <Eye size={16} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteCategory(category.id)}
-                                                    className="text-red-600 hover:text-red-800"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* Item Names Table */}
-                    <div className={glassTableClass}>
-                        <div className="flex justify-between items-center p-4">
-                            <h2 className="text-xl font-semibold text-black">Item Names</h2>
-                            <button
-                                onClick={() => setShowItemNameModal(true)}
-                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
-                            >
-                                <UserPlus size={16} />
-                                <span>Add Item Name</span>
-                            </button>
-                        </div>
-                        <table className="w-full">
-                            <thead>
-                                <tr className="bg-black bg-opacity-10">
-                                    <th className="text-left p-3 text-black font-medium">Item Name</th>
-                                    <th className="text-left p-3 text-black font-medium">Category</th>
-                                    <th className="text-left p-3 text-black font-medium">Description</th>
-                                    <th className="text-left p-3 text-black font-medium">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {itemNames.length === 0 ? (
-                                    <tr><td colSpan="4" className="text-center p-6 text-black">No item names found</td></tr>
-                                ) : (
-                                    itemNames.map(item => (
-                                        <tr key={item.id} className="border-t border-white border-opacity-20">
-                                            <td className="p-3 text-black">{item.name}</td>
-                                            <td className="p-3 text-black">{item.category_name}</td>
-                                            <td className="p-3 text-black">{item.description || 'No description'}</td>
-                                            <td className="p-3 space-x-2">
-                                                <button
-                                                    onClick={() => handleEditItemName(item)}
-                                                    className="text-blue-600 hover:text-blue-800"
-                                                >
-                                                    <Eye size={16} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteItemName(item.id)}
-                                                    className="text-red-600 hover:text-red-800"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                <UnifiedItemManagement />
             )}
 
             {/* Demand Management Tab */}

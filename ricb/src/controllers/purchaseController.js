@@ -24,7 +24,10 @@ const getPurchaseDemands = async (req, res) => {
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
                  LEFT JOIN users sr ON d.store_response_by = sr.id
-                 WHERE d.status IN ('purchase_pending', 'available') AND d.purchase_response_by IS NULL
+                 LEFT JOIN demand_tenders dt ON d.id = dt.demand_id
+                 WHERE d.status IN ('purchase_pending', 'available') 
+                 AND d.purchase_response_by IS NULL
+                 AND dt.demand_id IS NULL
                  ORDER BY d.created_at DESC`,
                 [],
                 (err, rows) => {
@@ -89,9 +92,9 @@ const evaluateDemandPurchase = async (req, res) => {
         });
 
         try {
-            // For approved demands: status changes to purchase_approved 
+            // For approved demands: status changes to tender_created (when tender is auto-created)
             // For rejected demands: status changes to purchase_rejected
-            const newStatus = action === 'approve' ? 'purchase_approved' : 'purchase_rejected';
+            const newStatus = action === 'approve' ? 'tender_created' : 'purchase_rejected';
             
             // Update the demand with new status and record who evaluated it
             await new Promise((resolve, reject) => {
@@ -197,12 +200,12 @@ const approveDemand = async (req, res) => {
         });
 
         try {
-            // Update the demand with approved status
+            // Update the demand with approved status and indicate tender creation
             await new Promise((resolve, reject) => {
                 db.run(
                     `UPDATE demands SET 
-                     status = 'purchase_approved', 
-                     purchase_response = 'Approved by purchase department',
+                     status = 'tender_created', 
+                     purchase_response = 'Approved by purchase department - Tender created',
                      purchase_response_by = ?,
                      purchase_response_date = CURRENT_TIMESTAMP,
                      updated_at = CURRENT_TIMESTAMP
@@ -238,7 +241,7 @@ const approveDemand = async (req, res) => {
 
             res.json({ 
                 message: 'Demand approved successfully',
-                status: 'purchase_approved',
+                status: 'tender_created',
                 createdTender: true
             });
         } catch (error) {
@@ -297,13 +300,14 @@ const getSupplyOrders = async (req, res) => {
                     d.description,
                     d.quantity as original_quantity,
                     d.urgency,
-                    s.company_name as supplier_name,
-                    s.company_email as supplier_email,
+                    COALESCE(sbp.business_name, s.username) as supplier_name,
+                    s.business_email as supplier_email,
                     sb.delivery_days
                 FROM supply_orders so
                 JOIN demand_tenders dt ON so.tender_id = dt.id
                 JOIN demands d ON so.demand_id = d.id
                 JOIN suppliers s ON so.supplier_id = s.id
+                LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                 JOIN supplier_bids sb ON so.bid_id = sb.id
                 ORDER BY so.created_at DESC`,
                 [],

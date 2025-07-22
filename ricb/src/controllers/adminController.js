@@ -1,20 +1,33 @@
 const { getDatabase, generateCredentials, generateUserBasedCredentials } = require('../config/database');
 const bcrypt = require('bcryptjs');
+const auditLogger = require('../utils/auditLogger');
 
 // Department Controllers
-exports.createDepartment = (req, res) => {
+exports.createDepartment = async (req, res) => {
     const { name } = req.body;
     const db = getDatabase();
 
     if (!name) return res.status(400).json({ error: 'Department name is required' });
 
-    db.run('INSERT INTO departments (name) VALUES (?)', [name], function(err) {
+    db.run('INSERT INTO departments (name) VALUES (?)', [name], async function(err) {
         if (err) {
             if (err.message.includes('UNIQUE constraint failed')) {
                 return res.status(400).json({ error: 'Department already exists' });
             }
             return res.status(500).json({ error: 'Error creating department' });
         }
+        
+        // Log department creation
+        await auditLogger.logUserManagement(
+            req.user.id,
+            req.user.role,
+            req.user.name,
+            'DEPARTMENT_CREATED',
+            null,
+            `Department Name: ${name}`,
+            req
+        );
+        
         res.status(201).json({ id: this.lastID, name });
     });
 };
@@ -27,30 +40,64 @@ exports.listDepartments = (req, res) => {
     });
 };
 
-exports.deleteDepartment = (req, res) => {
+exports.deleteDepartment = async (req, res) => {
     const { id } = req.params;
     const db = getDatabase();
-    db.run('DELETE FROM departments WHERE id = ?', [id], function(err) {
+    
+    // Get department name before deletion for logging
+    const department = await new Promise((resolve, reject) => {
+        db.get('SELECT name FROM departments WHERE id = ?', [id], (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+    
+    db.run('DELETE FROM departments WHERE id = ?', [id], async function(err) {
         if (err) return res.status(500).json({ error: 'Error deleting department' });
-        if (this.changes === 0) return res.status(404).json({ error: 'Department not found' });
+        
+        if (department) {
+            // Log department deletion
+            await auditLogger.logUserManagement(
+                req.user.id,
+                req.user.role,
+                req.user.name,
+                'DEPARTMENT_DELETED',
+                null,
+                `Department: ${department.name}`,
+                req
+            );
+        }
+        
         res.json({ message: 'Department deleted successfully' });
     });
 };
 
 // Committee Controllers
-exports.createCommittee = (req, res) => {
+exports.createCommittee = async (req, res) => {
     const { name } = req.body;
     const db = getDatabase();
 
     if (!name) return res.status(400).json({ error: 'Committee name is required' });
 
-    db.run('INSERT INTO committees (name) VALUES (?)', [name], function(err) {
+    db.run('INSERT INTO committees (name) VALUES (?)', [name], async function(err) {
         if (err) {
             if (err.message.includes('UNIQUE constraint failed')) {
                 return res.status(400).json({ error: 'Committee already exists' });
             }
             return res.status(500).json({ error: 'Error creating committee' });
         }
+        
+        // Log committee creation
+        await auditLogger.logUserManagement(
+            req.user.id,
+            req.user.role,
+            req.user.name,
+            'COMMITTEE_CREATED',
+            null,
+            `Committee Name: ${name}`,
+            req
+        );
+        
         res.status(201).json({ id: this.lastID, name });
     });
 };
@@ -97,6 +144,17 @@ exports.createUser = async (req, res) => {
             );
         });
 
+        // Log user creation
+        await auditLogger.logUserManagement(
+            req.user.id,
+            req.user.role,
+            req.user.name,
+            'USER_CREATED',
+            name,
+            `Username: ${username} | Designation: ${designation} | Department ID: ${departmentId || 'None'} | Committee ID: ${committeeId || 'None'}`,
+            req
+        );
+
         res.status(201).json({
             message: 'User created successfully',
             credentials: {
@@ -134,6 +192,18 @@ exports.listUsers = async (req, res) => {
             });
         });
 
+        // Log the sensitive data access (viewing all user passwords)
+        await auditLogger.logDataAccess(
+            req.user.id,
+            req.user.role,
+            req.user.name,
+            'USERS_LIST_ACCESSED',
+            'users',
+            'multiple',
+            `Total users accessed: ${rows.length} | Includes passwords`,
+            req
+        );
+
         res.json(rows);
     } catch (err) {
         console.error('Error fetching users:', err);
@@ -141,12 +211,35 @@ exports.listUsers = async (req, res) => {
     }
 };
 
-exports.deleteUser = (req, res) => {
+exports.deleteUser = async (req, res) => {
     const { id } = req.params;
     const db = getDatabase();
-    db.run('DELETE FROM users WHERE id = ? AND role != "superadmin"', [id], function(err) {
+    
+    // Get user info before deletion for logging
+    const user = await new Promise((resolve, reject) => {
+        db.get('SELECT name, username FROM users WHERE id = ? AND role != "superadmin"', [id], (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+    
+    db.run('DELETE FROM users WHERE id = ? AND role != "superadmin"', [id], async function(err) {
         if (err) return res.status(500).json({ error: 'Error deleting user' });
         if (this.changes === 0) return res.status(404).json({ error: 'User not found or cannot delete superadmin' });
+        
+        if (user) {
+            // Log user deletion
+            await auditLogger.logUserManagement(
+                req.user.id,
+                req.user.role,
+                req.user.name,
+                'USER_DELETED',
+                user.name,
+                `Username: ${user.username}`,
+                req
+            );
+        }
+        
         res.json({ message: 'User deleted successfully' });
     });
 };
@@ -208,6 +301,22 @@ exports.updateSystemConfiguration = async (req, res) => {
     }
 
     try {
+        // Get the old value for logging
+        const oldConfig = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT config_value FROM system_configurations WHERE config_key = ?',
+                [configKey],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!oldConfig) {
+            return res.status(404).json({ message: 'Configuration not found' });
+        }
+
         // Update configuration
         await new Promise((resolve, reject) => {
             db.run(
@@ -224,6 +333,17 @@ exports.updateSystemConfiguration = async (req, res) => {
         });
 
         // Log the configuration change
+        await auditLogger.logSystemConfig(
+            user.id,
+            user.role,
+            user.name,
+            'SYSTEM_CONFIG_UPDATED',
+            configKey,
+            oldConfig.config_value,
+            configValue,
+            req
+        );
+
         console.log(`⚙️ System configuration updated by ${user.name}: ${configKey} = ${configValue}`);
 
         res.json({ 

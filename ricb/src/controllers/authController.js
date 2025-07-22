@@ -1,6 +1,7 @@
 const { getDatabase } = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const auditLogger = require('../utils/auditLogger');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
@@ -9,6 +10,15 @@ exports.login = async (req, res) => {
     const db = getDatabase();
 
     if (!username || !password) {
+        // Log failed login attempt
+        await auditLogger.logAuth(
+            'Unknown',
+            'unknown',
+            username || 'Unknown',
+            'LOGIN_FAILED - Missing credentials',
+            'Username or password not provided',
+            req
+        );
         return res.status(400).json({ error: 'Username and password are required' });
     }
 
@@ -29,16 +39,44 @@ exports.login = async (req, res) => {
         });
 
         if (!user) {
+            // Log failed login attempt - user not found
+            await auditLogger.logAuth(
+                'Unknown',
+                'unknown',
+                username,
+                'LOGIN_FAILED - User not found',
+                'Invalid username provided',
+                req
+            );
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) {
+            // Log failed login attempt - wrong password
+            await auditLogger.logAuth(
+                user.id,
+                user.role,
+                user.name,
+                'LOGIN_FAILED - Invalid password',
+                'Incorrect password provided',
+                req
+            );
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         // Check if 2FA is enabled
         if (user.two_factor_enabled) {
+            // Log 2FA required
+            await auditLogger.log2FA(
+                user.id,
+                user.role,
+                user.name,
+                '2FA_REQUIRED',
+                'User login requires 2FA verification',
+                req
+            );
+            
             // Return response indicating 2FA is required
             return res.json({
                 requires2FA: true,
@@ -46,6 +84,16 @@ exports.login = async (req, res) => {
                 message: 'Please provide your 2FA code to complete login'
             });
         }
+
+        // Log successful login
+        await auditLogger.logAuth(
+            user.id,
+            user.role,
+            user.name,
+            'LOGIN_SUCCESS',
+            `Department: ${user.department_name || 'None'} | Committee: ${user.committee_name || 'None'}`,
+            req
+        );
 
         // Generate token for users without 2FA
         const token = jwt.sign(
@@ -79,6 +127,15 @@ exports.login = async (req, res) => {
             }
         });
     } catch (err) {
+        // Log login error
+        await auditLogger.logAuth(
+            'Unknown',
+            'unknown',
+            username || 'Unknown',
+            'LOGIN_ERROR',
+            `Error: ${err.message}`,
+            req
+        );
         console.error('Login error:', err);
         res.status(500).json({ error: 'Error during login' });
     }
@@ -90,6 +147,14 @@ exports.complete2FALogin = async (req, res) => {
     const db = getDatabase();
 
     if (!userId || !token) {
+        await auditLogger.log2FA(
+            userId || 'Unknown',
+            'unknown',
+            'Unknown',
+            '2FA_COMPLETION_FAILED - Missing parameters',
+            'User ID or token not provided',
+            req
+        );
         return res.status(400).json({ error: 'User ID and token are required' });
     }
 
@@ -109,6 +174,14 @@ exports.complete2FALogin = async (req, res) => {
         await twoFactorController.verify2FA(tempReq, tempRes);
 
         if (!verificationResult || !verificationResult.verified) {
+            await auditLogger.log2FA(
+                userId,
+                'unknown',
+                'Unknown',
+                '2FA_VERIFICATION_FAILED',
+                `Error: ${verificationResult?.error || 'Invalid verification code'}`,
+                req
+            );
             return res.status(400).json({ 
                 error: verificationResult?.error || 'Invalid verification code' 
             });
@@ -133,8 +206,26 @@ exports.complete2FALogin = async (req, res) => {
         });
 
         if (!user) {
+            await auditLogger.log2FA(
+                userId,
+                'unknown',
+                'Unknown',
+                '2FA_COMPLETION_FAILED - User not found',
+                'User not found after 2FA verification',
+                req
+            );
             return res.status(404).json({ error: 'User not found' });
         }
+
+        // Log successful 2FA completion
+        await auditLogger.log2FA(
+            user.id,
+            user.role,
+            user.name,
+            '2FA_LOGIN_SUCCESS',
+            `2FA verification completed successfully | Backup Code: ${isBackupCode ? 'Yes' : 'No'}`,
+            req
+        );
 
         // Generate JWT token
         const authToken = jwt.sign(
@@ -169,6 +260,14 @@ exports.complete2FALogin = async (req, res) => {
         });
 
     } catch (err) {
+        await auditLogger.log2FA(
+            userId,
+            'unknown',
+            'Unknown',
+            '2FA_COMPLETION_ERROR',
+            `Error: ${err.message}`,
+            req
+        );
         console.error('2FA login completion error:', err);
         res.status(500).json({ error: 'Error completing 2FA login' });
     }

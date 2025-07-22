@@ -621,6 +621,100 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create audit_logs table for comprehensive audit trail
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                user_role TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create indexes for audit_logs table for better performance
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_evaluation_criteria table for knockout clauses
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_evaluation_criteria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                criteria_title TEXT NOT NULL,
+                criteria_description TEXT NOT NULL,
+                is_knockout BOOLEAN DEFAULT 1, -- 1 for knockout, 0 for scoring
+                minimum_requirement TEXT,
+                weightage DECIMAL(5,2) DEFAULT 0, -- for scoring criteria
+                created_by INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_status_history table to track tender workflow
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_status_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                status TEXT NOT NULL, -- pending, approved, rejected, published
+                comments TEXT,
+                changed_by INTEGER NOT NULL,
+                changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (changed_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_tender_views table to track supplier interactions
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_tender_views (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                criteria_acknowledged BOOLEAN DEFAULT 0,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Create item_categories table for dropdown categories
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS item_categories (
@@ -1636,6 +1730,66 @@ const runMigrations = async () => {
             });
         });
 
+        // Migration 12: Create audit_logs table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_logs'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating audit_logs table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        user_role TEXT NOT NULL,
+                        user_name TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        details TEXT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating audit_logs table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created audit_logs table');
+                            
+                            // Create indexes after table creation
+                            Promise.all([
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                })
+                            ]).then(() => {
+                                console.log('Successfully created indexes for audit_logs table');
+                                resolve();
+                            }).catch(reject);
+                        }
+                    });
+                } else {
+                    console.log('audit_logs table already exists');
+                    resolve();
+                }
+            });
+        });
+
         // Migration 11: Insert default drug categories and related data
         await new Promise((resolve, reject) => {
             console.log('Inserting default drug categories...');
@@ -1652,23 +1806,29 @@ const runMigrations = async () => {
             
             let insertedCategories = 0;
             
-            drugCategories.forEach(category => {
+            const insertNextDrugCategory = (index) => {
+                if (index >= drugCategories.length) {
+                    console.log('Successfully inserted default drug categories');
+                    resolve();
+                    return;
+                }
+                
+                const category = drugCategories[index];
                 db.run(
                     'INSERT OR IGNORE INTO drug_categories (name, description) VALUES (?, ?)',
                     [category.name, category.description],
                     (err) => {
                         if (err) {
                             console.error(`Error inserting drug category ${category.name}:`, err);
-                        } else {
-                            insertedCategories++;
-                            if (insertedCategories === drugCategories.length) {
-                                console.log('Successfully inserted default drug categories');
-                                resolve();
-                            }
                         }
+                        insertedCategories++;
+                        // Continue with next category regardless of error
+                        insertNextDrugCategory(index + 1);
                     }
                 );
-            });
+            };
+            
+            insertNextDrugCategory(0);
         });
 
         await new Promise((resolve, reject) => {
@@ -1771,23 +1931,29 @@ const runMigrations = async () => {
             
             let insertedForms = 0;
             
-            dosageForms.forEach(form => {
+            const insertNextForm = (index) => {
+                if (index >= dosageForms.length) {
+                    console.log('Successfully inserted default dosage forms');
+                    resolve();
+                    return;
+                }
+                
+                const form = dosageForms[index];
                 db.run(
                     'INSERT OR IGNORE INTO dosage_forms (name, description) VALUES (?, ?)',
                     [form.name, form.description],
                     (err) => {
                         if (err) {
                             console.error(`Error inserting dosage form ${form.name}:`, err);
-                        } else {
-                            insertedForms++;
-                            if (insertedForms === dosageForms.length) {
-                                console.log('Successfully inserted default dosage forms');
-                                resolve();
-                            }
                         }
+                        insertedForms++;
+                        // Continue with next form regardless of error
+                        insertNextForm(index + 1);
                     }
                 );
-            });
+            };
+            
+            insertNextForm(0);
         });
 
         await new Promise((resolve, reject) => {
@@ -1805,23 +1971,29 @@ const runMigrations = async () => {
             
             let insertedPreparations = 0;
             
-            preparations.forEach(prep => {
+            const insertNextPreparation = (index) => {
+                if (index >= preparations.length) {
+                    console.log('Successfully inserted default preparations');
+                    resolve();
+                    return;
+                }
+                
+                const prep = preparations[index];
                 db.run(
                     'INSERT OR IGNORE INTO preparations (name, description) VALUES (?, ?)',
                     [prep.name, prep.description],
                     (err) => {
                         if (err) {
                             console.error(`Error inserting preparation ${prep.name}:`, err);
-                        } else {
-                            insertedPreparations++;
-                            if (insertedPreparations === preparations.length) {
-                                console.log('Successfully inserted default preparations');
-                                resolve();
-                            }
                         }
+                        insertedPreparations++;
+                        // Continue with next preparation regardless of error
+                        insertNextPreparation(index + 1);
                     }
                 );
-            });
+            };
+            
+            insertNextPreparation(0);
         });
 
         await new Promise((resolve, reject) => {
@@ -1837,23 +2009,29 @@ const runMigrations = async () => {
             
             let insertedEquipCategories = 0;
             
-            equipmentCategories.forEach(category => {
+            const insertNextEquipCategory = (index) => {
+                if (index >= equipmentCategories.length) {
+                    console.log('Successfully inserted default equipment categories');
+                    resolve();
+                    return;
+                }
+                
+                const category = equipmentCategories[index];
                 db.run(
                     'INSERT OR IGNORE INTO equipment_categories (name, description) VALUES (?, ?)',
                     [category.name, category.description],
                     (err) => {
                         if (err) {
                             console.error(`Error inserting equipment category ${category.name}:`, err);
-                        } else {
-                            insertedEquipCategories++;
-                            if (insertedEquipCategories === equipmentCategories.length) {
-                                console.log('Successfully inserted default equipment categories');
-                                resolve();
-                            }
                         }
+                        insertedEquipCategories++;
+                        // Continue with next category regardless of error
+                        insertNextEquipCategory(index + 1);
                     }
                 );
-            });
+            };
+            
+            insertNextEquipCategory(0);
         });
         
         console.log('Database migrations completed successfully');

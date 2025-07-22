@@ -12,7 +12,10 @@ const {
     getAllDemands,
     getDemandById,
     getDemandWithItems,
-    getAllDemandsWithItems
+    getAllDemandsWithItems,
+    rejectDemand,
+    getDemandItemsPaginated,
+    generateDemandExcelReport
 } = require('../controllers/demandController');
 
 const {
@@ -33,7 +36,10 @@ const {
     processExpiredTenders,
     getAwardedTenders,
     generateSupplyOrderPDF,
-    generateSupplyOrderPDFById
+    generateSupplyOrderPDFById,
+    createTenderWithCriteria,
+    getTenderWithCriteria,
+    acknowledgeCriteria
 } = require('../controllers/tenderController');
 
 // Create tender documents directory if it doesn't exist
@@ -244,6 +250,53 @@ router.get('/tenders/:tenderId/items-list', auth, async (req, res) => {
         console.error('Error downloading items list:', error);
         res.status(500).json({ message: 'Failed to download items list' });    }
 });
+
+// New tender creation routes
+router.post('/tenders/create', auth, uploadTenderFiles, createTenderWithCriteria);
+
+// Reject demand with reason
+router.post('/:id/reject', auth, rejectDemand);
+
+// Get demand items with pagination
+router.get('/:id/items', auth, getDemandItemsPaginated);
+
+// Get Excel report for demand
+router.get('/:id/excel-report', auth, generateDemandExcelReport);
+
+// Check if tender exists for a demand
+router.get('/:demandId/tender/exists', auth, async (req, res) => {
+    const { getDatabase } = require('../config/database');
+    const db = getDatabase();
+    const { demandId } = req.params;
+
+    try {
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id, tender_status FROM demand_tenders WHERE demand_id = ?',
+                [demandId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (tender) {
+            res.json({ exists: true, tenderId: tender.id, status: tender.tender_status });
+        } else {
+            res.json({ exists: false });
+        }
+    } catch (error) {
+        console.error('Error checking tender existence:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Get tender with evaluation criteria (for suppliers)
+router.get('/tenders/:tenderId/details', auth, getTenderWithCriteria);
+
+// Acknowledge evaluation criteria (for suppliers)
+router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
 
 // Error handling middleware for multer errors
 router.use((error, req, res, next) => {

@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { getDatabase } = require('../config/database');
 const { sendOTPEmail } = require('../utils/otpService');
+const auditLogger = require('../utils/auditLogger');
 
 // Generate random OTP
 const generateOTP = () => {
