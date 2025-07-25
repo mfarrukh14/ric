@@ -14,6 +14,7 @@ const financialOpeningRoutes = require('./src/routes/financialOpening');
 const itemRoutes = require('./src/routes/items');
 const twoFactorRoutes = require('./src/routes/twoFactor');
 const twoFactorEnforcementRoutes = require('./src/routes/twoFactorEnforcement');
+const supplierTwoFactorRoutes = require('./src/routes/supplierTwoFactor');
 const itemCategorizationRoutes = require('./src/routes/itemCategorization');
 const auditRoutes = require('./src/routes/audit');
 
@@ -37,6 +38,7 @@ app.use('/api/financial-opening', financialOpeningRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/2fa', twoFactorRoutes);
 app.use('/api/2fa-enforcement', twoFactorEnforcementRoutes);
+app.use('/api/supplier-2fa', supplierTwoFactorRoutes);
 app.use('/api/item-categorization', itemCategorizationRoutes);
 app.use('/api/audit', auditRoutes);
 

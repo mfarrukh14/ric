@@ -109,5 +109,78 @@ const auth = async (req, res, next) => {
     }
 };
 
+const authenticateSupplierToken = async (req, res, next) => {
+    try {
+        const token = req.header('Authorization')?.replace('Bearer ', '');
+        
+        if (!token) {
+            console.log('❌ No token provided for supplier:', req.path);
+            throw new Error('No token provided');
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET);
+        console.log('🔍 Supplier Auth middleware - Decoded token:', decoded, 'Path:', req.path);
+        
+        const db = getDatabase();
+        
+        let supplier = null;
+        
+        // Check if this is a supplier token (new format)
+        if (decoded.supplierId) {
+            supplier = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT * FROM suppliers WHERE id = ?',
+                    [decoded.supplierId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+        } else if (decoded.type === 'supplier') {
+            // Legacy supplier token format
+            supplier = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT * FROM suppliers WHERE id = ?',
+                    [decoded.id],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+        } else {
+            throw new Error('Invalid supplier token');
+        }
+
+        if (!supplier) {
+            throw new Error('Supplier not found');
+        }
+
+        // Set supplier object
+        req.supplier = {
+            id: supplier.id,
+            username: supplier.username,
+            business_email: supplier.business_email,
+            status: supplier.status,
+            two_factor_enabled: supplier.two_factor_enabled,
+            two_factor_secret: supplier.two_factor_secret,
+            backup_codes: supplier.backup_codes
+        };
+
+        console.log('✅ Supplier authenticated:', {
+            id: supplier.id,
+            username: supplier.username,
+            business_email: supplier.business_email
+        });
+        
+        next();
+    } catch (error) {
+        console.log('❌ Supplier Auth failed:', error.message);
+        res.status(401).json({ error: 'Please authenticate as supplier' });
+    }
+};
+
 module.exports = auth;
 module.exports.authenticateToken = auth;
+module.exports.authenticateSupplierToken = authenticateSupplierToken;

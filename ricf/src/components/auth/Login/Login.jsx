@@ -7,7 +7,7 @@ import SupplierRegistrationProcess from '../SupplierRegistrationProcess';
 
 const Login = ({ onLogin }) => {
   const [activeTab, setActiveTab] = useState('user');
-  const [supplierMode, setSupplierMode] = useState('login'); // 'login' or 'register'
+  const [supplierMode, setSupplierMode] = useState('login'); 
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [supplierCredentials, setSupplierCredentials] = useState({ usernameOrEmail: '', password: '' });
   const [supplierRegisterData, setSupplierRegisterData] = useState({
@@ -199,18 +199,12 @@ const Login = ({ onLogin }) => {
   const handleRegistrationComplete = () => {
     setShowRegistrationProcess(false);
     
-    // Get supplier data from localStorage and set it in the App component
-    const supplierData = localStorage.getItem('supplier');
-    if (supplierData && onLogin) {
-      const parsedSupplier = JSON.parse(supplierData);
-      const supplierWithRole = {
-        ...parsedSupplier,
-        role: 'supplier'
-      };
-      onLogin(supplierWithRole);
-    }
+    // Clear supplier data from localStorage since they need to log in again after registration
+    localStorage.removeItem('supplier');
+    localStorage.removeItem('supplierToken');
     
-    navigate('/supplier-dashboard');
+    // Navigate back to login page for fresh login after registration
+    navigate('/login');
   };
 
   // Show registration process if supplier needs to complete registration
@@ -264,7 +258,7 @@ const Login = ({ onLogin }) => {
       <img
         src="/images/leftSideElement1.png"
         alt="Left Decorative Element"
-        className="absolute -top-64 -left-64 w-[600px] h-auto z-30 pointer-events-none select-none"
+        className="hidden xl:block absolute -top-8 -left-8 w-[120px] 2xl:-top-16 2xl:-left-16 2xl:w-[200px] h-auto z-30 pointer-events-none select-none"
         style={{ objectFit: 'contain' }}
       />
       {/* Left Half - White with Logo */}
@@ -290,7 +284,7 @@ const Login = ({ onLogin }) => {
         <img
           src="/images/rightSideElement.png"
           alt="Right Decorative Element"
-          className="absolute -bottom-24 -right-24 w-[600px] h-auto z-30 pointer-events-none select-none"
+          className="hidden xl:block absolute -bottom-4 -right-4 w-[120px] 2xl:-bottom-8 2xl:-right-8 2xl:w-[200px] h-auto z-30 pointer-events-none select-none"
           style={{ objectFit: 'contain' }}
         />
         <div className="max-w-md w-full space-y-8 rounded-3xl border border-gray-800 bg-black/90 p-8" style={{ boxShadow: '0 24px 48px 12px rgba(255,255,255,0.22), 24px 0 48px 12px rgba(255,255,255,0.22)' }}>

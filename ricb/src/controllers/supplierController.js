@@ -919,24 +919,69 @@ const downloadDocument = async (req, res) => {
 
 // Functions for tenders and bids (existing functionality)
 const getActiveTenders = async (req, res) => {
+    console.log('🔍 getActiveTenders called by user:', req.user);
     const db = getDatabase();
 
     try {
+        // First get all active tenders
         const tenders = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description 
+                `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description, d.urgency, d.required_by
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.tender_status = 'active' AND dt.bidding_end_time > datetime('now')
+                 WHERE dt.tender_status = 'active' AND datetime(dt.bidding_end_time) > datetime('now')
                  ORDER BY dt.bidding_end_time ASC`,
                 (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
+                    if (err) {
+                        console.error('❌ Database error in getActiveTenders:', err);
+                        reject(err);
+                    } else {
+                        console.log('✅ Found active tenders:', rows.length);
+                        resolve(rows);
+                    }
                 }
             );
         });
 
-        res.json({ tenders });
+        // For each tender, get the associated demand items
+        const tendersWithItems = await Promise.all(
+            tenders.map(async (tender) => {
+                const items = await new Promise((resolve, reject) => {
+                    db.all(
+                        `SELECT id, item_name, quantity, estimated_cost, remarks, specifications, unit 
+                         FROM demand_items 
+                         WHERE demand_id = ? AND is_removed = 0`,
+                        [tender.demand_id],
+                        (err, itemRows) => {
+                            if (err) {
+                                console.error('❌ Database error fetching items for tender:', tender.id, err);
+                                reject(err);
+                            } else {
+                                resolve(itemRows || []);
+                            }
+                        }
+                    );
+                });
+
+                // Return tender with items array
+                return {
+                    ...tender,
+                    items: items.length > 0 ? items : [
+                        {
+                            id: `${tender.demand_id}-main`,
+                            item_name: tender.item_name,
+                            quantity: tender.quantity,
+                            estimated_cost: tender.estimated_cost,
+                            remarks: tender.description,
+                            unit: 'pieces'
+                        }
+                    ]
+                };
+            })
+        );
+
+        console.log('📤 Returning tenders with items:', tendersWithItems);
+        res.json(tendersWithItems);
 
     } catch (error) {
         console.error('Get active tenders error:', error);
@@ -945,8 +990,220 @@ const getActiveTenders = async (req, res) => {
 };
 
 const submitBid = async (req, res) => {
-    // Implementation for bid submission
-    res.status(501).json({ error: 'Bid submission not yet implemented in new system' });
+    const { tenderId } = req.params;
+    const supplierId = req.user.id;
+    const db = getDatabase();
+
+    try {
+        console.log('🔵 SubmitBid - Starting bid submission process');
+        console.log('Tender ID:', tenderId);
+        console.log('Supplier ID:', supplierId);
+        console.log('Request body:', req.body);
+        console.log('Uploaded files:', req.files);
+
+        // Validate required fields
+        const { 
+            proposedQuantity, 
+            totalCost, 
+            deliveryDays, 
+            comments, 
+            items,
+            companyName,
+            registeredNumber,
+            agreeToTerms
+        } = req.body;
+
+        if (!proposedQuantity || !totalCost || !deliveryDays) {
+            return res.status(400).json({ 
+                error: 'Missing required fields: proposedQuantity, totalCost, deliveryDays' 
+            });
+        }
+
+        if (!agreeToTerms || agreeToTerms !== 'true') {
+            return res.status(400).json({ 
+                error: 'You must agree to the terms and conditions to submit a bid' 
+            });
+        }
+
+        // Validate files
+        if (!req.files || !req.files.technicalBid || !req.files.financialBid) {
+            return res.status(400).json({ 
+                error: 'Both technical and financial bid documents are required' 
+            });
+        }
+
+        // Check if tender exists and is active for bidding
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT dt.*, d.item_name, d.description, d.quantity as demand_quantity
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE dt.id = ?`,
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ error: 'Tender not found' });
+        }
+
+        // Check if tender is still accepting bids
+        const now = new Date();
+        const biddingEndTime = new Date(tender.bidding_end_time);
+        
+        if (now > biddingEndTime) {
+            return res.status(400).json({ error: 'Bidding period has ended for this tender' });
+        }
+
+        if (tender.tender_status !== 'active') {
+            return res.status(400).json({ error: 'This tender is not accepting bids' });
+        }
+
+        // Check if supplier has already submitted a bid for this tender
+        const existingBid = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id FROM supplier_bids WHERE tender_id = ? AND supplier_id = ?',
+                [tenderId, supplierId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (existingBid) {
+            return res.status(400).json({ 
+                error: 'You have already submitted a bid for this tender' 
+            });
+        }
+
+        // Get file paths
+        const technicalBidPath = req.files.technicalBid[0].filename;
+        const financialBidPath = req.files.financialBid[0].filename;
+
+        console.log('📁 File paths:', {
+            technical: technicalBidPath,
+            financial: financialBidPath
+        });
+
+        // Parse items data
+        let itemsData = [];
+        try {
+            itemsData = items ? JSON.parse(items) : [];
+        } catch (error) {
+            return res.status(400).json({ error: 'Invalid items data format' });
+        }
+
+        if (itemsData.length === 0) {
+            return res.status(400).json({ error: 'At least one item must be included in the bid' });
+        }
+
+        // Begin transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Insert main bid record
+            const bidResult = await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO supplier_bids (
+                        tender_id, supplier_id, total_cost, proposed_quantity,
+                        delivery_days, bid_comments, technical_bid_document, financial_bid_document
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        tenderId,
+                        supplierId,
+                        parseFloat(totalCost),
+                        parseInt(proposedQuantity),
+                        parseInt(deliveryDays),
+                        comments || '',
+                        technicalBidPath,
+                        financialBidPath
+                    ],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve({ id: this.lastID });
+                    }
+                );
+            });
+
+            const bidId = bidResult.id;
+            console.log('✅ Main bid record created with ID:', bidId);
+
+            // Insert bid items
+            for (const item of itemsData) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO supplier_bid_items (
+                            bid_id, item_id, item_name, required_quantity,
+                            proposed_quantity, unit_price, total_cost, unit
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            bidId,
+                            item.item_id,
+                            item.item_name,
+                            item.required_quantity,
+                            item.can_provide,
+                            (item.total_cost / item.can_provide).toFixed(2), // Calculate unit price
+                            item.total_cost,
+                            item.unit || 'pieces'
+                        ],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+
+            console.log('✅ All bid items inserted successfully');
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            console.log('🎉 Bid submission completed successfully');
+
+            // Return success response
+            res.status(201).json({
+                message: 'Bid submitted successfully',
+                bidId: bidId,
+                data: {
+                    tender_id: tenderId,
+                    supplier_id: supplierId,
+                    total_cost: totalCost,
+                    proposed_quantity: proposedQuantity,
+                    delivery_days: deliveryDays,
+                    items_count: itemsData.length
+                }
+            });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('❌ SubmitBid error:', error);
+        res.status(500).json({ 
+            error: 'Failed to submit bid: ' + error.message 
+        });
+    }
 };
 
 const getSupplierBids = async (req, res) => {
@@ -972,7 +1229,7 @@ const getSupplierBids = async (req, res) => {
             );
         });
 
-        res.json({ bids });
+        res.json(bids);
 
     } catch (error) {
         console.error('Get supplier bids error:', error);

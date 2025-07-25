@@ -115,7 +115,10 @@ const UnifiedLogin = ({ onLogin }) => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(supplierCredentials),
+        body: JSON.stringify({
+          usernameOrEmail: supplierCredentials.email,
+          password: supplierCredentials.password
+        }),
       });
 
       const data = await response.json();

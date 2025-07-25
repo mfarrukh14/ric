@@ -25,10 +25,14 @@ const SupplierDashboard = () => {
             // Check for both regular token and supplier token
             const token = localStorage.getItem('token') || localStorage.getItem('supplierToken');
             
+            console.log('🔍 SupplierDashboard: fetchData called with token:', token ? 'exists' : 'missing');
+            
             if (!token) {
+                console.log('❌ No token found in localStorage');
                 return { error: 'no-token' };
             }
 
+            console.log('📤 Making API calls to fetch tenders and bids...');
             const [tendersResponse, bidsResponse] = await Promise.all([
                 fetch(`${apiUrl}/suppliers/tenders/active`, {
                     headers: {
@@ -44,7 +48,29 @@ const SupplierDashboard = () => {
                 })
             ]);
 
+            console.log('📥 API responses:', {
+                tenders: tendersResponse.status,
+                bids: bidsResponse.status
+            });
+
+            // Handle 403 Forbidden specifically
+            if (tendersResponse.status === 403 || bidsResponse.status === 403) {
+                console.log('🚫 403 Forbidden - Token might be invalid or expired');
+                return { error: 'forbidden' };
+            }
+
             if (!tendersResponse.ok || !bidsResponse.ok) {
+                console.error('❌ API responses failed:', {
+                    tendersStatus: tendersResponse.status,
+                    bidsStatus: bidsResponse.status
+                });
+                
+                // For other errors, still try to show something rather than failing completely
+                if (tendersResponse.status >= 500 || bidsResponse.status >= 500) {
+                    setError('Server error. Some data may not be available.');
+                    return { error: 'server-error', partial: true };
+                }
+                
                 throw new Error('Failed to fetch data');
             }
 
@@ -53,24 +79,35 @@ const SupplierDashboard = () => {
                 bidsResponse.json()
             ]);
 
-            setActiveTenders(tendersData);
-            setMyBids(bidsData);
+            console.log('📊 Received data:', {
+                tendersCount: Array.isArray(tendersData) ? tendersData.length : 'not array',
+                bidsCount: Array.isArray(bidsData) ? bidsData.length : 'not array'
+            });
+
+            // Ensure data is in array format
+            const tendersArray = Array.isArray(tendersData) ? tendersData : [];
+            const bidsArray = Array.isArray(bidsData) ? bidsData : [];
+
+            setActiveTenders(tendersArray);
+            setMyBids(bidsArray);
             
             // Calculate stats
-            const wonBids = bidsData.filter(bid => bid.tender_status === 'awarded' && bid.awarded_supplier_id === bid.supplier_id).length;
-            const pendingBids = bidsData.filter(bid => bid.tender_status === 'active' && new Date(bid.bidding_end_time) <= new Date()).length;
-            const activeBids = bidsData.filter(bid => bid.tender_status === 'active' && new Date(bid.bidding_end_time) > new Date()).length;
+            const wonBids = bidsArray.filter(bid => bid.tender_status === 'awarded' && bid.awarded_supplier_id === bid.supplier_id).length;
+            const pendingBids = bidsArray.filter(bid => bid.tender_status === 'active' && new Date(bid.bidding_end_time) <= new Date()).length;
+            const activeBids = bidsArray.filter(bid => bid.tender_status === 'active' && new Date(bid.bidding_end_time) > new Date()).length;
             
             setStats({
-                totalTenders: tendersData.length,
+                totalTenders: tendersArray.length,
                 activeBids,
                 wonBids,
                 pendingBids
             });
             
+            console.log('✅ Data successfully loaded and state updated');
             return { success: true };
         } catch (err) {
-            setError(err.message);
+            console.error('❌ fetchData error:', err);
+            setError('Failed to load dashboard data: ' + err.message);
             return { error: err.message };
         } finally {
             setLoading(false);
@@ -79,25 +116,62 @@ const SupplierDashboard = () => {
 
     useEffect(() => {
         const initializeComponent = async () => {
+            console.log('🔵 SupplierDashboard: Initializing component...');
+            
             // Check for user data in localStorage (could be from regular login or supplier login)
             const storedUser = localStorage.getItem('user');
             const storedSupplier = localStorage.getItem('supplier');
+            const hasToken = localStorage.getItem('token') || localStorage.getItem('supplierToken');
+            
+            console.log('🔍 SupplierDashboard: Checking auth state:', {
+                hasStoredUser: !!storedUser,
+                hasStoredSupplier: !!storedSupplier,
+                hasToken: !!hasToken
+            });
             
             if (storedUser) {
                 try {
                     const userData = JSON.parse(storedUser);
                     if (userData.role === 'supplier') {
+                        console.log('✅ SupplierDashboard: Valid supplier user found');
                         setSupplier(userData);
-                        const result = await fetchData();
-                        if (result.error === 'no-token') {
-                            navigate('/');
+                        
+                        // Only fetch data if we have a token
+                        if (hasToken) {
+                            const result = await fetchData();
+                            if (result.error === 'no-token') {
+                                console.log('❌ SupplierDashboard: No token found, clearing auth');
+                                localStorage.removeItem('user');
+                                localStorage.removeItem('supplier');
+                                localStorage.removeItem('token');
+                                localStorage.removeItem('supplierToken');
+                                navigate('/login');
+                                return;
+                            } else if (result.error === 'forbidden') {
+                                console.log('🚫 SupplierDashboard: 403 Forbidden - Session expired or invalid');
+                                setError('Your session has expired. Please login again.');
+                                localStorage.removeItem('user');
+                                localStorage.removeItem('supplier');
+                                localStorage.removeItem('token');
+                                localStorage.removeItem('supplierToken');
+                                // Don't navigate immediately to avoid loops, let user click login
+                                setLoading(false);
+                                return;
+                            }
+                        } else {
+                            console.log('❌ SupplierDashboard: No auth token found');
+                            setError('Authentication token not found. Please login again.');
+                            setLoading(false);
                         }
                     } else {
-                        navigate('/');
+                        console.log('❌ SupplierDashboard: User is not a supplier, redirecting');
+                        navigate('/dashboard');
+                        return;
                     }
                 } catch (err) {
-                    console.error('Error parsing user data:', err);
-                    navigate('/');
+                    console.error('❌ SupplierDashboard: Error parsing user data:', err);
+                    setError('Invalid session data. Please login again.');
+                    setLoading(false);
                 }
             } else if (storedSupplier) {
                 // Handle supplier login data
@@ -107,21 +181,52 @@ const SupplierDashboard = () => {
                         ...supplierData,
                         role: 'supplier'
                     };
+                    console.log('✅ SupplierDashboard: Valid supplier data found');
                     setSupplier(supplierUser);
-                    const result = await fetchData();
-                    if (result.error === 'no-token') {
-                        navigate('/');
+                    
+                    // Only fetch data if we have a token
+                    if (hasToken) {
+                        const result = await fetchData();
+                        if (result.error === 'no-token') {
+                            console.log('❌ SupplierDashboard: No token found, clearing auth');
+                            localStorage.removeItem('user');
+                            localStorage.removeItem('supplier');
+                            localStorage.removeItem('token');
+                            localStorage.removeItem('supplierToken');
+                            navigate('/login');
+                            return;
+                        } else if (result.error === 'forbidden') {
+                            console.log('🚫 SupplierDashboard: 403 Forbidden - Session expired or invalid');
+                            setError('Your session has expired. Please login again.');
+                            localStorage.removeItem('user');
+                            localStorage.removeItem('supplier');
+                            localStorage.removeItem('token');
+                            localStorage.removeItem('supplierToken');
+                            // Don't navigate immediately to avoid loops, let user click login
+                            setLoading(false);
+                            return;
+                        }
+                    } else {
+                        console.log('❌ SupplierDashboard: No auth token found');
+                        setError('Authentication token not found. Please login again.');
+                        setLoading(false);
                     }
                 } catch (err) {
-                    console.error('Error parsing supplier data:', err);
-                    navigate('/');
+                    console.error('❌ SupplierDashboard: Error parsing supplier data:', err);
+                    setError('Invalid session data. Please login again.');
+                    setLoading(false);
                 }
             } else {
-                navigate('/');
+                console.log('❌ SupplierDashboard: No user data found, redirecting to login');
+                navigate('/login');
+                return;
             }
         };
 
-        initializeComponent();
+        // Add a small delay to prevent rapid re-renders and navigation throttling
+        const timeoutId = setTimeout(initializeComponent, 100);
+        
+        return () => clearTimeout(timeoutId);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []); // Empty dependency array intentionally - we only want this to run once on mount
 
@@ -557,6 +662,16 @@ const SupplierDashboard = () => {
                     <div className="mb-6">
                         <nav className="flex space-x-8" aria-label="Tabs">
                             <button
+                                onClick={() => setActiveTab('overview')}
+                                className={`${
+                                    activeTab === 'overview'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                } whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
+                            >
+                                📊 Overview
+                            </button>
+                            <button
                                 onClick={() => setActiveTab('tenders')}
                                 className={`${
                                     activeTab === 'tenders'
@@ -587,8 +702,21 @@ const SupplierDashboard = () => {
                                 <i className="fas fa-balance-scale mr-1"></i>
                                 Grievances
                             </button>
+                            <button
+                                onClick={() => setActiveTab('security')}
+                                className={`${
+                                    activeTab === 'security'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                } whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}
+                            >
+                                🔒 Security
+                            </button>
                         </nav>
                     </div>
+
+                    {/* Overview Tab */}
+                    {activeTab === 'overview' && <OverviewContent />}
 
                     {/* Active Tenders Tab */}
                     {activeTab === 'tenders' && (
@@ -771,6 +899,9 @@ const SupplierDashboard = () => {
                     {activeTab === 'grievances' && (
                         <GrievanceManagement />
                     )}
+
+                    {/* Security Tab */}
+                    {activeTab === 'security' && <SecurityContent />}
                 </div>
             </div>
         </div>

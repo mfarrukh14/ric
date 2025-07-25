@@ -2033,6 +2033,52 @@ const runMigrations = async () => {
             
             insertNextEquipCategory(0);
         });
+
+        // Migration 13: Add 2FA columns to suppliers table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(suppliers)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const has2FAColumns = columnNames.includes('two_factor_secret') && 
+                                      columnNames.includes('two_factor_enabled') && 
+                                      columnNames.includes('backup_codes');
+                
+                if (!has2FAColumns) {
+                    console.log('Adding 2FA columns to suppliers table...');
+                    
+                    const addColumn = (columnDef) => {
+                        return new Promise((resolveCol, rejectCol) => {
+                            db.run(`ALTER TABLE suppliers ADD COLUMN ${columnDef}`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    rejectCol(err);
+                                } else {
+                                    resolveCol();
+                                }
+                            });
+                        });
+                    };
+                    
+                    Promise.all([
+                        addColumn('two_factor_secret TEXT'),
+                        addColumn('two_factor_enabled INTEGER DEFAULT 0'),
+                        addColumn('backup_codes TEXT')
+                    ]).then(() => {
+                        console.log('Successfully added 2FA columns to suppliers table');
+                        resolve();
+                    }).catch((err) => {
+                        console.error('Error adding 2FA columns to suppliers table:', err);
+                        reject(err);
+                    });
+                } else {
+                    console.log('suppliers table already has 2FA columns');
+                    resolve();
+                }
+            });
+        });
         
         console.log('Database migrations completed successfully');
     } catch (error) {

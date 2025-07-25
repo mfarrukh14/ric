@@ -120,9 +120,14 @@ const getExpiredTenders = async (req, res) => {
             // Get all bids for this tender with supplier details
             const bids = await new Promise((resolve, reject) => {
                 db.all(
-                    `SELECT sb.*, s.company_name, s.company_email, s.contact_person
+                    `SELECT sb.*, 
+                            s.business_email as company_email,
+                            s.username,
+                            bp.business_name as company_name,
+                            bp.contact_person_name as contact_person
                      FROM supplier_bids sb
                      JOIN suppliers s ON sb.supplier_id = s.id
+                     LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                      WHERE sb.tender_id = ? AND s.status = 'approved'
                      ORDER BY sb.total_cost ASC, sb.created_at ASC`,
                     [tender.id],
@@ -272,9 +277,15 @@ const getTenderDetails = async (req, res) => {
         // Get all bids with supplier details and their item-specific bids
         const bids = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT sb.*, s.company_name, s.company_email, s.contact_person, s.contact_number
+                `SELECT sb.*, 
+                        s.business_email as company_email,
+                        s.username,
+                        bp.business_name as company_name,
+                        bp.contact_person_name as contact_person,
+                        bp.business_mobile_number as contact_number
                  FROM supplier_bids sb
                  JOIN suppliers s ON sb.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                  WHERE sb.tender_id = ? AND s.status = 'approved'
                  ORDER BY sb.total_cost ASC, sb.created_at ASC`,
                 [tender.id],
@@ -616,9 +627,13 @@ const submitItemWiseEvaluation = async (req, res) => {
                                 // Get supplier details from bid
                                 const supplierDetails = await new Promise((resolve, reject) => {
                                     db.get(
-                                        `SELECT s.company_name, s.company_email, s.contact_person
+                                        `SELECT s.business_email as company_email,
+                                                s.username,
+                                                bp.business_name as company_name,
+                                                bp.contact_person_name as contact_person
                                          FROM supplier_bids sb
                                          JOIN suppliers s ON sb.supplier_id = s.id
+                                         LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                                          WHERE sb.id = ?`,
                                         [rejected.bidId],
                                         (err, row) => {
@@ -711,9 +726,14 @@ const awardTender = async (req, res) => {
             // Get the winning bid details
             const winningBid = await new Promise((resolve, reject) => {
                 db.get(
-                    `SELECT sb.*, s.company_name, s.company_email, dt.demand_id, d.item_name
+                    `SELECT sb.*, 
+                            s.business_email as company_email,
+                            s.username,
+                            bp.business_name as company_name,
+                            dt.demand_id, d.item_name
                      FROM supplier_bids sb
                      JOIN suppliers s ON sb.supplier_id = s.id
+                     LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                      JOIN demand_tenders dt ON sb.tender_id = dt.id
                      JOIN demands d ON dt.demand_id = d.id
                      WHERE sb.id = ? AND sb.tender_id = ?`,
@@ -880,9 +900,14 @@ const generateTechnicalEvaluationReport = async (db, tenderId, evaluations) => {
         // Get all bids with supplier details
         const allBids = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT sb.*, s.company_name, s.company_email, s.contact_person
+                `SELECT sb.*, 
+                        s.business_email as company_email,
+                        s.username,
+                        bp.business_name as company_name,
+                        bp.contact_person_name as contact_person
                  FROM supplier_bids sb
                  JOIN suppliers s ON sb.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                  WHERE sb.tender_id = ? AND s.status = 'approved'
                  ORDER BY sb.total_cost ASC, sb.created_at ASC`,
                 [tenderId],
@@ -1194,11 +1219,15 @@ const processExpiredGrievanceDeadline = async (tenderId) => {
         const rejectedSuppliers = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT DISTINCT te.supplier_id, te.tender_id, te.item_id, te.rejection_reason,
-                        s.company_name, s.company_email, s.contact_person,
+                        s.business_email as company_email,
+                        s.username,
+                        bp.business_name as company_name,
+                        bp.contact_person_name as contact_person,
                         di.item_name,
                         dt.demand_id
                  FROM technical_evaluations te
                  JOIN suppliers s ON te.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                  LEFT JOIN demand_items di ON te.item_id = di.id
                  LEFT JOIN demand_tenders dt ON te.tender_id = dt.id
                  LEFT JOIN demands d ON dt.demand_id = d.id

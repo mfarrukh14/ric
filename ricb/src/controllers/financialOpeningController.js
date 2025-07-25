@@ -512,7 +512,9 @@ const openFinancialBids = async (req, res) => {
                         `SELECT DISTINCT 
                             COALESCE(tap.supplier_id, ta.supplier_id) as supplier_id,
                             COALESCE(tap.bid_id, ta.grievance_id) as bid_id,
-                            s.company_name, s.company_email, s.contact_person,
+                            COALESCE(bp.business_name, s.username) as company_name, 
+                            s.business_email as company_email, 
+                            bp.contact_person_name as contact_person,
                             sb.total_cost, sb.proposed_quantity, sb.delivery_days,
                             sb.financial_bid_document, sb.technical_bid_document,
                             sbi.unit_price, sbi.proposed_quantity as item_quantity, sbi.total_cost as item_total_cost,
@@ -525,6 +527,7 @@ const openFinancialBids = async (req, res) => {
                          LEFT JOIN temporary_approved_pools tap ON combined.supplier_id = tap.supplier_id AND tap.tender_id = ? AND tap.item_id = ?
                          LEFT JOIN temporary_approvals ta ON combined.supplier_id = ta.supplier_id AND ta.tender_id = ? AND ta.item_id = ? AND ta.status = 'active'
                          JOIN suppliers s ON combined.supplier_id = s.id
+                         LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                          JOIN supplier_bids sb ON combined.bid_id = sb.id
                          LEFT JOIN supplier_bid_items sbi ON sb.id = sbi.bid_id AND sbi.item_id = ?
                          ORDER BY 

@@ -21,7 +21,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
         const fetchTenderData = async () => {
             try {
-                const token = localStorage.getItem('token');
+                const token = localStorage.getItem('supplierToken');
+                console.log('BidApplication - fetching tender data with token:', token ? 'present' : 'missing');
                 const response = await fetch(`${apiUrl}/suppliers/tenders/active`, {
                     headers: {
                         'Authorization': `Bearer ${token}`
@@ -29,18 +30,23 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 });
 
                 if (!response.ok) {
+                    console.error('BidApplication - Failed to fetch tender data:', response.status, response.statusText);
                     throw new Error('Failed to fetch tender data');
                 }
 
                 const data = await response.json();
+                console.log('BidApplication - Tender data received:', data);
                 const foundTender = data.find(t => t.id === parseInt(tenderId));
                 
                 if (!foundTender) {
+                    console.error('BidApplication - Tender not found with ID:', tenderId, 'Available tenders:', data.map(t => t.id));
                     throw new Error('Tender not found');
                 }
 
+                console.log('BidApplication - Found tender:', foundTender);
                 setTender(foundTender);
             } catch (err) {
+                console.error('BidApplication - Error fetching tender:', err);
                 setError(err.message);
             } finally {
                 setFetchingTender(false);
@@ -250,7 +256,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         setLoading(true);
         
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('supplierToken');
+            console.log('BidApplication - submitting bid with token:', token ? 'present' : 'missing');
             const formData = new FormData();
             
             const totalCost = calculateTotalBidAmount();
@@ -289,9 +296,11 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
             if (!response.ok) {
                 const errorData = await response.json();
+                console.error('BidApplication - Failed to submit bid:', response.status, response.statusText, errorData);
                 throw new Error(errorData.message || 'Failed to submit bid');
             }
 
+            console.log('BidApplication - Bid submitted successfully');
             handleSuccess();
             
         } catch (err) {

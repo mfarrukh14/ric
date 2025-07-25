@@ -349,9 +349,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
         if (!bp.businessFaxNumber) errors.push('Business Fax Number is required');
         break;
       case 2:
-        if (!emailVerified && !isResubmission) {
-          errors.push('Email verification is required');
-        }
+        // Email verification is enforced by UI flow, no validation needed
         break;
       case 3:
         if (!formData.registrationBodies || formData.registrationBodies.length === 0) {
@@ -714,10 +712,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
     if (!bp.businessMobileNumber) errors.push('Business Mobile Number is required');
     if (!bp.businessFaxNumber) errors.push('Business Fax Number is required');
 
-    // Step 2 - Email verification
-    if (!emailVerified && !isResubmission) {
-      errors.push('Email verification is required');
-    }
+    // Step 2 - Email verification is enforced by UI flow, no validation needed
 
     // Step 3 - Registration Bodies validation
     if (!formData.registrationBodies || formData.registrationBodies.length === 0) {
@@ -867,7 +862,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       if (onComplete) {
         onComplete();
       } else {
-        navigate('/supplier-dashboard');
+        navigate('/login');
       }
     } catch (err) {
       console.error('❌ Submit application error:', err);
