@@ -313,6 +313,20 @@ const getTenderDetails = async (req, res) => {
 
         tender.bids = bids;
 
+        // Fetch evaluation criteria (knockout + scoring) for context
+        const criteria = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT id, criteria_title, criteria_description, is_knockout, minimum_requirement, weightage
+                 FROM tender_evaluation_criteria
+                 WHERE tender_id = ?
+                 ORDER BY is_knockout DESC, id ASC`,
+                [tenderId],
+                (err, rows) => { if (err) reject(err); else resolve(rows); }
+            );
+        });
+        tender.knockoutClauses = criteria.filter(c => c.is_knockout);
+        tender.scoringCriteria = criteria.filter(c => !c.is_knockout);
+
         res.json(tender);
     } catch (error) {
         console.error('Error fetching tender details:', error);
@@ -352,16 +366,19 @@ const downloadTechnicalBid = async (req, res) => {
         }
 
         const fs = require('fs');
-        if (!fs.existsSync(bid.technical_bid_document)) {
+        const path = require('path');
+        // If we stored only filename, build absolute path inside uploads directory
+        let filePath = bid.technical_bid_document;
+        if (!path.isAbsolute(filePath)) {
+            filePath = path.join(__dirname, '../../uploads', filePath);
+        }
+        if (!fs.existsSync(filePath)) {
             return res.status(404).json({ message: 'Technical bid document file not found' });
         }
 
-        // Set headers for download
         res.setHeader('Content-Disposition', `attachment; filename="technical-bid-${bidId}.pdf"`);
         res.setHeader('Content-Type', 'application/pdf');
-        
-        // Send file
-        res.sendFile(bid.technical_bid_document);
+        res.sendFile(filePath);
     } catch (error) {
         console.error('Error downloading technical bid:', error);
         res.status(500).json({ message: 'Failed to download technical bid document' });
@@ -372,7 +389,8 @@ const downloadTechnicalBid = async (req, res) => {
 const submitItemWiseEvaluation = async (req, res) => {
     const db = getDatabase();
     const { tenderId } = req.params;
-    const { evaluations } = req.body;
+    // evaluations structure extended to include knockoutChecks per bid: { approvedCompanies:[{bidId, knockoutChecks:[{id, checked}]}], rejectedCompanies:[{bidId, reason, knockoutChecks:[...] , grievanceMarked:true/false}] }
+    const { evaluations, scoring } = req.body; // scoring: { bidId: { total: number, breakdown: {criteriaId: score} } }
     const user = req.user;
 
     // Check if user is from technical evaluation committee
@@ -397,7 +415,7 @@ const submitItemWiseEvaluation = async (req, res) => {
         });
 
         try {
-            // Create technical_evaluations table if it doesn't exist
+            // Create technical_evaluations table if it doesn't exist (extended schema)
             await new Promise((resolve, reject) => {
                 db.run(`
                     CREATE TABLE IF NOT EXISTS technical_evaluations (
@@ -410,6 +428,11 @@ const submitItemWiseEvaluation = async (req, res) => {
                         rejection_reason TEXT,
                         evaluated_by INTEGER NOT NULL,
                         evaluated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        knockout_clauses_checked INTEGER DEFAULT 0,
+                        knockout_clause_failures TEXT,
+                        grievance_marked INTEGER DEFAULT 0,
+                        total_score REAL,
+                        scoring_breakdown TEXT,
                         FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
                         FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
                         FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -482,18 +505,25 @@ const submitItemWiseEvaluation = async (req, res) => {
                         );
                     });
 
-                    if (bid) {
+                        if (bid) {
+                            // Determine knockout clause state
+                            const knockoutChecks = Array.isArray(approved.knockoutChecks) ? approved.knockoutChecks : [];
+                            const allKnockoutChecked = knockoutChecks.length === 0 ? 1 : (knockoutChecks.every(k => k.checked) ? 1 : 0);
+                            if (!allKnockoutChecked) {
+                                // If any knockout clause failed, this bid cannot be approved
+                                return res.status(400).json({ message: 'Cannot approve a bid where all knockout clauses are not satisfied', bidId: approved.bidId });
+                            }
                         // Insert into technical evaluations
+                        const scoreObj = scoring && scoring[approved.bidId] ? scoring[approved.bidId] : null;
+                        const totalScore = scoreObj && typeof scoreObj.total === 'number' ? scoreObj.total : null;
+                        const breakdownJSON = scoreObj && scoreObj.breakdown ? JSON.stringify(scoreObj.breakdown) : null;
                         await new Promise((resolve, reject) => {
                             db.run(
                                 `INSERT INTO technical_evaluations 
-                                 (tender_id, item_id, bid_id, supplier_id, status, evaluated_by)
-                                 VALUES (?, ?, ?, ?, 'approved', ?)`,
-                                [tenderId, itemId, approved.bidId, bid.supplier_id, user.id],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
+                                 (tender_id, item_id, bid_id, supplier_id, status, evaluated_by, knockout_clauses_checked, knockout_clause_failures, grievance_marked, total_score, scoring_breakdown)
+                                 VALUES (?, ?, ?, ?, 'approved', ?, 1, NULL, 0, ?, ?)`,
+                                [tenderId, itemId, approved.bidId, bid.supplier_id, user.id, totalScore, breakdownJSON],
+                                (err) => { if (err) reject(err); else resolve(); }
                             );
                         });
 
@@ -528,16 +558,20 @@ const submitItemWiseEvaluation = async (req, res) => {
                     });
 
                     if (bid) {
+                        const knockoutChecks = Array.isArray(rejected.knockoutChecks) ? rejected.knockoutChecks : [];
+                        const failedClauses = knockoutChecks.filter(k => !k.checked).map(k => k.id);
+                        const anyFailed = failedClauses.length > 0;
+                        const grievanceMarked = rejected.grievanceMarked ? 1 : 0;
+                        const scoreObj = scoring && scoring[rejected.bidId] ? scoring[rejected.bidId] : null;
+                        const totalScore = scoreObj && typeof scoreObj.total === 'number' ? scoreObj.total : null;
+                        const breakdownJSON = scoreObj && scoreObj.breakdown ? JSON.stringify(scoreObj.breakdown) : null;
                         await new Promise((resolve, reject) => {
                             db.run(
                                 `INSERT INTO technical_evaluations 
-                                 (tender_id, item_id, bid_id, supplier_id, status, rejection_reason, evaluated_by)
-                                 VALUES (?, ?, ?, ?, 'rejected', ?, ?)`,
-                                [tenderId, itemId, rejected.bidId, bid.supplier_id, rejected.reason, user.id],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
+                                 (tender_id, item_id, bid_id, supplier_id, status, rejection_reason, evaluated_by, knockout_clauses_checked, knockout_clause_failures, grievance_marked, total_score, scoring_breakdown)
+                                 VALUES (?, ?, ?, ?, 'rejected', ?, ?, ?, ?, ?, ?, ?)`,
+                                [tenderId, itemId, rejected.bidId, bid.supplier_id, rejected.reason, user.id, anyFailed ? 0 : 1, anyFailed ? failedClauses.join(',') : null, grievanceMarked, totalScore, breakdownJSON],
+                                (err) => { if (err) reject(err); else resolve(); }
                             );
                         });
                     }

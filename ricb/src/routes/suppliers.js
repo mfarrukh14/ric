@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const auth = require('../middleware/auth');
+const { acknowledgeCriteria } = require('../controllers/tenderController');
 const {
     registerSupplier,
     loginSupplier,
@@ -109,6 +110,9 @@ router.get('/:supplierId/document/:documentType', auth, downloadDocument);
 
 // Submit bid for a tender
 router.post('/tenders/:tenderId/bid', auth, uploadBidFields, submitBid);
+
+// Acknowledge knockout clauses / evaluation criteria prior to bid
+router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
 
 // Get supplier's own bids
 router.get('/bids/my-bids', auth, getSupplierBids);

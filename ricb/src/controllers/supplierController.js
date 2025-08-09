@@ -923,25 +923,47 @@ const getActiveTenders = async (req, res) => {
     const db = getDatabase();
 
     try {
-        // First get all active tenders
-        const tenders = await new Promise((resolve, reject) => {
+        // Get all tenders with status active (time filter applied in JS for broader timestamp compatibility)
+        const rawActive = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description, d.urgency, d.required_by
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.tender_status = 'active' AND datetime(dt.bidding_end_time) > datetime('now')
+                 WHERE dt.tender_status = 'active'
                  ORDER BY dt.bidding_end_time ASC`,
                 (err, rows) => {
                     if (err) {
                         console.error('❌ Database error in getActiveTenders:', err);
                         reject(err);
                     } else {
-                        console.log('✅ Found active tenders:', rows.length);
-                        resolve(rows);
+                        console.log('✅ Raw active tenders fetched:', rows.length);
+                        resolve(rows || []);
                     }
                 }
             );
         });
+
+        // Normalize and filter by bidding_end_time > now
+        const nowTs = Date.now();
+        const tenders = rawActive.filter(t => {
+            if (!t.bidding_end_time) return false;
+            // Normalize possible ISO / with T / with Z / without space
+            let raw = t.bidding_end_time;
+            // Replace 'T' with space for readability (Date can still parse ISO with T, but keep uniform)
+            const parsed = Date.parse(raw);
+            if (isNaN(parsed)) {
+                // Try fallback by stripping Z and milliseconds
+                let fallback = raw.replace('T',' ').replace('Z','').split('.')[0];
+                const parsedFallback = Date.parse(fallback);
+                if (isNaN(parsedFallback)) {
+                    console.warn('⚠️ Unparseable bidding_end_time, excluding tender id', t.id, raw);
+                    return false;
+                }
+                return parsedFallback > nowTs;
+            }
+            return parsed > nowTs;
+        });
+        console.log(`🕒 After time filtering, active tenders remaining: ${tenders.length}`);
 
         // For each tender, get the associated demand items
         const tendersWithItems = await Promise.all(
@@ -980,7 +1002,7 @@ const getActiveTenders = async (req, res) => {
             })
         );
 
-        console.log('📤 Returning tenders with items:', tendersWithItems);
+    console.log('📤 Returning tenders with items (filtered):', tendersWithItems.length);
         res.json(tendersWithItems);
 
     } catch (error) {
@@ -1081,6 +1103,21 @@ const submitBid = async (req, res) => {
             });
         }
 
+        // Ensure supplier acknowledged knockout clauses and all were checked
+        const knockoutAck = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT all_clauses_checked FROM supplier_knockout_acknowledgments 
+                 WHERE tender_id = ? AND supplier_id = ?`,
+                [tenderId, supplierId],
+                (err, row) => { if (err) reject(err); else resolve(row); }
+            );
+        });
+        if (!knockoutAck || knockoutAck.all_clauses_checked !== 1) {
+            return res.status(400).json({ 
+                error: 'Please review and acknowledge all knockout clauses before submitting a bid.'
+            });
+        }
+
         // Get file paths
         const technicalBidPath = req.files.technicalBid[0].filename;
         const financialBidPath = req.files.financialBid[0].filename;
@@ -1102,6 +1139,21 @@ const submitBid = async (req, res) => {
             return res.status(400).json({ error: 'At least one item must be included in the bid' });
         }
 
+        // Derive totals from item lines to avoid zero-value abuse
+        const derivedTotals = itemsData.reduce((acc, it) => {
+            const qty = parseInt(it.can_provide || it.proposed_quantity || 0);
+            const total = parseFloat(it.total_cost || 0);
+            if (qty > 0 && total > 0) {
+                acc.quantity += qty;
+                acc.cost += total;
+            }
+            return acc;
+        }, { quantity: 0, cost: 0 });
+
+        if (derivedTotals.quantity === 0 || derivedTotals.cost === 0) {
+            return res.status(400).json({ error: 'Bid must include at least one item with positive quantity and cost' });
+        }
+
         // Begin transaction
         await new Promise((resolve, reject) => {
             db.run('BEGIN TRANSACTION', (err) => {
@@ -1121,8 +1173,8 @@ const submitBid = async (req, res) => {
                     [
                         tenderId,
                         supplierId,
-                        parseFloat(totalCost),
-                        parseInt(proposedQuantity),
+                        parseFloat(totalCost) > 0 ? parseFloat(totalCost) : derivedTotals.cost,
+                        parseInt(proposedQuantity) > 0 ? parseInt(proposedQuantity) : derivedTotals.quantity,
                         parseInt(deliveryDays),
                         comments || '',
                         technicalBidPath,

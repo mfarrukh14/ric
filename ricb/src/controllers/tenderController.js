@@ -724,13 +724,46 @@ const getTenderWithCriteria = async (req, res) => {
         const knockoutClauses = criteria.filter(c => c.is_knockout);
         const scoringCriteria = criteria.filter(c => !c.is_knockout);
 
+        // Fetch supplier acknowledgment details if supplier context
+        let criteriaAcknowledged = 0;
+        let supplierKnockoutChecklist = null;
+        if (supplierId) {
+            try {
+                const ackRow = await new Promise((resolve, reject) => {
+                    db.get(
+                        `SELECT criteria_acknowledged FROM supplier_tender_views WHERE tender_id = ? AND supplier_id = ?`,
+                        [tenderId, supplierId],
+                        (err, row) => { if (err) reject(err); else resolve(row); }
+                    );
+                });
+                if (ackRow) criteriaAcknowledged = ackRow.criteria_acknowledged || 0;
+                const koAck = await new Promise((resolve, reject) => {
+                    db.get(
+                        `SELECT all_clauses_checked, checklist FROM supplier_knockout_acknowledgments WHERE tender_id = ? AND supplier_id = ?`,
+                        [tenderId, supplierId],
+                        (err, row) => { if (err) reject(err); else resolve(row); }
+                    );
+                });
+                if (koAck) {
+                    supplierKnockoutChecklist = {
+                        all_clauses_checked: koAck.all_clauses_checked,
+                        checklist: (() => { try { return JSON.parse(koAck.checklist); } catch { return []; } })()
+                    };
+                }
+            } catch (ackErr) {
+                console.error('Error fetching supplier acknowledgment data:', ackErr.message);
+            }
+        }
+
         res.json({
             tender: {
                 ...tender,
                 items: formattedItems,
                 knockoutClauses,
                 scoringCriteria,
-                totalCriteria: criteria.length
+                totalCriteria: criteria.length,
+                criteria_acknowledged: criteriaAcknowledged === 1,
+                supplier_knockout_ack: supplierKnockoutChecklist
             }
         });
 
@@ -750,20 +783,36 @@ const acknowledgeCriteria = async (req, res) => {
     const supplierId = req.user?.id; // Get from auth middleware
 
     try {
+        const { knockoutChecklist } = req.body || {};
+        // Update legacy acknowledgement flag
         await new Promise((resolve, reject) => {
             db.run(
                 `UPDATE supplier_tender_views 
                  SET criteria_acknowledged = 1 
                  WHERE tender_id = ? AND supplier_id = ?`,
                 [tenderId, supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
+                (err) => { if (err) reject(err); else resolve(); }
             );
         });
 
-        res.json({ message: 'Evaluation criteria acknowledged successfully' });
+        // Store detailed knockout clause acknowledgment
+        if (Array.isArray(knockoutChecklist) && knockoutChecklist.length > 0) {
+            const allChecked = knockoutChecklist.every(c => c.checked === true);
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO supplier_knockout_acknowledgments (tender_id, supplier_id, all_clauses_checked, checklist)
+                     VALUES (?, ?, ?, ?)
+                     ON CONFLICT(tender_id, supplier_id) DO UPDATE SET
+                        all_clauses_checked=excluded.all_clauses_checked,
+                        checklist=excluded.checklist,
+                        acknowledged_at=CURRENT_TIMESTAMP`,
+                    [tenderId, supplierId, allChecked ? 1 : 0, JSON.stringify(knockoutChecklist)],
+                    (err)=>{ if (err) reject(err); else resolve(); }
+                );
+            });
+        }
+
+        res.json({ message: 'Evaluation criteria / knockout clauses acknowledged successfully' });
 
     } catch (error) {
         console.error('Error acknowledging criteria:', error);
@@ -771,6 +820,57 @@ const acknowledgeCriteria = async (req, res) => {
             message: 'Failed to acknowledge criteria', 
             error: error.message 
         });
+    }
+};
+
+// Append additional evaluation/scoring criteria to an existing tender (post-creation fix)
+const addTenderCriteria = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const { criteria } = req.body || {};
+    const createdBy = req.user?.id || 1;
+    try {
+        if (!Array.isArray(criteria) || criteria.length === 0) {
+            return res.status(400).json({ message: 'criteria array required' });
+        }
+        const tender = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM demand_tenders WHERE id = ?', [tenderId], (err, row) => {
+                if (err) reject(err); else resolve(row);
+            });
+        });
+        if (!tender) return res.status(404).json({ message: 'Tender not found' });
+        let added = 0;
+        for (const c of criteria) {
+            if (!c || !c.title || !c.description) continue;
+            await new Promise((resolve, reject) => {
+                db.run(`INSERT INTO tender_evaluation_criteria (
+                        tender_id, criteria_title, criteria_description, is_knockout, minimum_requirement, weightage, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+                        tenderId,
+                        c.title,
+                        c.description,
+                        c.isKnockout ? 1 : 0,
+                        c.minimumRequirement || null,
+                        c.weightage || 0,
+                        createdBy
+                    ], (err) => { if (err) reject(err); else { added++; resolve(); } });
+            });
+        }
+        const all = await new Promise((resolve, reject) => {
+            db.all(`SELECT id, criteria_title, criteria_description, is_knockout, minimum_requirement, weightage
+                    FROM tender_evaluation_criteria WHERE tender_id = ? ORDER BY is_knockout DESC, id ASC`, [tenderId], (err, rows) => {
+                if (err) reject(err); else resolve(rows);
+            });
+        });
+        res.json({
+            message: 'Criteria added',
+            added,
+            knockoutClauses: all.filter(r => r.is_knockout),
+            scoringCriteria: all.filter(r => !r.is_knockout)
+        });
+    } catch (error) {
+        console.error('Error adding tender criteria:', error);
+        res.status(500).json({ message: 'Failed to add criteria', error: error.message });
     }
 };
 
@@ -782,5 +882,6 @@ module.exports = {
     markExpiredTendersForEvaluation,
     createTenderWithCriteria,
     getTenderWithCriteria,
-    acknowledgeCriteria
+    acknowledgeCriteria,
+    addTenderCriteria
 };

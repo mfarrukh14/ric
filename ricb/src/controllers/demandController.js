@@ -731,6 +731,7 @@ const getDemandItemsPaginated = async (req, res) => {
 
 // Generate Excel report for demand
 const generateDemandExcelReport = async (req, res) => {
+    console.log(`[EXCEL REPORT] Function called for demand ID: ${req.params.id} by user: ${req.user?.name || 'unknown'}`);
     const db = getDatabase();
     const { id } = req.params;
 
@@ -755,15 +756,30 @@ const generateDemandExcelReport = async (req, res) => {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
-        // Get demand items
+        // Get demand items with detailed categorization (pharma/equipment) for accurate Excel export
         const items = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT di.*, 
                         ic.name as category_name,
-                        in_t.name as item_name_full
+                        in_t.name as item_name_full,
+                        dc.name as drug_category_name,
+                        dn.name as drug_name,
+                        su.name as strength_unit_name,
+                        su.abbreviation as strength_unit_abbr,
+                        df.name as dosage_form_name,
+                        p.name as preparation_name,
+                        ec.name as equipment_category_name,
+                        et.name as equipment_type_name
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
+                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
+                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
+                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
+                 LEFT JOIN preparations p ON di.preparation_id = p.id
+                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
+                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
                  WHERE di.demand_id = ? 
                  ORDER BY di.id ASC`,
                 [id],
@@ -788,16 +804,44 @@ const generateDemandExcelReport = async (req, res) => {
                 department: demand.department,
                 created_at: demand.created_at
             },
-            items: items.map(item => ({
-                name: item.item_name_full,
-                category: item.category_name,
-                quantity: item.quantity,
-                unit: item.unit,
-                specifications: item.specifications,
-                previous_year_cost: item.previous_year_cost,
-                current_year_cost: item.current_year_cost
-            }))
+            items: items.map(item => {
+                const categoryNameLower = (item.category_name || '').toLowerCase();
+                const isPharma = categoryNameLower.includes('pharmaceutical') || categoryNameLower.includes('medicine') || categoryNameLower.includes('drug');
+                const isEquipment = categoryNameLower.includes('equipment') || categoryNameLower.includes('machinery') || categoryNameLower.includes('instrument');
+
+                // Build strength string if available
+                const strength = item.strength_value ? `${item.strength_value} ${item.strength_unit_abbr || item.strength_unit_name || ''}`.trim() : '';
+
+                return {
+                    name: item.item_name_full || item.item_name || item.drug_name || item.equipment_type_name,
+                    category: item.category_name,
+                    quantity: item.quantity,
+                    unit: item.unit,
+                    specifications: item.specifications,
+                    // Costs: fall back to legacy estimated_cost if specific year costs absent
+                    previous_year_cost: item.previous_year_cost || item.prev_year_cost || 0,
+                    current_year_cost: item.current_year_cost || item.estimated_cost || 0,
+                    // Extra fields used by excel generator heuristics for pharma/equipment layout
+                    drug_category: isPharma ? item.drug_category_name : undefined,
+                    drug_name: isPharma ? item.drug_name : undefined,
+                    strength: isPharma ? strength : undefined,
+                    dosage_form: isPharma ? item.dosage_form_name : undefined,
+                    preparation: isPharma ? item.preparation_name : undefined,
+                    equipment_category: isEquipment ? item.equipment_category_name : undefined,
+                    equipment_type: isEquipment ? item.equipment_type_name : undefined,
+                };
+            })
         };
+
+        // Debug log to verify mapped data before Excel generation
+        try {
+            console.log('[DEBUG] Demand Excel report data preview:', JSON.stringify({
+                demandId: reportData.demand.id,
+                itemSample: reportData.items.slice(0,5)
+            }, null, 2));
+        } catch (e) {
+            console.warn('[DEBUG] Failed to stringify reportData preview:', e.message);
+        }
 
         const buffer = await generateDemandReport(reportData);
 

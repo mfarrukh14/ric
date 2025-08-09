@@ -8,7 +8,7 @@ export const generateDemandReport = (demand, items) => {
   const organizationName = demand.departmentName?.toUpperCase() || 'RAWALPINDI INSTITUTE OF CARDIOLOGY, RAWALPINDI';
   
   // Determine the main category type and set appropriate title
-  const categoryTypes = items.map(item => item.categoryName?.toLowerCase() || '');
+  const categoryTypes = items.map(item => item.category_name?.toLowerCase() || '');
   const isPrimarilyPharmaceutical = categoryTypes.some(cat => 
     cat.includes('pharmaceutical') || cat.includes('medicine') || cat.includes('drug')
   );
@@ -92,7 +92,7 @@ export const generateDemandReport = (demand, items) => {
   // Group items by category
   const itemsByCategory = {};
   items.forEach(item => {
-    const categoryName = item.categoryName || 'Other Items';
+    const categoryName = item.category_name || 'Other Items';
     if (!itemsByCategory[categoryName]) {
       itemsByCategory[categoryName] = [];
     }
@@ -110,19 +110,25 @@ export const generateDemandReport = (demand, items) => {
     
     // Add items in this category
     categoryItems.forEach((item, index) => {
-      const monthlyConsumption = item.prevYearQuantity ? Math.round(item.prevYearQuantity / 12) : 0;
-      const totalEstimatedCost = (item.requestedQuantity || 0) * (item.prevYearCost || 0);
+      const monthlyConsumption = item.prev_year_cost ? Math.round((item.quantity || 0) / 12) : 0;
+      const totalEstimatedCost = (item.quantity || 0) * (item.current_year_cost || 0);
       
       // Build item data based on item type
       let itemData;
       
       if (isPrimarilyPharmaceutical) {
         // For pharmaceutical items
-        const genericName = item.drugName || item.itemName || '';
-        const strength = (item.strengthValue && item.strengthUnit) ? 
-          `${item.strengthValue}${item.strengthUnit}` : '';
-        const preparation = item.preparation || 'Oral';
-        const dosageForm = item.dosageForm || 'Tab';
+        const genericName = item.drug_name || item.item_name_full || item.item_name || '';
+        // Use strength_value + unit if available, otherwise fall back to specifications
+        const strength = item.strength_value && item.strength_unit_abbr ? 
+          `${item.strength_value} ${item.strength_unit_abbr}` : 
+          (item.strength_value && item.strength_unit_name ?
+            `${item.strength_value} ${item.strength_unit_name}` :
+            (item.specifications || ''));
+        // Use preparation_name if available, otherwise extract from specifications or leave empty
+        const preparation = item.preparation_name || '';
+        // Use dosage_form_name if available, otherwise fall back to unit
+        const dosageForm = item.dosage_form_name || item.unit || '';
         
         itemData = [
           '', // Left padding column
@@ -131,17 +137,17 @@ export const generateDemandReport = (demand, items) => {
           strength,
           preparation,
           dosageForm,
-          item.prevYearQuantity || 0,
+          item.prev_year_cost || 0,
           monthlyConsumption,
-          item.requestedQuantity || 0,
-          item.prevYearCost || 0,
+          item.quantity || 0,
+          item.current_year_cost || 0,
           totalEstimatedCost
         ];
       } else if (isPrimarilyEquipment) {
         // For equipment items
-        const equipmentName = item.equipmentType || item.itemName || '';
-        const specification = item.specifications || item.model || '';
-        const category = item.equipmentCategory || item.categoryName || '';
+        const equipmentName = item.equipment_type_name || item.item_name_full || item.item_name || '';
+        const specification = item.specifications || '';
+        const category = item.equipment_category_name || item.category_name || '';
         const unit = item.unit || 'Unit';
         
         itemData = [
@@ -151,17 +157,17 @@ export const generateDemandReport = (demand, items) => {
           specification,
           category,
           unit,
-          item.prevYearQuantity || 0,
+          item.prev_year_cost || 0,
           monthlyConsumption,
-          item.requestedQuantity || 0,
-          item.prevYearCost || 0,
+          item.quantity || 0,
+          item.current_year_cost || 0,
           totalEstimatedCost
         ];
       } else {
         // For general items
-        const itemName = item.itemName || '';
+        const itemName = item.item_name_full || item.item_name || '';
         const specification = item.specifications || '';
-        const category = item.categoryName || '';
+        const category = item.category_name || '';
         const unit = item.unit || 'Unit';
         
         itemData = [
@@ -171,10 +177,10 @@ export const generateDemandReport = (demand, items) => {
           specification,
           category,
           unit,
-          item.prevYearQuantity || 0,
+          item.prev_year_cost || 0,
           monthlyConsumption,
-          item.requestedQuantity || 0,
-          item.prevYearCost || 0,
+          item.quantity || 0,
+          item.current_year_cost || 0,
           totalEstimatedCost
         ];
       }
@@ -405,7 +411,7 @@ export const generateTenderReport = (tenderData) => {
   
   // Determine appropriate tender title based on content
   const items = tenderData.items || [];
-  const categoryTypes = items.map(item => item.categoryName?.toLowerCase() || '');
+  const categoryTypes = items.map(item => item.category_name?.toLowerCase() || '');
   const isPrimarilyPharmaceutical = categoryTypes.some(cat => 
     cat.includes('pharmaceutical') || cat.includes('medicine') || cat.includes('drug')
   );
@@ -476,10 +482,10 @@ export const generateTenderReport = (tenderData) => {
     let itemRow;
     
     if (isPrimarilyPharmaceutical) {
-      const genericName = item.drugName || item.itemName || item.description || 'N/A';
-      const strength = (item.strengthValue && item.strengthUnit) ? 
-        `${item.strengthValue}${item.strengthUnit}` : '';
-      const dosageForm = item.dosageForm || item.unit || 'Unit';
+      const genericName = item.drug_name || item.item_name_full || item.item_name || item.description || 'N/A';
+      const strength = item.strength_value && item.strength_unit_name ? 
+        `${item.strength_value} ${item.strength_unit_name}` : '';
+      const dosageForm = item.dosage_form_name || item.unit || 'Unit';
       
       itemRow = [
         '', // Left padding column
@@ -492,8 +498,8 @@ export const generateTenderReport = (tenderData) => {
         (item.quantity || 0) * (item.estimatedRate || 0)
       ];
     } else if (isPrimarilyEquipment) {
-      const equipmentName = item.equipmentType || item.itemName || item.description || 'N/A';
-      const specification = item.specifications || item.model || '';
+      const equipmentName = item.equipment_type_name || item.item_name_full || item.item_name || item.description || 'N/A';
+      const specification = item.specifications || '';
       const unit = item.unit || 'Unit';
       
       itemRow = [
@@ -510,7 +516,7 @@ export const generateTenderReport = (tenderData) => {
       itemRow = [
         '', // Left padding column
         index + 1,
-        item.description || item.itemName || 'N/A',
+        item.description || item.item_name_full || item.item_name || 'N/A',
         item.specifications || '',
         item.unit || 'Unit',
         item.quantity || 0,

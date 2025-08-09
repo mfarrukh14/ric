@@ -9,6 +9,10 @@ const ItemWiseEvaluation = () => {
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
     const [itemEvaluations, setItemEvaluations] = useState({});
+    const [knockoutChecks, setKnockoutChecks] = useState({}); // bidId -> { clauseId: boolean }
+    const [grievanceMarked, setGrievanceMarked] = useState({}); // bidId -> true/false
+    const [scoring, setScoring] = useState({}); // bidId -> { breakdown: {criteriaId: number}, total: number }
+    const [scoreErrors, setScoreErrors] = useState({}); // bidId -> error msg
     const [showRejectionInput, setShowRejectionInput] = useState({}); // Changed to object with bid IDs as keys
     const [rejectionReasons, setRejectionReasons] = useState({}); // Changed to object with bid IDs as keys
     
@@ -49,6 +53,20 @@ const ItemWiseEvaluation = () => {
                 };
             });
             setItemEvaluations(initialEvaluations);
+            // Initialize knockout checks for each bid (default all true = passes unless evaluator unchecks)
+            const koInit = {};
+            (data.bids || []).forEach(b => {
+                koInit[b.id] = {};
+                (data.knockoutClauses || []).forEach(c => { koInit[b.id][c.id] = true; });
+            });
+            setKnockoutChecks(koInit);
+            // Initialize scoring breakdown structure
+            const scoreInit = {};
+            (data.bids || []).forEach(b => {
+                scoreInit[b.id] = { breakdown: {}, total: 0 };
+                (data.scoringCriteria || []).forEach(c => { scoreInit[b.id].breakdown[c.id] = 0; });
+            });
+            setScoring(scoreInit);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -85,34 +103,26 @@ const ItemWiseEvaluation = () => {
     };
 
     const handleCompanyEvaluation = (itemId, bidId, companyName, action, reason = '') => {
-        // If action is reject and no reason provided, show the inline input
+        // Only used now for marking grievance (reject path) or internal approval staging
         if (action === 'reject' && !reason) {
-            setShowRejectionInput(prev => ({
-                ...prev,
-                [bidId]: true
-            }));
+            setShowRejectionInput(prev => ({ ...prev, [bidId]: true }));
             return;
         }
-
         setItemEvaluations(prev => {
             const updated = { ...prev };
             const itemEval = updated[itemId];
-            
-            // Remove from both arrays first
             itemEval.approvedCompanies = itemEval.approvedCompanies.filter(c => c.bidId !== bidId);
             itemEval.rejectedCompanies = itemEval.rejectedCompanies.filter(c => c.bidId !== bidId);
-            
-            // Add to appropriate array
             if (action === 'approve') {
-                itemEval.approvedCompanies.push({ bidId, companyName });
+                const koMap = knockoutChecks[bidId] || {};
+                const scoreObj = scoring[bidId];
+                if (Object.values(koMap).some(v => v === false)) { setError('Cannot approve: knockout failure present.'); return prev; }
+                if (!scoreObj || scoreObj.total <= 0) { setError('Provide scoring before approval.'); return prev; }
+                itemEval.approvedCompanies.push({ bidId, companyName, knockoutChecks: koMap });
             } else if (action === 'reject') {
-                if (!reason.trim()) {
-                    setError('Rejection reason is required');
-                    return prev;
-                }
-                itemEval.rejectedCompanies.push({ bidId, companyName, reason });
+                if (!reason.trim()) { setError('Rejection reason required'); return prev; }
+                itemEval.rejectedCompanies.push({ bidId, companyName, reason, knockoutChecks: knockoutChecks[bidId], grievanceMarked: grievanceMarked[bidId] || false });
             }
-            
             return updated;
         });
         setError('');
@@ -226,9 +236,7 @@ const ItemWiseEvaluation = () => {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    evaluations: itemEvaluations
-                })
+                body: JSON.stringify({ evaluations: itemEvaluations, scoring })
             });
 
             if (!response.ok) {
@@ -310,6 +318,11 @@ const ItemWiseEvaluation = () => {
                             {error}
                         </div>
                     )}
+                    {!error && tender && (!tender.scoringCriteria || tender.scoringCriteria.length === 0) && (
+                        <div className="mb-4 p-4 bg-yellow-50 border border-yellow-300 text-yellow-800 rounded text-sm">
+                            No scoring criteria were defined for this tender. Only knockout clause compliance will be considered. (Purchase team can append scoring via add-criteria endpoint.)
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -349,6 +362,11 @@ const ItemWiseEvaluation = () => {
                                         const status = getCompanyEvaluationStatus(currentItem.id, bid.id);
                                         const rejectionReason = getCompanyRejectionReason(currentItem.id, bid.id);
 
+                                        const koMap = knockoutChecks[bid.id] || {};
+                                        const scoreObj = scoring[bid.id] || { breakdown: {}, total: 0 };
+                                        const koFailed = Object.values(koMap).some(v => v === false);
+                                        const canApprove = !koFailed && scoreObj.total > 0;
+                                        const grievanceFlag = grievanceMarked[bid.id];
                                         return (
                                             <div key={bid.id} className="border rounded-lg p-4">
                                                 <div className="flex justify-between items-start mb-3">
@@ -404,39 +422,100 @@ const ItemWiseEvaluation = () => {
                                                     </div>
                                                 )}
 
-                                                {/* Evaluation Actions */}
-                                                <div className="border-t pt-4">
-                                                    <div className="flex items-center space-x-4">
-                                                        <span className="text-sm font-medium text-gray-700">
-                                                            Evaluation:
-                                                        </span>
-                                                        
-                                                        <button
-                                                            onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'approve')}
-                                                            className={`px-3 py-1 text-sm rounded ${
-                                                                status === 'approved' 
-                                                                    ? 'bg-green-600 text-white' 
-                                                                    : 'bg-green-100 text-green-700 hover:bg-green-200'
-                                                            }`}
-                                                        >
-                                                            {status === 'approved' ? '✓ Approved' : 'Approve'}
-                                                        </button>
+                                                {/* Knockout Clauses Checklist */}
+                                                {tender.knockoutClauses && tender.knockoutClauses.length > 0 && (
+                                                    <div className="mt-4 border-t pt-4">
+                                                        <h6 className="text-sm font-semibold text-red-700 mb-2 flex items-center">
+                                                            <span className="mr-2">Knockout Clauses</span>
+                                                            <span className="text-xs font-normal text-red-500">(Uncheck if clause failed)</span>
+                                                        </h6>
+                                                        <div className="grid md:grid-cols-2 gap-2">
+                                                            {tender.knockoutClauses.map(clause => (
+                                                                <label key={clause.id} className="flex items-start space-x-2 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-900">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        className="mt-0.5 h-4 w-4 text-red-600"
+                                                                        checked={koMap[clause.id] !== false}
+                                                                        onChange={(e) => setKnockoutChecks(prev => ({
+                                                                            ...prev,
+                                                                            [bid.id]: { ...prev[bid.id], [clause.id]: e.target.checked }
+                                                                        }))}
+                                                                    />
+                                                                    <span><span className="font-medium">{clause.criteria_title}:</span> {clause.criteria_description}</span>
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                        {Object.values(koMap).some(v => v === false) && (
+                                                            <label className="mt-3 inline-flex items-center space-x-2 bg-purple-50 border border-purple-200 rounded p-2 text-xs text-purple-800">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    className="h-4 w-4 text-purple-600"
+                                                                    checked={grievanceMarked[bid.id] || false}
+                                                                    onChange={(e) => setGrievanceMarked(prev => ({ ...prev, [bid.id]: e.target.checked }))}
+                                                                />
+                                                                <span>Mark for grievance (knockout failure)</span>
+                                                            </label>
+                                                        )}
+                                                    </div>
+                                                )}
 
+                                                {/* Scoring & Actions */}
+                                                <div className="border-t pt-4 space-y-4">
+                                                    {tender.scoringCriteria && tender.scoringCriteria.length > 0 && (
+                                                        <div>
+                                                            <h6 className="text-sm font-semibold text-blue-700 mb-2">Scoring Criteria (Total out of 100)</h6>
+                                                            <div className="space-y-2">
+                                                                {tender.scoringCriteria.map(criteria => (
+                                                                    <div key={criteria.id} className="flex items-center justify-between text-xs bg-blue-50 border border-blue-200 rounded p-2">
+                                                                        <div className="pr-2">
+                                                                            <div className="font-medium text-blue-900">{criteria.criteria_title}</div>
+                                                                            <div className="text-blue-700">Weight: {criteria.weightage}%</div>
+                                                                        </div>
+                                                                        <input
+                                                                            type="number"
+                                                                            min={0}
+                                                                            max={criteria.weightage}
+                                                                            value={scoreObj.breakdown[criteria.id] ?? 0}
+                                                                            onChange={(e) => {
+                                                                                const val = parseFloat(e.target.value || '0');
+                                                                                setScoring(prev => {
+                                                                                    const copy = { ...prev };
+                                                                                    const bidScore = { ...copy[bid.id] };
+                                                                                    bidScore.breakdown = { ...bidScore.breakdown, [criteria.id]: val };
+                                                                                    // Recompute total as sum of (entered / weightageMax * weightage) but here direct sum of entered points
+                                                                                    const total = Object.entries(bidScore.breakdown).reduce((s,[cid, v]) => s + (parseFloat(v) || 0), 0);
+                                                                                    bidScore.total = total;
+                                                                                    copy[bid.id] = bidScore;
+                                                                                    return copy;
+                                                                                });
+                                                                            }}
+                                                                            className="w-20 p-1 border rounded text-right"
+                                                                        />
+                                                                    </div>
+                                                                ))}
+                                                                <div className="text-xs font-semibold text-blue-800">Total Score: {scoreObj.total}</div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    <div className="flex items-center space-x-3">
+                                                        {!grievanceFlag && (
+                                                            <button
+                                                                onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'approve')}
+                                                                disabled={!canApprove || status === 'approved'}
+                                                                className={`px-3 py-1 text-sm rounded ${canApprove && status !== 'approved' ? 'bg-green-600 text-white hover:bg-green-700' : status === 'approved' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+                                                            >
+                                                                {status === 'approved' ? '✓ Approved' : 'Approve'}
+                                                            </button>
+                                                        )}
                                                         <button
                                                             onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'reject')}
-                                                            className={`px-3 py-1 text-sm rounded ${
-                                                                status === 'rejected' 
-                                                                    ? 'bg-red-600 text-white' 
-                                                                    : 'bg-red-100 text-red-700 hover:bg-red-200'
-                                                            }`}
+                                                            disabled={status === 'rejected'}
+                                                            className={`px-3 py-1 text-sm rounded ${status === 'rejected' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
                                                         >
-                                                            {status === 'rejected' ? '✗ Rejected' : 'Reject'}
+                                                            {status === 'rejected' ? '✗ Rejected' : 'Send For Grievance'}
                                                         </button>
-
-                                                        {status === 'pending' && (
-                                                            <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded">
-                                                                Pending
-                                                            </span>
+                                                        {status === 'pending' && !grievanceFlag && !canApprove && (
+                                                            <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded">Pending</span>
                                                         )}
                                                     </div>
 

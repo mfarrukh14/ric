@@ -8,6 +8,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const [loading, setLoading] = useState(false);
     const [tender, setTender] = useState(propTender || null);
     const [fetchingTender, setFetchingTender] = useState(!propTender);
+    const [knockoutChecklist, setKnockoutChecklist] = useState([]);
+    const [acknowledging, setAcknowledging] = useState(false);
     const navigate = useNavigate();
     const { tenderId } = useParams();
 
@@ -19,7 +21,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             return;
         }
 
-        const fetchTenderData = async () => {
+    const fetchTenderData = async () => {
             try {
                 const token = localStorage.getItem('supplierToken');
                 console.log('BidApplication - fetching tender data with token:', token ? 'present' : 'missing');
@@ -69,6 +71,37 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         registeredNumber: '',
         agreeToTerms: false
     });
+
+    // Fetch detailed tender (knockout clauses) once tender basic data is set
+    useEffect(() => {
+        const fetchDetails = async () => {
+            if (!tender || tender.knockoutClauses) return; // already have details
+            try {
+                const token = localStorage.getItem('supplierToken');
+                const resp = await fetch(`${apiUrl}/demands/tenders/${tender.id}/details`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const detailedTender = { ...tender, ...data.tender };
+                    setTender(detailedTender);
+                    if (data.tender.knockoutClauses) {
+                        if (data.tender.supplier_knockout_ack?.checklist) {
+                            setKnockoutChecklist(data.tender.knockoutClauses.map(c => {
+                                const found = data.tender.supplier_knockout_ack.checklist.find(p => p.id === c.id);
+                                return { id: c.id, checked: found ? !!found.checked : false, title: c.criteria_title };
+                            }));
+                        } else {
+                            setKnockoutChecklist(data.tender.knockoutClauses.map(c => ({ id: c.id, checked: false, title: c.criteria_title })));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch tender details for knockout clauses', e);
+            }
+        };
+        fetchDetails();
+    }, [tender]);
 
     // Update bidData when tender is loaded
     useEffect(() => {
@@ -227,6 +260,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         
         if (currentStep === 1 && !validateStep1()) return;
         if (currentStep === 2 && !validateStep2()) return;
+        if (currentStep === 3 && !validateStep3()) return; // existing step3 validation moves before new step4
         
         setCurrentStep(prev => prev + 1);
     };
@@ -250,8 +284,11 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
     const handleSubmit = async () => {
         setError('');
-        
-        if (!validateStep3()) return;
+        // Step 4 is acknowledgment; ensure acknowledged
+        if (!tender?.criteria_acknowledged) {
+            setError('Please acknowledge all knockout clauses first.');
+            return;
+        }
         
         setLoading(true);
         
@@ -259,19 +296,9 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             const token = localStorage.getItem('supplierToken');
             console.log('BidApplication - submitting bid with token:', token ? 'present' : 'missing');
             const formData = new FormData();
-            
-            const totalCost = calculateTotalBidAmount();
-            const totalQuantity = calculateTotalQuantity();
-            
-            formData.append('proposedQuantity', totalQuantity);
-            formData.append('totalCost', totalCost);
-            formData.append('deliveryDays', parseInt(bidData.deliveryTime));
-            formData.append('comments', bidData.comments || '');
-            formData.append('technicalBid', bidData.technicalBid);
-            formData.append('financialBid', bidData.financialBid);
-            
+            // Prepare items list again defensively
             const itemsData = bidData.items
-                .filter(item => item.can_provide && item.total_cost)
+                .filter(item => item.can_provide && parseInt(item.can_provide) > 0 && item.total_cost && parseFloat(item.total_cost) > 0)
                 .map(item => ({
                     item_id: item.id,
                     item_name: item.item_name,
@@ -280,7 +307,22 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                     total_cost: parseFloat(item.total_cost),
                     unit: item.unit
                 }));
+
+            if (itemsData.length === 0) {
+                setError('Please enter a positive quantity and cost for at least one item.');
+                setLoading(false);
+                return;
+            }
+
+            const totalCost = itemsData.reduce((s,i)=> s + i.total_cost, 0);
+            const totalQuantity = itemsData.reduce((s,i)=> s + i.can_provide, 0);
             
+            formData.append('proposedQuantity', totalQuantity);
+            formData.append('totalCost', totalCost);
+            formData.append('deliveryDays', parseInt(bidData.deliveryTime));
+            formData.append('comments', bidData.comments || '');
+            formData.append('technicalBid', bidData.technicalBid);
+            formData.append('financialBid', bidData.financialBid);
             formData.append('items', JSON.stringify(itemsData));
             formData.append('companyName', bidData.companyName);
             formData.append('registeredNumber', bidData.registeredNumber);
@@ -295,12 +337,20 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                console.error('BidApplication - Failed to submit bid:', response.status, response.statusText, errorData);
-                throw new Error(errorData.message || 'Failed to submit bid');
+                let errorMsg = 'Failed to submit bid';
+                try {
+                    const errorData = await response.json();
+                    console.error('BidApplication - Failed to submit bid:', response.status, response.statusText, errorData);
+                    errorMsg = errorData.error || errorData.message || errorMsg;
+                } catch(e) {
+                    console.error('BidApplication - Error parsing error response');
+                }
+                throw new Error(errorMsg);
             }
 
             console.log('BidApplication - Bid submitted successfully');
+            // Optional: show quick success toast if toast system available
+            if (window?.toast) { try { window.toast.success('Bid submitted successfully'); } catch(e){} }
             handleSuccess();
             
         } catch (err) {
@@ -317,6 +367,11 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 <p className="text-sm text-gray-600 mt-1">
                     Fill in the quantity you can provide and your cost for each item
                 </p>
+                                {!tender?.criteria_acknowledged && (
+                                    <div className="mt-3 bg-red-50 border border-red-200 text-red-700 p-3 rounded text-xs font-medium">
+                                        You have not acknowledged knockout clauses yet. You will not be able to submit this bid until acknowledgment is completed.
+                                    </div>
+                                )}
             </div>
 
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
@@ -568,6 +623,95 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         </div>
     );
 
+    const allKnockoutChecked = knockoutChecklist.length > 0 && knockoutChecklist.every(c => c.checked);
+
+    const handleAcknowledge = async () => {
+        try {
+            setAcknowledging(true);
+            setError('');
+            if (!allKnockoutChecked) {
+                setError('All knockout clauses must be checked.');
+                return;
+            }
+            const token = localStorage.getItem('supplierToken');
+            const resp = await fetch(`${apiUrl}/demands/tenders/${tender.id}/acknowledge`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ knockoutChecklist: knockoutChecklist.map(k => ({ id: k.id, checked: k.checked })) })
+            });
+            if (!resp.ok) {
+                const er = await resp.json().catch(()=>({message:'Failed'}));
+                throw new Error(er.message || 'Failed to acknowledge');
+            }
+            setTender(prev => ({ ...prev, criteria_acknowledged: true }));
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setAcknowledging(false);
+        }
+    };
+
+    const renderStep4 = () => (
+        <div className="space-y-6">
+            <div className="border-b border-gray-200 pb-4">
+                <h3 className="text-lg font-medium text-gray-900">Step 4: Knockout Clauses & Acknowledgment</h3>
+                <p className="text-sm text-gray-600 mt-1">You must confirm every knockout clause to proceed with bid submission.</p>
+            </div>
+            {!tender?.knockoutClauses || tender.knockoutClauses.length === 0 ? (
+                <div className="bg-gray-50 border border-gray-200 p-4 rounded text-sm text-gray-600">No knockout clauses defined for this tender.</div>
+            ) : (
+                <div className="space-y-4">
+                    <div className="bg-red-50 border border-red-200 p-4 rounded text-red-700 text-xs font-medium">
+                        FAILURE TO MEET ANY KNOCKOUT CLAUSE WILL RESULT IN AUTOMATIC DISQUALIFICATION.
+                    </div>
+                    {tender.knockoutClauses.map((clause, idx) => (
+                        <div key={clause.id} className="border border-red-200 rounded p-4 bg-red-50">
+                            <div className="flex items-start">
+                                <div className="flex items-center justify-center w-6 h-6 bg-red-600 text-white rounded-full text-xs font-bold mr-3">{idx+1}</div>
+                                <div className="flex-1">
+                                    <h4 className="font-semibold text-red-900">{clause.criteria_title}</h4>
+                                    <p className="text-sm text-red-800 mt-1">{clause.criteria_description}</p>
+                                    {clause.minimum_requirement && (
+                                        <div className="mt-2 p-2 bg-red-100 rounded border border-red-300 text-xs text-red-900">
+                                            <span className="font-medium">Minimum Requirement:</span> {clause.minimum_requirement}
+                                        </div>
+                                    )}
+                                    {!tender.criteria_acknowledged && (
+                                        <label className="mt-3 inline-flex items-start space-x-2 cursor-pointer">
+                                            <input type="checkbox" className="h-4 w-4 text-red-600 border-gray-300 rounded"
+                                                checked={knockoutChecklist.find(c=>c.id===clause.id)?.checked || false}
+                                                onChange={(e)=> setKnockoutChecklist(prev => prev.map(c => c.id===clause.id ? { ...c, checked: e.target.checked } : c))}
+                                            />
+                                            <span className="text-xs text-red-900">I confirm compliance with this clause.</span>
+                                        </label>
+                                    )}
+                                </div>
+                                <span className="ml-3 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-600 text-white">KNOCKOUT</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {!tender?.criteria_acknowledged && (
+                <button
+                    onClick={handleAcknowledge}
+                    disabled={!allKnockoutChecked || acknowledging}
+                    className="px-4 py-2 text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50"
+                >
+                    {acknowledging ? 'Acknowledging...' : 'Acknowledge All Clauses'}
+                </button>
+            )}
+            {tender?.criteria_acknowledged && (
+                <div className="flex items-center text-green-600 text-sm font-medium">
+                    <span className="mr-2">✓</span> Knockout clauses acknowledged.
+                </div>
+            )}
+        </div>
+    );
+
     return (
         <div className="min-h-screen bg-gray-50 py-8">
             <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -586,7 +730,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                         {/* Progress Steps */}
                         <div className="mt-4">
                             <div className="flex items-center">
-                                {[1, 2, 3].map((step) => (
+                                {[1, 2, 3, 4].map((step) => (
                                     <React.Fragment key={step}>
                                         <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
                                             currentStep >= step 
@@ -595,7 +739,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                         }`}>
                                             {step}
                                         </div>
-                                        {step < 3 && (
+                                        {step < 4 && (
                                             <div className={`flex-1 h-1 mx-2 ${
                                                 currentStep > step ? 'bg-indigo-600' : 'bg-gray-200'
                                             }`} />
@@ -604,9 +748,10 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                 ))}
                             </div>
                             <div className="flex justify-between text-xs text-gray-600 mt-2">
-                                <span>Item Details</span>
+                                <span>Items</span>
                                 <span>Documents</span>
                                 <span>Guarantee</span>
+                                <span>Knockout</span>
                             </div>
                         </div>
                     </div>
@@ -621,6 +766,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                         {currentStep === 1 && renderStep1()}
                         {currentStep === 2 && renderStep2()}
                         {currentStep === 3 && renderStep3()}
+                        {currentStep === 4 && renderStep4()}
                     </div>
 
                     <div className="px-6 py-4 border-t border-gray-200 flex justify-between">
@@ -644,7 +790,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                 Cancel
                             </button>
                             
-                            {currentStep < 3 ? (
+                {currentStep < 4 ? (
                                 <button
                                     onClick={handleNext}
                                     className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
@@ -654,8 +800,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                             ) : (
                                 <button
                                     onClick={handleSubmit}
-                                    disabled={loading}
-                                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50"
+                    disabled={loading || !tender?.criteria_acknowledged}
+                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50"
                                 >
                                     {loading ? 'Submitting...' : 'Submit Bid'}
                                 </button>

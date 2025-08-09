@@ -112,7 +112,8 @@ const generateDemandReport = (reportData) => {
     
     // Add items in this category
     categoryItems.forEach((item) => {
-      const monthlyConsumption = item.previous_year_cost ? Math.round(item.quantity / 12) : 0;
+  // Monthly consumption heuristic: distribute current requested quantity across 12 months
+  const monthlyConsumption = item.quantity ? Math.round((item.quantity || 0) / 12) : 0;
       const totalEstimatedCost = (item.quantity || 0) * (item.current_year_cost || 0);
       
       // Build item data based on item type
@@ -120,11 +121,11 @@ const generateDemandReport = (reportData) => {
       
       if (isPrimarilyPharmaceutical) {
         // For pharmaceutical items
-        const genericName = item.name || '';
-        const strength = item.specifications || '';
-        const preparation = 'Oral'; // Default
-        const dosageForm = item.unit || 'Tab';
-        
+  const genericName = item.drug_name || item.name || '';
+  const strength = item.strength || item.specifications || '';
+  const preparation = item.preparation || item.preparation_name || '';
+  const dosageForm = item.dosage_form || item.dosage_form_name || item.unit || '';
+
         itemData = [
           '', // Left padding column
           serialNumber,
@@ -132,7 +133,7 @@ const generateDemandReport = (reportData) => {
           strength,
           preparation,
           dosageForm,
-          item.previous_year_cost || 0,
+          (item.previous_year_cost || item.prev_year_cost || 0),
           monthlyConsumption,
           item.quantity || 0,
           item.current_year_cost || 0,
@@ -140,9 +141,9 @@ const generateDemandReport = (reportData) => {
         ];
       } else if (isPrimarilyEquipment) {
         // For equipment items
-        const equipmentName = item.name || '';
+        const equipmentName = item.equipment_type || item.name || '';
         const specification = item.specifications || '';
-        const category = item.category || '';
+        const category = item.equipment_category || item.category || '';
         const unit = item.unit || 'Unit';
         
         itemData = [
@@ -152,7 +153,7 @@ const generateDemandReport = (reportData) => {
           specification,
           category,
           unit,
-          item.previous_year_cost || 0,
+          (item.previous_year_cost || item.prev_year_cost || 0),
           monthlyConsumption,
           item.quantity || 0,
           item.current_year_cost || 0,
@@ -172,7 +173,7 @@ const generateDemandReport = (reportData) => {
           specification,
           category,
           unit,
-          item.previous_year_cost || 0,
+          (item.previous_year_cost || item.prev_year_cost || 0),
           monthlyConsumption,
           item.quantity || 0,
           item.current_year_cost || 0,

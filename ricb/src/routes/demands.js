@@ -39,7 +39,8 @@ const {
     generateSupplyOrderPDFById,
     createTenderWithCriteria,
     getTenderWithCriteria,
-    acknowledgeCriteria
+    acknowledgeCriteria,
+    addTenderCriteria
 } = require('../controllers/tenderController');
 
 // Create tender documents directory if it doesn't exist
@@ -261,7 +262,10 @@ router.post('/:id/reject', auth, rejectDemand);
 router.get('/:id/items', auth, getDemandItemsPaginated);
 
 // Get Excel report for demand
-router.get('/:id/excel-report', auth, generateDemandExcelReport);
+router.get('/:id/excel-report', auth, (req, res) => {
+    console.log(`[DEBUG] Excel report endpoint hit for demand ID: ${req.params.id}`);
+    return generateDemandExcelReport(req, res);
+});
 
 // Check if tender exists for a demand
 router.get('/:demandId/tender/exists', auth, async (req, res) => {
@@ -297,6 +301,9 @@ router.get('/tenders/:tenderId/details', auth, getTenderWithCriteria);
 
 // Acknowledge evaluation criteria (for suppliers)
 router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
+
+// Append criteria (including scoring) to an existing tender
+router.post('/tenders/:tenderId/add-criteria', auth, addTenderCriteria);
 
 // Error handling middleware for multer errors
 router.use((error, req, res, next) => {

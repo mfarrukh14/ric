@@ -7,6 +7,7 @@ const SupplierTenderView = ({ tenderId, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [criteriaAcknowledged, setCriteriaAcknowledged] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
+  const [knockoutChecklist, setKnockoutChecklist] = useState([]);
 
   useEffect(() => {
     if (tenderId) {
@@ -18,8 +19,21 @@ const SupplierTenderView = ({ tenderId, onClose }) => {
     try {
       setLoading(true);
       const response = await api.get(`/demands/tenders/${tenderId}/details`);
-      setTender(response.data.tender);
-      setCriteriaAcknowledged(response.data.tender.criteria_acknowledged || false);
+      const t = response.data.tender;
+      setTender(t);
+      setCriteriaAcknowledged(t.criteria_acknowledged || false);
+      if (t.knockoutClauses) {
+        // If supplier already acknowledged, reflect prior checks if available
+        if (t.supplier_knockout_ack?.checklist) {
+          const prior = t.supplier_knockout_ack.checklist;
+          setKnockoutChecklist(t.knockoutClauses.map(c => {
+            const found = prior.find(p => p.id === c.id);
+            return { id: c.id, checked: found ? !!found.checked : false };
+          }));
+        } else {
+          setKnockoutChecklist(t.knockoutClauses.map(c => ({ id: c.id, checked: false })));
+        }
+      }
     } catch (error) {
       console.error('Error fetching tender details:', error);
       toast.error('Failed to load tender details');
@@ -31,7 +45,12 @@ const SupplierTenderView = ({ tenderId, onClose }) => {
   const handleAcknowledgeCriteria = async () => {
     try {
       setAcknowledging(true);
-      await api.post(`/demands/tenders/${tenderId}/acknowledge`);
+      // Ensure all knockout clauses checked
+      if (knockoutChecklist.some(c => !c.checked)) {
+        toast.error('Please confirm every knockout clause before acknowledging');
+        return;
+      }
+      await api.post(`/demands/tenders/${tenderId}/acknowledge`, { knockoutChecklist });
       setCriteriaAcknowledged(true);
       toast.success('Evaluation criteria acknowledged successfully');
     } catch (error) {
@@ -208,6 +227,17 @@ const SupplierTenderView = ({ tenderId, onClose }) => {
                             <p className="text-sm text-red-900">{clause.minimum_requirement}</p>
                           </div>
                         )}
+                        {!criteriaAcknowledged && (
+                          <label className="mt-3 inline-flex items-start space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
+                              checked={knockoutChecklist.find(c => c.id === clause.id)?.checked || false}
+                              onChange={(e) => setKnockoutChecklist(prev => prev.map(c => c.id === clause.id ? { ...c, checked: e.target.checked } : c))}
+                            />
+                            <span className="text-xs text-red-900">I confirm my bid fully satisfies this clause.</span>
+                          </label>
+                        )}
                       </div>
                       <div className="flex-shrink-0 ml-3">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-600 text-white">
@@ -218,6 +248,11 @@ const SupplierTenderView = ({ tenderId, onClose }) => {
                   </div>
                 ))}
               </div>
+              {!criteriaAcknowledged && (
+                <div className="mt-4 text-sm text-red-800 font-medium">
+                  All knockout clauses must be confirmed (checkboxes ticked) before you can acknowledge and proceed.
+                </div>
+              )}
             </div>
           )}
 
