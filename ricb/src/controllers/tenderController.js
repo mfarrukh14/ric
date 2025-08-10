@@ -318,14 +318,15 @@ const generateSupplyOrderPDFById = async (req, res) => {
                     d.description,
                     d.urgency,
                     d.required_by,
-                    s.company_name,
-                    s.company_email,
+                    bp.business_name as company_name,
+                    s.business_email as company_email,
                     sb.delivery_days,
                     sb.bid_comments
                 FROM supply_orders so
                 JOIN demand_tenders dt ON so.tender_id = dt.id
                 JOIN demands d ON so.demand_id = d.id
                 JOIN suppliers s ON so.supplier_id = s.id
+                LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                 JOIN supplier_bids sb ON so.bid_id = sb.id
                 WHERE so.id = ?`,
                 [id],

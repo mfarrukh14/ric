@@ -189,7 +189,7 @@ class EmailService {
                     </div>
                     <div class="content">
                         <p>Dear <strong>${companyName}</strong> Team,</p>
-                        <p>We are pleased to inform you that your supplier application has been <strong>approved</strong> by the Rawalpindi Institute of Cardiology Evaluation Committee.</p>
+                        <p>We are pleased to inform you that your supplier application has been <strong>approved</strong> by the Rawalpindi Institute of Cardiology Supplier Evaluation Committee.</p>
                         <div class="highlight">
                             <p><strong>Welcome to our Supplier Network!</strong><br>You can now participate in procurement opportunities.</p>
                         </div>
@@ -1931,7 +1931,7 @@ class EmailService {
                                 <li>Enter the 6-digit code above in the verification form</li>
                                 <li>Complete the verification within 15 minutes</li>
                                 <li>If the code expires, you can request a new one</li>
-                                <li>After verification, your registration will be submitted to our evaluation committee</li>
+                                <li>After verification, your registration will be submitted to our supplier evaluation committee</li>
                             </ul>
                         </div>
 
@@ -1945,7 +1945,7 @@ class EmailService {
                         </div>
 
                         <p><strong>What happens next?</strong></p>
-                        <p>Once you verify your email, your supplier registration will be forwarded to our evaluation committee for review. You will receive another email notification once the evaluation is complete.</p>
+                        <p>Once you verify your email, your supplier registration will be forwarded to our supplier evaluation committee for review. You will receive another email notification once the evaluation is complete.</p>
                         
                         <p>If you didn't request this registration, please ignore this email or contact our support team.</p>
                     </div>

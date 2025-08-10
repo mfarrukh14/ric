@@ -222,7 +222,7 @@ const SupplierRegister = () => {
       }
 
       // Success - registration completed
-      setMessage('Registration completed successfully! Your application has been submitted to the evaluation committee.');
+      setMessage('Registration completed successfully! Your application has been submitted to the supplier evaluation committee.');
       
       // Reset form
       setRegisterData({
@@ -520,7 +520,7 @@ const SupplierRegister = () => {
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Terms and Conditions</h3>
                 <div className="text-sm text-gray-600 space-y-2">
                   <p>• All information provided must be accurate and up-to-date.</p>
-                  <p>• Your application will be reviewed by the RIC evaluation committee.</p>
+                  <p>• Your application will be reviewed by the RIC supplier evaluation committee.</p>
                   <p>• Approval may take 3-5 business days after successful verification.</p>
                   <p>• You will be notified via email about your application status.</p>
                   <p>• RIC reserves the right to reject applications that don't meet requirements.</p>

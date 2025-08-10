@@ -280,7 +280,7 @@ const SupplierAuth = ({ onBack, onLogin }) => {
             }
 
             // Success - registration completed
-            setMessage('Registration completed successfully! Your application has been submitted to the evaluation committee.');
+            setMessage('Registration completed successfully! Your application has been submitted to the supplier evaluation committee.');
             setShowOTPVerification(false);
             setRegisterData({
                 companyName: '',

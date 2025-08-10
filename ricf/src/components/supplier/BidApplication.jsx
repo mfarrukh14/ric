@@ -103,9 +103,9 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         fetchDetails();
     }, [tender]);
 
-    // Update bidData when tender is loaded
+    // Update bidData when tender is loaded (only if items not already initialized)
     useEffect(() => {
-        if (tender?.items) {
+        if (tender?.items && bidData.items.length === 0) {
             setBidData(prev => ({
                 ...prev,
                 items: tender.items.map(item => ({
@@ -113,13 +113,15 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                     item_name: item.item_name,
                     required_quantity: item.quantity,
                     unit: item.unit || 'pieces',
-                    can_provide: '',
+                    will_provide: true, // true = provide full quantity, false = drop item
                     total_cost: '',
+                    price_per_unit: '',
+                    manufacturer_brand: '',
                     remarks: item.remarks || ''
                 }))
             }));
         }
-    }, [tender]);
+    }, [tender, bidData.items.length]);
 
     // Handle cancel - navigate back to supplier dashboard if no onCancel prop
     const handleCancel = () => {
@@ -174,9 +176,26 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const handleItemChange = (index, field, value) => {
         setBidData(prev => ({
             ...prev,
-            items: prev.items.map((item, i) => 
-                i === index ? { ...item, [field]: value } : item
-            )
+            items: prev.items.map((item, i) => {
+                if (i === index) {
+                    const updatedItem = { ...item, [field]: value };
+                    
+                    // Auto-calculate based on which field changed
+                    if (field === 'total_cost' && value && item.required_quantity) {
+                        updatedItem.price_per_unit = (parseFloat(value) / item.required_quantity).toFixed(2);
+                    } else if (field === 'price_per_unit' && value && item.required_quantity) {
+                        updatedItem.total_cost = (parseFloat(value) * item.required_quantity).toFixed(2);
+                    } else if (field === 'will_provide' && !value) {
+                        // If dropping item, clear cost fields
+                        updatedItem.total_cost = '';
+                        updatedItem.price_per_unit = '';
+                        updatedItem.manufacturer_brand = '';
+                    }
+                    
+                    return updatedItem;
+                }
+                return item;
+            })
         }));
     };
 
@@ -195,25 +214,21 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     };
 
     const validateStep1 = () => {
-        const hasValidItems = bidData.items.some(item => 
-            item.can_provide && parseInt(item.can_provide) > 0 && 
-            item.total_cost && parseFloat(item.total_cost) > 0
-        );
+        const providedItems = bidData.items.filter(item => item.will_provide);
         
-        if (!hasValidItems) {
-            setError('Please provide quantity and cost for at least one item');
+        if (providedItems.length === 0) {
+            setError('You must provide at least one item or drop the tender entirely');
             return false;
         }
 
-        const invalidItems = bidData.items.filter(item => 
-            (item.can_provide && !item.total_cost) || 
-            (!item.can_provide && item.total_cost) ||
-            (item.can_provide && parseInt(item.can_provide) <= 0) ||
-            (item.total_cost && parseFloat(item.total_cost) <= 0)
+        const invalidItems = providedItems.filter(item => 
+            !item.total_cost || parseFloat(item.total_cost) <= 0 ||
+            !item.price_per_unit || parseFloat(item.price_per_unit) <= 0 ||
+            !item.manufacturer_brand || item.manufacturer_brand.trim() === ''
         );
 
         if (invalidItems.length > 0) {
-            setError('All items must have valid quantity (> 0) and cost (> 0) if filled');
+            setError('All items you choose to provide must have valid total cost, price per unit (> 0), and manufacturer/brand name');
             return false;
         }
 
@@ -272,14 +287,14 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
     const calculateTotalBidAmount = () => {
         return bidData.items
-            .filter(item => item.can_provide && item.total_cost)
+            .filter(item => item.will_provide && item.total_cost)
             .reduce((total, item) => total + parseFloat(item.total_cost), 0);
     };
 
     const calculateTotalQuantity = () => {
         return bidData.items
-            .filter(item => item.can_provide)
-            .reduce((total, item) => total + parseInt(item.can_provide), 0);
+            .filter(item => item.will_provide)
+            .reduce((total, item) => total + parseInt(item.required_quantity), 0);
     };
 
     const handleSubmit = async () => {
@@ -298,18 +313,20 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             const formData = new FormData();
             // Prepare items list again defensively
             const itemsData = bidData.items
-                .filter(item => item.can_provide && parseInt(item.can_provide) > 0 && item.total_cost && parseFloat(item.total_cost) > 0)
+                .filter(item => item.will_provide && item.total_cost && parseFloat(item.total_cost) > 0)
                 .map(item => ({
                     item_id: item.id,
                     item_name: item.item_name,
                     required_quantity: item.required_quantity,
-                    can_provide: parseInt(item.can_provide),
+                    can_provide: parseInt(item.required_quantity), // Full quantity
                     total_cost: parseFloat(item.total_cost),
+                    price_per_unit: parseFloat(item.price_per_unit),
+                    manufacturer_brand: item.manufacturer_brand.trim(),
                     unit: item.unit
                 }));
 
             if (itemsData.length === 0) {
-                setError('Please enter a positive quantity and cost for at least one item.');
+                setError('Please choose to provide at least one item with valid pricing.');
                 setLoading(false);
                 return;
             }
@@ -363,15 +380,21 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const renderStep1 = () => (
         <div className="space-y-6">
             <div className="border-b border-gray-200 pb-4">
-                <h3 className="text-lg font-medium text-gray-900">Step 1: Item Details</h3>
+                <h3 className="text-lg font-medium text-gray-900">Step 1: Item Details & Pricing</h3>
                 <p className="text-sm text-gray-600 mt-1">
-                    Fill in the quantity you can provide and your cost for each item
+                    Choose which items to provide (full quantity only) and set your pricing
                 </p>
-                                {!tender?.criteria_acknowledged && (
-                                    <div className="mt-3 bg-red-50 border border-red-200 text-red-700 p-3 rounded text-xs font-medium">
-                                        You have not acknowledged knockout clauses yet. You will not be able to submit this bid until acknowledgment is completed.
-                                    </div>
-                                )}
+                <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                    <p className="text-sm text-yellow-800">
+                        <strong>Note:</strong> You must provide the full required quantity for each item you choose. 
+                        Partial quantities are not allowed. You can either provide the complete requirement or drop the item entirely.
+                    </p>
+                </div>
+                {!tender?.criteria_acknowledged && (
+                    <div className="mt-3 bg-red-50 border border-red-200 text-red-700 p-3 rounded text-xs font-medium">
+                        You have not acknowledged knockout clauses yet. You will not be able to submit this bid until acknowledgment is completed.
+                    </div>
+                )}
             </div>
 
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
@@ -385,17 +408,34 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
             <div className="space-y-4">
                 {bidData.items.map((item, index) => (
-                    <div key={item.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Item Name
+                    <div key={item.id} className={`border rounded-lg p-4 ${item.will_provide ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="font-medium text-gray-900">{item.item_name}</h4>
+                            <div className="flex items-center space-x-3">
+                                <label className="flex items-center space-x-2">
+                                    <input
+                                        type="radio"
+                                        name={`item_${index}`}
+                                        checked={item.will_provide}
+                                        onChange={() => handleItemChange(index, 'will_provide', true)}
+                                        className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300"
+                                    />
+                                    <span className="text-sm font-medium text-green-700">Provide Full Quantity</span>
                                 </label>
-                                <p className="text-sm text-gray-900 bg-white p-2 rounded border">
-                                    {item.item_name}
-                                </p>
+                                <label className="flex items-center space-x-2">
+                                    <input
+                                        type="radio"
+                                        name={`item_${index}`}
+                                        checked={!item.will_provide}
+                                        onChange={() => handleItemChange(index, 'will_provide', false)}
+                                        className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300"
+                                    />
+                                    <span className="text-sm font-medium text-red-700">Drop Item</span>
+                                </label>
                             </div>
-                            
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
                                     Required Quantity
@@ -407,22 +447,20 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                             
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Quantity You Can Provide
+                                    You Will Provide
                                 </label>
-                                <input
-                                    type="number"
-                                    value={item.can_provide}
-                                    onChange={(e) => handleItemChange(index, 'can_provide', e.target.value)}
-                                    min="0"
-                                    max={item.required_quantity}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    placeholder="0"
-                                />
+                                <p className={`text-sm font-medium p-2 rounded border ${
+                                    item.will_provide 
+                                        ? 'bg-green-100 text-green-800 border-green-200' 
+                                        : 'bg-red-100 text-red-800 border-red-200'
+                                }`}>
+                                    {item.will_provide ? `${item.required_quantity} ${item.unit} (Full)` : '0 (Dropped)'}
+                                </p>
                             </div>
                             
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Total Cost (Rs)
+                                    Total Cost (Rs) *
                                 </label>
                                 <input
                                     type="number"
@@ -430,11 +468,61 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                     onChange={(e) => handleItemChange(index, 'total_cost', e.target.value)}
                                     min="0"
                                     step="0.01"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    placeholder="0.00"
+                                    disabled={!item.will_provide}
+                                    className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
+                                        !item.will_provide ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
+                                    }`}
+                                    placeholder={item.will_provide ? "0.00" : "Item dropped"}
                                 />
+                                {item.will_provide && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        For {item.required_quantity} {item.unit}
+                                    </p>
+                                )}
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Price Per Unit (Rs) *
+                                </label>
+                                <input
+                                    type="number"
+                                    value={item.price_per_unit}
+                                    onChange={(e) => handleItemChange(index, 'price_per_unit', e.target.value)}
+                                    min="0"
+                                    step="0.01"
+                                    disabled={!item.will_provide}
+                                    className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
+                                        !item.will_provide ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
+                                    }`}
+                                    placeholder={item.will_provide ? "0.00" : "Item dropped"}
+                                />
+                                {item.will_provide && item.price_per_unit && item.total_cost && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                        ✓ Auto-calculated
+                                    </p>
+                                )}
                             </div>
                         </div>
+
+                        {item.will_provide && (
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Manufacturer/Brand Name *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={item.manufacturer_brand}
+                                    onChange={(e) => handleItemChange(index, 'manufacturer_brand', e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    placeholder="Enter manufacturer or brand name"
+                                    required
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Specify the manufacturer or brand of the item you will provide
+                                </p>
+                            </div>
+                        )}
                         
                         {item.remarks && (
                             <div className="mt-3">
@@ -452,7 +540,10 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
             <div className="bg-green-50 p-4 rounded-lg border border-green-200">
                 <h4 className="font-semibold text-green-900 mb-2">Bid Summary</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    <div>
+                        <span className="font-medium text-green-800">Items Provided:</span> {bidData.items.filter(item => item.will_provide).length} / {bidData.items.length}
+                    </div>
                     <div>
                         <span className="font-medium text-green-800">Total Quantity:</span> {calculateTotalQuantity()}
                     </div>
@@ -460,6 +551,13 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                         <span className="font-medium text-green-800">Total Amount:</span> Rs {calculateTotalBidAmount().toLocaleString()}
                     </div>
                 </div>
+                {bidData.items.filter(item => !item.will_provide).length > 0 && (
+                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                        <p className="text-sm text-yellow-800">
+                            <strong>Dropped Items:</strong> {bidData.items.filter(item => !item.will_provide).map(item => item.item_name).join(', ')}
+                        </p>
+                    </div>
+                )}
             </div>
         </div>
     );

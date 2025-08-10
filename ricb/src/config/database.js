@@ -417,6 +417,7 @@ const initializeDatabase = async () => {
                 unit_price DECIMAL(10,2) NOT NULL,
                 total_cost DECIMAL(10,2) NOT NULL,
                 unit TEXT DEFAULT 'pieces',
+                manufacturer_brand TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE,
                 FOREIGN KEY (item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
@@ -939,9 +940,9 @@ const initializeDatabase = async () => {
             }
         }
 
-        // Check if Evaluation Committee exists
+        // Check if Supplier Evaluation Committee exists
         const committeeRow = await new Promise((resolve, reject) => {
-            db.get("SELECT * FROM committees WHERE name = 'Evaluation Committee'", (err, row) => {
+            db.get("SELECT * FROM committees WHERE name = 'Supplier Evaluation Committee'", (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
@@ -951,11 +952,11 @@ const initializeDatabase = async () => {
             await new Promise((resolve, reject) => {
                 db.run(
                     'INSERT INTO committees (name) VALUES (?)',
-                    ['Evaluation Committee'],
+                    ['Supplier Evaluation Committee'],
                     (err) => {
                         if (err) reject(err);
                         else {
-                            console.log('Evaluation Committee created successfully');
+                            console.log('Supplier Evaluation Committee created successfully');
                             resolve();
                         }
                     }
@@ -1595,6 +1596,8 @@ const runMigrations = async () => {
                         grievance_marked INTEGER DEFAULT 0,
                         total_score REAL,
                         scoring_breakdown TEXT,
+                        evaluation_status TEXT DEFAULT 'pending',
+                        completed_at TEXT,
                         FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
                         FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
                         FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -1617,6 +1620,8 @@ const runMigrations = async () => {
                     if (!columnNames.includes('grievance_marked')) additions.push("ALTER TABLE technical_evaluations ADD COLUMN grievance_marked INTEGER DEFAULT 0");
                     if (!columnNames.includes('total_score')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN total_score REAL');
                     if (!columnNames.includes('scoring_breakdown')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN scoring_breakdown TEXT');
+                    if (!columnNames.includes('evaluation_status')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN evaluation_status TEXT DEFAULT "pending"');
+                    if (!columnNames.includes('completed_at')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN completed_at TEXT');
                     if (additions.length === 0) { resolve(); return; }
                     const runNext = () => {
                         if (additions.length === 0) { resolve(); return; }
@@ -2121,7 +2126,36 @@ const runMigrations = async () => {
             insertNextEquipCategory(0);
         });
 
-        // Migration 13: Add 2FA columns to suppliers table
+        // Migration 13: Add manufacturer_brand column to supplier_bid_items table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(supplier_bid_items)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasManufacturerBrand = columnNames.includes('manufacturer_brand');
+                
+                if (!hasManufacturerBrand) {
+                    console.log('Adding manufacturer_brand column to supplier_bid_items table...');
+                    db.run("ALTER TABLE supplier_bid_items ADD COLUMN manufacturer_brand TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding manufacturer_brand column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added manufacturer_brand column');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('manufacturer_brand column already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 14: Add 2FA columns to suppliers table
         await new Promise((resolve, reject) => {
             db.all("PRAGMA table_info(suppliers)", [], (err, columns) => {
                 if (err) {

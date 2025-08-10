@@ -262,11 +262,34 @@ const ItemWiseEvaluation = () => {
 
             const data = await response.json();
             alert(data.message);
+            
+            // Mark evaluation as completed after successful submission
+            await markEvaluationCompleted();
+            
             navigate('/dashboard');
         } catch (err) {
             setError(err.message);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const markEvaluationCompleted = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/technical-reports/tender/${tenderId}/complete`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                console.error('Failed to mark evaluation as completed');
+            }
+        } catch (error) {
+            console.error('Error marking evaluation as completed:', error);
         }
     };
 
@@ -414,7 +437,7 @@ const ItemWiseEvaluation = () => {
                                                     </div>
                                                 </div>
 
-                                                <div className="grid grid-cols-3 gap-4 text-sm mb-4">
+                                                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                                                     <div>
                                                         <span className="font-medium">Proposed Quantity:</span>
                                                         <div>{
@@ -429,7 +452,48 @@ const ItemWiseEvaluation = () => {
                                                             })()
                                                         }</div>
                                                     </div>
+                                                    <div>
+                                                        <span className="font-medium">Manufacturer/Brand:</span>
+                                                        <div>{
+                                                            (() => {
+                                                                // Show item-specific manufacturer brand if available
+                                                                if (bid.bidItems && bid.bidItems.length > 0) {
+                                                                    const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
+                                                                    return itemBid?.manufacturer_brand || 'Not specified';
+                                                                }
+                                                                // For legacy tenders without item-specific data
+                                                                return 'Not specified';
+                                                            })()
+                                                        }</div>
+                                                    </div>
                                                 </div>
+
+                                                {/* Pricing Information */}
+                                                {(() => {
+                                                    if (bid.bidItems && bid.bidItems.length > 0) {
+                                                        const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
+                                                        if (itemBid) {
+                                                            // Calculate price per unit: total_cost / required_quantity
+                                                            const totalCost = parseFloat(itemBid.total_cost || 0);
+                                                            const requiredQty = parseInt(itemBid.required_quantity || 1);
+                                                            const pricePerUnit = requiredQty > 0 ? (totalCost / requiredQty) : 0;
+                                                            
+                                                            return (
+                                                                <div className="grid grid-cols-2 gap-4 text-sm mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
+                                                                    <div>
+                                                                        <span className="font-medium text-green-800">Total Cost:</span>
+                                                                        <div className="text-green-900 font-semibold">Rs {totalCost.toLocaleString()}</div>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="font-medium text-green-800">Price per Unit:</span>
+                                                                        <div className="text-green-900 font-semibold">Rs {pricePerUnit.toLocaleString()}</div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
+                                                    }
+                                                    return null;
+                                                })()}
 
                                                 <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                                                     <div>

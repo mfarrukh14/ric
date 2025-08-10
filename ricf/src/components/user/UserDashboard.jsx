@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DemandManagement from '../admin/DemandManagement';
 import SupplierEvaluation from '../admin/SupplierEvaluation';
-import TechnicalEvaluation from '../committee/TechnicalEvaluation';
+import TechnicalEvaluationDashboard from '../committee/TechnicalEvaluationDashboard';
 import PurchaseDepartment from '../department/PurchaseDepartment';
 import GrievanceCommitteeNew from '../committee/GrievanceCommitteeNew';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
@@ -19,8 +19,8 @@ export default function UserDashboard() {
   // Check if user is Store department user
   const isStoreDepartmentUser = user?.departmentName && user.departmentName.toLowerCase() === 'store';
   
-  // Check if user is Evaluation Committee member
-  const isEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'evaluation committee';
+  // Check if user is Supplier Evaluation Committee member
+  const isEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase() === 'supplier evaluation committee';
   
   // Check if user is Technical Evaluation Committee member
   const isTechnicalEvaluationCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('technical evaluation');
@@ -98,7 +98,7 @@ export default function UserDashboard() {
   return (
     <div className="container mx-auto p-8">      <div className="flex justify-between items-center mb-6">        <h1 className="text-2xl font-bold">
           {isStoreDepartmentUser ? 'Store Department Dashboard' : 
-           isEvaluationCommittee ? 'Evaluation Committee Dashboard' :
+           isEvaluationCommittee ? 'Supplier Evaluation Committee Dashboard' :
            isPurchaseDepartment ? 'Purchase Department Dashboard' :
            isGrievanceCommittee ? 'Grievance Committee Dashboard' : 'User Dashboard'}
         </h1>
@@ -142,7 +142,7 @@ export default function UserDashboard() {
             </nav>
           </div>
         </div>
-      )}      {/* Tab Navigation for Evaluation Committee Users */}
+      )}      {/* Tab Navigation for Supplier Evaluation Committee Users */}
       {isEvaluationCommittee && (
         <div className="mb-6">
           <div className="border-b border-gray-200">
@@ -286,7 +286,7 @@ export default function UserDashboard() {
             {isEvaluationCommittee && (
               <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
                 <p className="text-purple-800">
-                  As an Evaluation Committee member, you can review and evaluate supplier registrations. Use the tabs above to switch between your personal demands and supplier evaluation.
+                  As a Supplier Evaluation Committee member, you can review and evaluate supplier registrations. Use the tabs above to switch between your personal demands and supplier evaluation.
                 </p>
               </div>
             )}
@@ -463,7 +463,7 @@ export default function UserDashboard() {
       )}
 
       {isTechnicalEvaluationCommittee && activeTab === 'technical-evaluation' && (
-        <TechnicalEvaluation />
+        <TechnicalEvaluationDashboard />
       )}
 
       {isPurchaseDepartment && activeTab === 'purchase-review' && (

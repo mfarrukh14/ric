@@ -727,8 +727,17 @@ const downloadFinancialBid = async (req, res) => {
             return res.status(404).json({ message: 'Financial bid document not found' });
         }
 
-        if (!fs.existsSync(bid.financial_bid_document)) {
-            return res.status(404).json({ message: 'Financial bid document file not found' });
+        // Construct file path - check if it's already a full path or just filename
+        let filePath = bid.financial_bid_document;
+        
+        // If we stored only filename, build absolute path inside uploads directory
+        if (!path.isAbsolute(filePath) && !filePath.includes('uploads')) {
+            filePath = path.join(__dirname, '../../uploads', filePath);
+        }
+
+        if (!fs.existsSync(filePath)) {
+            console.error('File not found at path:', filePath);
+            return res.status(404).json({ message: 'Financial bid document file not found on server' });
         }
 
         // Set headers for download
@@ -736,7 +745,7 @@ const downloadFinancialBid = async (req, res) => {
         res.setHeader('Content-Type', 'application/pdf');
         
         // Send file
-        res.sendFile(path.resolve(bid.financial_bid_document));
+        res.sendFile(path.resolve(filePath));
     } catch (error) {
         console.error('Error downloading financial bid:', error);
         res.status(500).json({ message: 'Failed to download financial bid document' });

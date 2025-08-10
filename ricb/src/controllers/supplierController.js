@@ -1154,6 +1154,19 @@ const submitBid = async (req, res) => {
             return res.status(400).json({ error: 'Bid must include at least one item with positive quantity and cost' });
         }
 
+        // NEW VALIDATION: Ensure suppliers only provide full quantities for items they choose
+        // Check that each item is either fully provided or completely dropped
+        for (const item of itemsData) {
+            const proposedQty = parseInt(item.can_provide || item.proposed_quantity || 0);
+            const requiredQty = parseInt(item.required_quantity || 0);
+            
+            if (proposedQty > 0 && proposedQty !== requiredQty) {
+                return res.status(400).json({ 
+                    error: `For item "${item.item_name}", you must provide the full required quantity (${requiredQty}) or drop the item entirely. Partial quantities are not allowed.` 
+                });
+            }
+        }
+
         // Begin transaction
         await new Promise((resolve, reject) => {
             db.run('BEGIN TRANSACTION', (err) => {
@@ -1196,17 +1209,18 @@ const submitBid = async (req, res) => {
                     db.run(
                         `INSERT INTO supplier_bid_items (
                             bid_id, item_id, item_name, required_quantity,
-                            proposed_quantity, unit_price, total_cost, unit
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                            proposed_quantity, unit_price, total_cost, unit, manufacturer_brand
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
                             bidId,
                             item.item_id,
                             item.item_name,
                             item.required_quantity,
                             item.can_provide,
-                            (item.total_cost / item.can_provide).toFixed(2), // Calculate unit price
+                            item.price_per_unit || (item.total_cost / item.can_provide).toFixed(2), // Use provided price_per_unit or calculate
                             item.total_cost,
-                            item.unit || 'pieces'
+                            item.unit || 'pieces',
+                            item.manufacturer_brand || ''
                         ],
                         (err) => {
                             if (err) reject(err);
@@ -1714,7 +1728,7 @@ const requestResubmission = async (req, res) => {
     const { supplierId } = req.params;
     const { issues, additionalMessage, failedCriteria } = req.body;
     const evaluatorId = req.user.id;
-    const evaluatorName = req.user.username || req.user.name || 'Evaluation Committee';
+    const evaluatorName = req.user.username || req.user.name || 'Supplier Evaluation Committee';
     const db = getDatabase();
 
     try {

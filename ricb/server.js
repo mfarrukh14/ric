@@ -17,6 +17,7 @@ const twoFactorEnforcementRoutes = require('./src/routes/twoFactorEnforcement');
 const supplierTwoFactorRoutes = require('./src/routes/supplierTwoFactor');
 const itemCategorizationRoutes = require('./src/routes/itemCategorization');
 const auditRoutes = require('./src/routes/audit');
+const technicalReportsRoutes = require('./src/routes/technicalReports');
 
 const app = express();
 const PORT = 5000;
@@ -41,6 +42,7 @@ app.use('/api/2fa-enforcement', twoFactorEnforcementRoutes);
 app.use('/api/supplier-2fa', supplierTwoFactorRoutes);
 app.use('/api/item-categorization', itemCategorizationRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/technical-reports', technicalReportsRoutes);
 
 // Test route
 app.get('/', (req, res) => {

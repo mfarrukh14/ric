@@ -8,6 +8,7 @@ import UserDashboard from '../components/user/UserDashboard';
 import SupplierDashboard from '../components/supplier/SupplierDashboard';
 import BidApplication from '../components/supplier/BidApplication';
 import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
+import TechnicalEvaluationDashboard from '../components/committee/TechnicalEvaluationDashboard';
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
 import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
 import CreateDemandForm from '../components/demand/CreateDemandForm';
@@ -128,6 +129,16 @@ function App() {
           />
           <Route
             path="/committee/technical-evaluation"
+            element={
+              <ProtectedRoute currentUser={user}>
+                <TwoFactorEnforcementWrapper>
+                  <TechnicalEvaluationDashboard />
+                </TwoFactorEnforcementWrapper>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/technical-evaluation/:tenderId"
             element={
               <ProtectedRoute currentUser={user}>
                 <TwoFactorEnforcementWrapper>

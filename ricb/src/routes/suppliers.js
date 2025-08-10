@@ -97,7 +97,7 @@ router.post('/register/verify-sms-otp', verifySMSOTP);
 router.post('/register/complete', completeRegistration);
 router.post('/register/resend-otp', resendOTP);
 
-// Protected routes (for evaluation committee)
+// Protected routes (for supplier evaluation committee)
 router.get('/pending', auth, getPendingSuppliers);
 router.get('/registration-data', auth, getSupplierRegistrationData);
 router.get('/tenders/active', auth, getActiveTenders);

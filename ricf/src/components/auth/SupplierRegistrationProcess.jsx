@@ -100,7 +100,7 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
             
             // Format the feedback data for display
             const formattedFeedback = {
-              evaluatorName: data.resubmissionFeedback.evaluatorName || 'Evaluation Committee',
+              evaluatorName: data.resubmissionFeedback.evaluatorName || 'Supplier Evaluation Committee',
               requestedAt: data.resubmissionFeedback.requestedAt || new Date().toISOString(),
               overallComment: data.resubmissionFeedback.overallComment || data.resubmissionFeedback.additionalMessage || '',
               failedCriteria: data.resubmissionFeedback.failedCriteria || [],
@@ -243,10 +243,13 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
   ];
 
   const ppraTypes = [
-    'Construction Works',
-    'Goods',
-    'Services',
-    'Consultancy Services'
+    'Federal Public Procurement Regulatory Authority',
+    'Punjab Public Procurement Regulatory Authority',
+    'Sindh Public Procurement Regulatory Authority',
+    'Balochistan Public Procurement Regulatory Authority',
+    'Khyber Pakhtunkhwa Public Procurement Regulatory Authority',
+    'Gilgit-Baltistan Public Procurement Regulatory Authority',
+    'Azad Jammu & Kashmir Public Procurement Regulatory Authority'
   ];
 
   const steps = [
