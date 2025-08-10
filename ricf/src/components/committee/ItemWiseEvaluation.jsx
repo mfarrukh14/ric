@@ -53,11 +53,11 @@ const ItemWiseEvaluation = () => {
                 };
             });
             setItemEvaluations(initialEvaluations);
-            // Initialize knockout checks for each bid (default all true = passes unless evaluator unchecks)
+            // Initialize knockout checks for each bid (default all false = evaluator must check to approve)
             const koInit = {};
             (data.bids || []).forEach(b => {
                 koInit[b.id] = {};
-                (data.knockoutClauses || []).forEach(c => { koInit[b.id][c.id] = true; });
+                (data.knockoutClauses || []).forEach(c => { koInit[b.id][c.id] = false; });
             });
             setKnockoutChecks(koInit);
             // Initialize scoring breakdown structure
@@ -116,8 +116,24 @@ const ItemWiseEvaluation = () => {
             if (action === 'approve') {
                 const koMap = knockoutChecks[bidId] || {};
                 const scoreObj = scoring[bidId];
-                if (Object.values(koMap).some(v => v === false)) { setError('Cannot approve: knockout failure present.'); return prev; }
-                if (!scoreObj || scoreObj.total <= 0) { setError('Provide scoring before approval.'); return prev; }
+                
+                // Check if all knockout clauses are satisfied
+                const knockoutClausesCount = tender.knockoutClauses ? tender.knockoutClauses.length : 0;
+                const passedKnockoutClauses = Object.values(koMap).filter(v => v === true).length;
+                const allKnockoutClausesPassed = knockoutClausesCount === 0 || passedKnockoutClauses === knockoutClausesCount;
+                
+                if (!allKnockoutClausesPassed) { 
+                    setError('Cannot approve: All knockout clauses must be satisfied.'); 
+                    return prev; 
+                }
+                
+                // Check scoring if scoring criteria exist
+                const hasScoringCriteria = tender.scoringCriteria && tender.scoringCriteria.length > 0;
+                if (hasScoringCriteria && (!scoreObj || scoreObj.total <= 0)) { 
+                    setError('Provide scoring before approval.'); 
+                    return prev; 
+                }
+                
                 itemEval.approvedCompanies.push({ bidId, companyName, knockoutChecks: koMap });
             } else if (action === 'reject') {
                 if (!reason.trim()) { setError('Rejection reason required'); return prev; }
@@ -364,8 +380,19 @@ const ItemWiseEvaluation = () => {
 
                                         const koMap = knockoutChecks[bid.id] || {};
                                         const scoreObj = scoring[bid.id] || { breakdown: {}, total: 0 };
-                                        const koFailed = Object.values(koMap).some(v => v === false);
-                                        const canApprove = !koFailed && scoreObj.total > 0;
+                                        
+                                        // Check if all knockout clauses are satisfied (all must be checked/true)
+                                        const knockoutClausesCount = tender.knockoutClauses ? tender.knockoutClauses.length : 0;
+                                        const passedKnockoutClauses = Object.values(koMap).filter(v => v === true).length;
+                                        const allKnockoutClausesPassed = knockoutClausesCount === 0 || passedKnockoutClauses === knockoutClausesCount;
+                                        
+                                        // Check if any knockout clause failed (unchecked or false)
+                                        const hasKnockoutFailures = Object.values(koMap).some(v => v === false) && knockoutClausesCount > 0;
+                                        
+                                        // Can approve if all knockout clauses pass and has scoring (if scoring criteria exist)
+                                        const hasScoringCriteria = tender.scoringCriteria && tender.scoringCriteria.length > 0;
+                                        const canApprove = allKnockoutClausesPassed && (!hasScoringCriteria || scoreObj.total > 0);
+                                        
                                         const grievanceFlag = grievanceMarked[bid.id];
                                         return (
                                             <div key={bid.id} className="border rounded-lg p-4">
@@ -427,7 +454,7 @@ const ItemWiseEvaluation = () => {
                                                     <div className="mt-4 border-t pt-4">
                                                         <h6 className="text-sm font-semibold text-red-700 mb-2 flex items-center">
                                                             <span className="mr-2">Knockout Clauses</span>
-                                                            <span className="text-xs font-normal text-red-500">(Uncheck if clause failed)</span>
+                                                            <span className="text-xs font-normal text-red-500">(Check if clause is satisfied)</span>
                                                         </h6>
                                                         <div className="grid md:grid-cols-2 gap-2">
                                                             {tender.knockoutClauses.map(clause => (
@@ -435,7 +462,7 @@ const ItemWiseEvaluation = () => {
                                                                     <input
                                                                         type="checkbox"
                                                                         className="mt-0.5 h-4 w-4 text-red-600"
-                                                                        checked={koMap[clause.id] !== false}
+                                                                        checked={koMap[clause.id] === true}
                                                                         onChange={(e) => setKnockoutChecks(prev => ({
                                                                             ...prev,
                                                                             [bid.id]: { ...prev[bid.id], [clause.id]: e.target.checked }
@@ -445,7 +472,28 @@ const ItemWiseEvaluation = () => {
                                                                 </label>
                                                             ))}
                                                         </div>
-                                                        {Object.values(koMap).some(v => v === false) && (
+                                                        
+                                                        {/* Status indicator */}
+                                                        <div className="mt-3 text-xs">
+                                                            {allKnockoutClausesPassed ? (
+                                                                <div className="inline-flex items-center space-x-1 bg-green-50 border border-green-200 rounded p-2 text-green-800">
+                                                                    <span className="text-green-600">✓</span>
+                                                                    <span>All knockout clauses satisfied</span>
+                                                                </div>
+                                                            ) : hasKnockoutFailures ? (
+                                                                <div className="inline-flex items-center space-x-1 bg-red-50 border border-red-200 rounded p-2 text-red-800">
+                                                                    <span className="text-red-600">✗</span>
+                                                                    <span>Knockout clause(s) failed - requires grievance handling</span>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="inline-flex items-center space-x-1 bg-yellow-50 border border-yellow-200 rounded p-2 text-yellow-800">
+                                                                    <span className="text-yellow-600">⚠</span>
+                                                                    <span>Please evaluate all knockout clauses</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        
+                                                        {hasKnockoutFailures && (
                                                             <label className="mt-3 inline-flex items-center space-x-2 bg-purple-50 border border-purple-200 rounded p-2 text-xs text-purple-800">
                                                                 <input
                                                                     type="checkbox"
@@ -498,24 +546,50 @@ const ItemWiseEvaluation = () => {
                                                         </div>
                                                     )}
                                                     <div className="flex items-center space-x-3">
+                                                        {/* Approve Button - only show if not marked for grievance */}
                                                         {!grievanceFlag && (
                                                             <button
                                                                 onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'approve')}
                                                                 disabled={!canApprove || status === 'approved'}
-                                                                className={`px-3 py-1 text-sm rounded ${canApprove && status !== 'approved' ? 'bg-green-600 text-white hover:bg-green-700' : status === 'approved' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+                                                                className={`px-3 py-1 text-sm rounded ${
+                                                                    canApprove && status !== 'approved' 
+                                                                        ? 'bg-green-600 text-white hover:bg-green-700' 
+                                                                        : status === 'approved' 
+                                                                        ? 'bg-green-600 text-white' 
+                                                                        : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                                                                }`}
+                                                                title={
+                                                                    !allKnockoutClausesPassed 
+                                                                        ? 'All knockout clauses must be satisfied before approval'
+                                                                        : hasScoringCriteria && scoreObj.total <= 0
+                                                                        ? 'Scoring must be completed before approval'
+                                                                        : ''
+                                                                }
                                                             >
                                                                 {status === 'approved' ? '✓ Approved' : 'Approve'}
                                                             </button>
                                                         )}
-                                                        <button
-                                                            onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'reject')}
-                                                            disabled={status === 'rejected'}
-                                                            className={`px-3 py-1 text-sm rounded ${status === 'rejected' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
-                                                        >
-                                                            {status === 'rejected' ? '✗ Rejected' : 'Send For Grievance'}
-                                                        </button>
+                                                        
+                                                        {/* Send For Grievance Button - only show if grievance is marked */}
+                                                        {grievanceFlag && (
+                                                            <button
+                                                                onClick={() => handleCompanyEvaluation(currentItem.id, bid.id, bid.company_name, 'reject')}
+                                                                disabled={status === 'rejected'}
+                                                                className={`px-3 py-1 text-sm rounded ${
+                                                                    status === 'rejected' 
+                                                                        ? 'bg-red-600 text-white' 
+                                                                        : 'bg-red-100 text-red-700 hover:bg-red-200'
+                                                                }`}
+                                                            >
+                                                                {status === 'rejected' ? '✗ Sent for Grievance' : 'Send For Grievance'}
+                                                            </button>
+                                                        )}
+                                                        
+                                                        {/* Pending status indicator */}
                                                         {status === 'pending' && !grievanceFlag && !canApprove && (
-                                                            <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded">Pending</span>
+                                                            <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded">
+                                                                {!allKnockoutClausesPassed ? 'Complete Knockout Evaluation' : 'Complete Scoring'}
+                                                            </span>
                                                         )}
                                                     </div>
 

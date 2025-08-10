@@ -507,11 +507,20 @@ const submitItemWiseEvaluation = async (req, res) => {
 
                         if (bid) {
                             // Determine knockout clause state
-                            const knockoutChecks = Array.isArray(approved.knockoutChecks) ? approved.knockoutChecks : [];
-                            const allKnockoutChecked = knockoutChecks.length === 0 ? 1 : (knockoutChecks.every(k => k.checked) ? 1 : 0);
+                            const knockoutChecks = approved.knockoutChecks || {};
+                            
+                            // Convert knockout checks object to validation
+                            // knockoutChecks is an object like { clauseId1: true, clauseId2: false, ... }
+                            const knockoutValues = Object.values(knockoutChecks);
+                            const allKnockoutChecked = knockoutValues.length === 0 ? 1 : (knockoutValues.every(v => v === true) ? 1 : 0);
+                            
                             if (!allKnockoutChecked) {
                                 // If any knockout clause failed, this bid cannot be approved
-                                return res.status(400).json({ message: 'Cannot approve a bid where all knockout clauses are not satisfied', bidId: approved.bidId });
+                                return res.status(400).json({ 
+                                    message: 'Cannot approve a bid where all knockout clauses are not satisfied', 
+                                    bidId: approved.bidId,
+                                    knockoutChecks: knockoutChecks
+                                });
                             }
                         // Insert into technical evaluations
                         const scoreObj = scoring && scoring[approved.bidId] ? scoring[approved.bidId] : null;
