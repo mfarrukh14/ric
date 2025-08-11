@@ -30,7 +30,7 @@ const GrievanceManagement = () => {
     const fetchRejectedItems = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('supplierToken');
             const response = await axios.get(`${apiUrl}/grievances/supplier/rejected-items`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -46,7 +46,7 @@ const GrievanceManagement = () => {
     const fetchMyGrievances = async () => {
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('supplierToken');
             const response = await axios.get(`${apiUrl}/grievances/supplier/my-grievances`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -61,7 +61,7 @@ const GrievanceManagement = () => {
 
     const fetchDeadlineStatus = async () => {
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('supplierToken');
             const response = await axios.get(`${apiUrl}/grievances/supplier/deadline-status`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -157,7 +157,7 @@ const GrievanceManagement = () => {
 
         setLoading(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('supplierToken');
             await axios.post(`${apiUrl}/grievances/supplier/submit`, {
                 technicalEvaluationId: selectedItem.id,
                 ...grievanceForm

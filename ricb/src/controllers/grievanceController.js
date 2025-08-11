@@ -16,12 +16,13 @@ const getSupplierRejectedItems = async (req, res) => {
             db.all(
                 `SELECT te.*, dt.id as tender_id, di.item_name, di.quantity as required_quantity,
                         sb.proposed_quantity, sb.total_cost, sb.delivery_days,
-                        dt.bidding_end_time, s.company_name
+                        dt.bidding_end_time, sbp.business_name as company_name
                  FROM technical_evaluations te
                  JOIN supplier_bids sb ON te.bid_id = sb.id
                  JOIN demand_tenders dt ON te.tender_id = dt.id
                  JOIN demand_items di ON te.item_id = di.id
                  JOIN suppliers s ON te.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                  WHERE te.supplier_id = ? AND te.status = 'rejected'
                  ORDER BY te.evaluated_at DESC`,
                 [user.id],
@@ -212,13 +213,15 @@ const getAllGrievances = async (req, res) => {
         const grievances = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT ga.*, di.item_name, te.rejection_reason,
-                        s.company_name, s.company_email, s.contact_person, s.contact_number,
+                        sbp.business_name as company_name, s.business_email as company_email, 
+                        sbp.contact_person_name as contact_person, sbp.business_mobile_number as contact_number,
                         dt.bidding_end_time, u.name as reviewed_by_name
                  FROM grievance_applications ga
                  JOIN technical_evaluations te ON ga.technical_evaluation_id = te.id
                  JOIN demand_items di ON ga.item_id = di.id
                  JOIN demand_tenders dt ON ga.tender_id = dt.id
                  JOIN suppliers s ON ga.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                  LEFT JOIN users u ON ga.reviewed_by = u.id
                  ORDER BY ga.submitted_at DESC`,
                 [],
@@ -255,10 +258,12 @@ const scheduleGrievanceMeeting = async (req, res) => {
         // Get grievance details with supplier info
         const grievance = await new Promise((resolve, reject) => {
             db.get(
-                `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
+                `SELECT ga.*, sbp.business_name as company_name, s.business_email as company_email, 
+                        sbp.contact_person_name as contact_person,
                         di.item_name, te.rejection_reason
                  FROM grievance_applications ga
                  JOIN suppliers s ON ga.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                  JOIN demand_items di ON ga.item_id = di.id
                  JOIN technical_evaluations te ON ga.technical_evaluation_id = te.id
                  WHERE ga.id = ?`,
@@ -407,11 +412,13 @@ const approveGrievance = async (req, res) => {
         // Get grievance details with meeting information
         const grievance = await new Promise((resolve, reject) => {
             db.get(
-                `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
+                `SELECT ga.*, sbp.business_name as company_name, s.business_email as company_email, 
+                        sbp.contact_person_name as contact_person,
                         di.item_name, te.*, dt.id as tender_id,
                         ga.meeting_scheduled_date as meeting_date_time
                  FROM grievance_applications ga
                  JOIN suppliers s ON ga.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                  JOIN demand_items di ON ga.item_id = di.id
                  JOIN technical_evaluations te ON ga.technical_evaluation_id = te.id
                  JOIN demand_tenders dt ON ga.tender_id = dt.id
@@ -547,10 +554,12 @@ const rejectGrievance = async (req, res) => {
         // Get grievance details with meeting information
         const grievance = await new Promise((resolve, reject) => {
             db.get(
-                `SELECT ga.*, s.company_name, s.company_email, s.contact_person,
+                `SELECT ga.*, sbp.business_name as company_name, s.business_email as company_email, 
+                        sbp.contact_person_name as contact_person,
                         di.item_name, ga.meeting_scheduled_date as meeting_date_time
                  FROM grievance_applications ga
                  JOIN suppliers s ON ga.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                  JOIN demand_items di ON ga.item_id = di.id
                  WHERE ga.id = ?`,
                 [grievanceId],

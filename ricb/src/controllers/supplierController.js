@@ -1861,6 +1861,136 @@ const requestResubmission = async (req, res) => {
     }
 };
 
+// Grievance-related functions
+const submitGrievance = async (req, res) => {
+    const { tenderId, itemId, grievanceText, grievanceType } = req.body;
+    const supplierId = req.user.id;
+
+    if (!tenderId || !grievanceText || !grievanceType) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const db = getDatabase();
+
+    try {
+        const grievanceId = Date.now().toString(); // Simple ID generation
+        
+        await new Promise((resolve, reject) => {
+            db.run(`
+                INSERT INTO grievances (
+                    id, supplierId, tenderId, itemId, grievanceText, grievanceType, 
+                    status, createdAt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+                grievanceId, supplierId, tenderId, itemId, grievanceText, 
+                grievanceType, 'pending', new Date().toISOString()
+            ], function(err) {
+                if (err) reject(err);
+                else resolve(this);
+            });
+        });
+
+        res.status(201).json({
+            message: 'Grievance submitted successfully',
+            grievanceId: grievanceId
+        });
+
+    } catch (error) {
+        console.error('Error submitting grievance:', error);
+        res.status(500).json({ error: 'Failed to submit grievance' });
+    }
+};
+
+const getSupplierGrievances = async (req, res) => {
+    const supplierId = req.user.id;
+    const db = getDatabase();
+
+    try {
+        const grievances = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT g.*, t.title as tenderTitle, s.company_name as supplierName
+                FROM grievances g
+                LEFT JOIN tenders t ON g.tenderId = t.id
+                LEFT JOIN suppliers s ON g.supplierId = s.id
+                WHERE g.supplierId = ?
+                ORDER BY g.createdAt DESC
+            `, [supplierId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        res.json(grievances);
+
+    } catch (error) {
+        console.error('Error fetching grievances:', error);
+        res.status(500).json({ error: 'Failed to fetch grievances' });
+    }
+};
+
+const getRejectedItems = async (req, res) => {
+    const supplierId = req.user.id;
+    const db = getDatabase();
+
+    try {
+        // This would typically fetch rejected bid items for the supplier
+        const rejectedItems = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT bi.*, t.title as tenderTitle, i.itemName, i.specifications
+                FROM bid_items bi
+                LEFT JOIN tenders t ON bi.tenderId = t.id
+                LEFT JOIN items i ON bi.itemId = i.id
+                WHERE bi.supplierId = ? AND bi.status = 'rejected'
+                ORDER BY bi.updatedAt DESC
+            `, [supplierId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        res.json(rejectedItems);
+
+    } catch (error) {
+        console.error('Error fetching rejected items:', error);
+        res.status(500).json({ error: 'Failed to fetch rejected items' });
+    }
+};
+
+const getDeadlineStatus = async (req, res) => {
+    const supplierId = req.user.id;
+    const db = getDatabase();
+
+    try {
+        const deadlineStatus = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT t.id, t.title, t.submission_deadline as submissionDeadline, t.status,
+                       COUNT(b.id) as bidSubmitted
+                FROM tenders t
+                LEFT JOIN bids b ON t.id = b.tender_id AND b.supplier_id = ?
+                WHERE t.status = 'published' OR (t.status = 'closed' AND b.id IS NOT NULL)
+                GROUP BY t.id, t.title, t.submission_deadline, t.status
+                ORDER BY t.submission_deadline ASC
+            `, [supplierId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        const currentDate = new Date();
+        const statusWithFlags = deadlineStatus.map(tender => ({
+            ...tender,
+            isExpired: new Date(tender.submissionDeadline) < currentDate,
+            hasBid: tender.bidSubmitted > 0
+        }));
+
+        res.json(statusWithFlags);
+
+    } catch (error) {
+        console.error('Error fetching deadline status:', error);
+        res.status(500).json({ error: 'Failed to fetch deadline status' });
+    }
+};
+
 module.exports = {
     registerSupplier,
     loginSupplier,
@@ -1875,6 +2005,11 @@ module.exports = {
     getActiveTenders,
     submitBid,
     getSupplierBids,
+    // Grievance functions
+    submitGrievance,
+    getSupplierGrievances,
+    getRejectedItems,
+    getDeadlineStatus,
     // Legacy exports for backward compatibility
     legacyRegisterSupplier,
     sendRegistrationOTP,

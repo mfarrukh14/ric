@@ -21,6 +21,11 @@ const {
     getComprehensiveSupplierData,
     getSupplierRegistrationData,
     requestResubmission,
+    // Grievance-related functions
+    submitGrievance,
+    getSupplierGrievances,
+    getRejectedItems,
+    getDeadlineStatus,
     // Legacy functions for backward compatibility
     sendRegistrationOTP,
     verifySMSOTP,
@@ -116,6 +121,12 @@ router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
 
 // Get supplier's own bids
 router.get('/bids/my-bids', auth, getSupplierBids);
+
+// Grievance routes
+router.post('/grievances/submit', auth, submitGrievance);
+router.get('/grievances/my-grievances', auth, getSupplierGrievances);
+router.get('/grievances/rejected-items', auth, getRejectedItems);
+router.get('/grievances/deadline-status', auth, getDeadlineStatus);
 
 // Test email endpoint (for development/testing)
 router.post('/test-email', auth, async (req, res) => {
