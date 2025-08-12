@@ -5,8 +5,59 @@ const EmailService = require('../utils/emailService');
 // Initialize email service
 const emailService = new EmailService();
 
-// Mark expired tenders for technical evaluation (new function)
-const markExpiredTendersForEvaluation = async () => {
+// Generate unique tender number
+const generateTenderNumber = async () => {
+    const db = getDatabase();
+    const currentDate = new Date();
+    const year = currentDate.getFullYear();
+    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const day = String(currentDate.getDate()).padStart(2, '0');
+    
+    // Get count of tenders created today
+    const todayStart = `${year}-${month}-${day} 00:00:00`;
+    const todayEnd = `${year}-${month}-${day} 23:59:59`;
+    
+    const todayCount = await new Promise((resolve, reject) => {
+        db.get(
+            `SELECT COUNT(*) as count FROM demand_tenders 
+             WHERE created_at >= ? AND created_at <= ?`,
+            [todayStart, todayEnd],
+            (err, row) => {
+                if (err) reject(err);
+                else resolve(row.count);
+            }
+        );
+    });
+    
+    // Generate sequential number for today (starting from 001)
+    const sequentialNumber = String(todayCount + 1).padStart(3, '0');
+    
+    // Format: RIC-DDMMYYYY-XXX (e.g., RIC-12082025-001)
+    const tenderNumber = `RIC-${day}${month}${year}-${sequentialNumber}`;
+    
+    // Check if this number already exists (very unlikely but safety check)
+    const exists = await new Promise((resolve, reject) => {
+        db.get(
+            'SELECT id FROM demand_tenders WHERE tender_number = ?',
+            [tenderNumber],
+            (err, row) => {
+                if (err) reject(err);
+                else resolve(!!row);
+            }
+        );
+    });
+    
+    if (exists) {
+        // If somehow it exists, add a random suffix
+        const randomSuffix = Math.floor(Math.random() * 99) + 1;
+        return `${tenderNumber}-${String(randomSuffix).padStart(2, '0')}`;
+    }
+    
+    return tenderNumber;
+};
+
+// Mark expired tenders for purchase department opening (modified function)
+const markExpiredTendersForOpening = async () => {
     const db = getDatabase();
     
     try {
@@ -31,30 +82,30 @@ const markExpiredTendersForEvaluation = async () => {
             return 0; // No expired tenders to process
         }
 
-        console.log(`Found ${expiredTenders.length} expired tenders to mark for evaluation`);
+        console.log(`Found ${expiredTenders.length} expired tenders to mark for opening`);
 
-        // Update status to 'expired' for technical evaluation
+        // Update status to 'pending_opening' for purchase department
         for (const tender of expiredTenders) {
             try {
                 await new Promise((resolve, reject) => {
                     db.run(
                         'UPDATE demand_tenders SET tender_status = ? WHERE id = ?',
-                        ['expired', tender.id],
+                        ['pending_opening', tender.id],
                         (err) => {
                             if (err) reject(err);
                             else resolve();
                         }
                     );
                 });
-                console.log(`Tender ${tender.id} marked as expired for technical evaluation`);
+                console.log(`Tender ${tender.id} marked as pending opening for purchase department`);
             } catch (error) {
-                console.error(`Error marking tender ${tender.id} as expired:`, error);
+                console.error(`Error marking tender ${tender.id} as pending opening:`, error);
             }
         }
 
         return expiredTenders.length;
     } catch (error) {
-        console.error('Error marking expired tenders for evaluation:', error);
+        console.error('Error marking expired tenders for opening:', error);
         throw error;
     }
 };
@@ -113,9 +164,13 @@ const processExpiredTenders = async (req, res) => {
                 // Get all bids for this tender, ordered by cost (lowest first)
                 const bids = await new Promise((resolve, reject) => {
                     db.all(
-                        `SELECT sb.*, s.company_name, s.company_email
+                        `SELECT sb.*, 
+                                bp.business_name as company_name, 
+                                s.business_email as company_email,
+                                bp.business_mobile_number as contact_phone
                          FROM supplier_bids sb
                          JOIN suppliers s ON sb.supplier_id = s.id
+                         LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
                          WHERE sb.tender_id = ? AND s.status = 'approved'
                          ORDER BY sb.total_cost ASC, sb.created_at ASC`,
                         [tender.id],
@@ -314,6 +369,7 @@ const generateSupplyOrderPDFById = async (req, res) => {
                 `SELECT 
                     so.*,
                     dt.id as tender_id,
+                    dt.tender_number,
                     d.item_name,
                     d.description,
                     d.urgency,
@@ -346,6 +402,7 @@ const generateSupplyOrderPDFById = async (req, res) => {
             order_id: supplyOrder.id,
             order_number: supplyOrder.order_number,
             tender_id: supplyOrder.tender_id,
+            tender_number: supplyOrder.tender_number,
             demand_id: supplyOrder.demand_id,
             item_name: supplyOrder.item_name || 'N/A',
             description: supplyOrder.description || 'No description',
@@ -452,14 +509,17 @@ const createTenderWithCriteria = async (req, res) => {
         });
 
         try {
+            // Generate unique tender number
+            const tenderNumber = await generateTenderNumber();
+            
             // Create tender
             const tenderResult = await new Promise((resolve, reject) => {
                 db.run(
                     `INSERT INTO demand_tenders (
                         demand_id, bidding_end_time, minimum_suppliers, 
                         tender_document_path, items_list_path, created_by,
-                        tender_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        tender_status, tender_number
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         demandId,
                         biddingEndTime,
@@ -467,11 +527,12 @@ const createTenderWithCriteria = async (req, res) => {
                         tenderDocumentPath,
                         itemsListPath,
                         createdBy,
-                        'active'
+                        'active',
+                        tenderNumber
                     ],
                     function(err) {
                         if (err) reject(err);
-                        else resolve({ tenderId: this.lastID });
+                        else resolve({ tenderId: this.lastID, tenderNumber });
                     }
                 );
             });
@@ -558,12 +619,13 @@ const createTenderWithCriteria = async (req, res) => {
                 );
             });
 
-            console.log(`Tender ${tenderId} created successfully with ${parsedCriteria.length} evaluation criteria`);
+            console.log(`Tender ${tenderId} (${tenderResult.tenderNumber}) created successfully with ${parsedCriteria.length} evaluation criteria`);
 
             res.status(201).json({
                 message: 'Tender created successfully',
                 tender: {
                     id: tenderId,
+                    tender_number: tenderResult.tenderNumber,
                     ...completeData,
                     evaluationCriteriaCount: parsedCriteria.length
                 }
@@ -875,12 +937,293 @@ const addTenderCriteria = async (req, res) => {
     }
 };
 
+// Get tenders pending opening for purchase department
+const getTendersPendingOpening = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to view tenders pending opening' });
+    }
+
+    try {
+        // Get tenders that are pending opening
+        const pendingTenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
+                        u.name as created_by_name, dept.name as creator_department,
+                        COUNT(sb.id) as bid_count
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 LEFT JOIN users u ON d.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
+                 WHERE dt.tender_status = 'pending_opening'
+                 GROUP BY dt.id
+                 ORDER BY dt.bidding_end_time ASC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // For each tender, get the supplier bids
+        for (const tender of pendingTenders) {
+            const bids = await new Promise((resolve, reject) => {
+                db.all(
+                    `SELECT sb.*, 
+                            bp.business_name as company_name, 
+                            s.business_email as company_email, 
+                            bp.business_mobile_number as contact_phone
+                     FROM supplier_bids sb
+                     JOIN suppliers s ON sb.supplier_id = s.id
+                     LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
+                     WHERE sb.tender_id = ? AND s.status = 'approved'
+                     ORDER BY sb.total_cost ASC`,
+                    [tender.id],
+                    (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows);
+                    }
+                );
+            });
+            tender.bids = bids;
+        }
+
+        res.json(pendingTenders);
+    } catch (error) {
+        console.error('Error fetching tenders pending opening:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Get single tender opening details for purchase department
+const getTenderOpeningDetails = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to view tender opening details' });
+    }
+
+    try {
+        // Get tender details
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
+                        u.name as created_by_name, dept.name as creator_department
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 LEFT JOIN users u ON d.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 WHERE dt.id = ? AND dt.tender_status = 'pending_opening'`,
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not pending opening' });
+        }
+
+        // Get supplier bids (without cost information for confidentiality)
+        const bids = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT sb.id, sb.supplier_id, sb.proposed_quantity, sb.delivery_days, 
+                        sb.bid_comments, sb.created_at,
+                        bp.business_name as company_name, 
+                        s.business_email as company_email, 
+                        bp.business_mobile_number as contact_phone
+                 FROM supplier_bids sb
+                 JOIN suppliers s ON sb.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
+                 WHERE sb.tender_id = ? AND s.status = 'approved'
+                 ORDER BY sb.created_at ASC`,
+                [tenderId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        tender.bids = bids;
+
+        res.json(tender);
+    } catch (error) {
+        console.error('Error fetching tender opening details:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Generate tender opening report PDF
+const generateTenderOpeningReport = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to generate opening reports' });
+    }
+
+    try {
+        // Get tender details with bids
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
+                        u.name as created_by_name, dept.name as creator_department
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 LEFT JOIN users u ON d.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 WHERE dt.id = ? AND dt.tender_status = 'pending_opening'`,
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not pending opening' });
+        }
+
+        // Get supplier bids (without cost information)
+        const bids = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT sb.id, sb.supplier_id, sb.proposed_quantity, sb.delivery_days, 
+                        sb.bid_comments, sb.created_at,
+                        bp.business_name as company_name, 
+                        s.business_email as company_email, 
+                        bp.business_mobile_number as contact_phone,
+                        bp.business_entity_type, bp.origin_classification
+                 FROM supplier_bids sb
+                 JOIN suppliers s ON sb.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
+                 WHERE sb.tender_id = ? AND s.status = 'approved'
+                 ORDER BY sb.created_at ASC`,
+                [tenderId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        // Prepare report data
+        const reportData = {
+            tender,
+            bids,
+            generatedBy: user.name,
+            generatedAt: new Date().toISOString(),
+            totalBids: bids.length
+        };
+
+        // Generate PDF using PDF service
+        const pdfBuffer = await pdfService.generateTenderOpeningReport(reportData);
+        
+        // Set response headers for PDF download
+        const tenderDisplayName = tender.tender_number ? `Tender_${tender.tender_number}` : `Tender_${tender.id}`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${tenderDisplayName}_Opening_Report.pdf"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+        
+        // Send the PDF buffer
+        res.send(pdfBuffer);
+        
+        console.log(`Opening report generated successfully for tender ${tenderId}`);
+    } catch (error) {
+        console.error('Error generating tender opening report:', error);
+        res.status(500).json({ message: 'Failed to generate opening report', error: error.message });
+    }
+};
+
+// Open tender for technical evaluation
+const openTender = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canOpen = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canOpen) {
+        return res.status(403).json({ message: 'Only purchase department can open tenders' });
+    }
+
+    try {
+        // Verify tender exists and is pending opening
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demand_tenders WHERE id = ? AND tender_status = ?',
+                [tenderId, 'pending_opening'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not pending opening' });
+        }
+
+        // Update tender status to 'expired' (for technical evaluation)
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE demand_tenders 
+                 SET tender_status = 'expired', 
+                     opened_by = ?, 
+                     opened_at = datetime('now')
+                 WHERE id = ?`,
+                [user.id, tenderId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ 
+            message: 'Tender opened and forwarded to technical evaluation committee successfully',
+            tenderId 
+        });
+    } catch (error) {
+        console.error('Error opening tender:', error);
+        res.status(500).json({ message: 'Failed to open tender', error: error.message });
+    }
+};
+
 module.exports = {
     processExpiredTenders,
     getAwardedTenders,
     generateSupplyOrderPDF,
     generateSupplyOrderPDFById,
-    markExpiredTendersForEvaluation,
+    markExpiredTendersForOpening,
+    getTendersPendingOpening,
+    getTenderOpeningDetails,
+    generateTenderOpeningReport,
+    openTender,
     createTenderWithCriteria,
     getTenderWithCriteria,
     acknowledgeCriteria,

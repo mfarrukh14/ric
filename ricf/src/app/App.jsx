@@ -10,6 +10,7 @@ import BidApplication from '../components/supplier/BidApplication';
 import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
 import TechnicalEvaluationDashboard from '../components/committee/TechnicalEvaluationDashboard';
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
+import TenderOpeningDetails from '../components/purchase/TenderOpeningDetails';
 import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
 import CreateDemandForm from '../components/demand/CreateDemandForm';
 import FulfillmentPage from '../components/store/FulfillmentPage';
@@ -203,6 +204,16 @@ function App() {
               <ProtectedRoute currentUser={user}>
                 <TwoFactorEnforcementWrapper>
                   <FulfillmentPage />
+                </TwoFactorEnforcementWrapper>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/purchase-department/tender-opening/:tenderId"
+            element={
+              <ProtectedRoute currentUser={user}>
+                <TwoFactorEnforcementWrapper>
+                  <TenderOpeningDetails />
                 </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }

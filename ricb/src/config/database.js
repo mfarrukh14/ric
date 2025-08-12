@@ -1575,6 +1575,114 @@ const runMigrations = async () => {
             });
         });
 
+        // Migration 8a: Add tender opening columns to demand_tenders
+        await new Promise((resolve, reject) => {
+            console.log('Adding tender opening columns to demand_tenders table...');
+            
+            db.all("PRAGMA table_info(demand_tenders)", [], (err, columns) => {
+                if (err) { 
+                    console.error('Error reading demand_tenders schema:', err); 
+                    resolve(); 
+                    return; 
+                }
+                
+                const columnNames = columns.map(c => c.name);
+                const additions = [];
+                
+                if (!columnNames.includes('opened_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN opened_by INTEGER');
+                }
+                if (!columnNames.includes('opened_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN opened_at DATETIME');
+                }
+                if (!columnNames.includes('tender_number')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN tender_number TEXT');
+                }
+                
+                if (additions.length === 0) { 
+                    console.log('Tender opening columns and tender_number already exist in demand_tenders table');
+                    resolve(); 
+                    return; 
+                }
+                
+                const runNext = () => {
+                    if (additions.length === 0) { 
+                        console.log('Successfully added tender opening columns and tender_number to demand_tenders table');
+                        
+                        // Populate tender_number for existing tenders
+                        db.all('SELECT id, created_at FROM demand_tenders WHERE tender_number IS NULL', [], (err, rows) => {
+                            if (err) {
+                                console.error('Error fetching tenders without tender_number:', err);
+                                resolve();
+                                return;
+                            }
+                            
+                            if (rows.length === 0) {
+                                console.log('All tenders already have tender_number assigned');
+                                
+                                // Create unique index for tender_number if no tenders to populate
+                                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_number_unique ON demand_tenders(tender_number)', (indexErr) => {
+                                    if (indexErr) {
+                                        console.error('Error creating unique index for tender_number:', indexErr);
+                                    } else {
+                                        console.log('Created unique index for tender_number');
+                                    }
+                                    resolve();
+                                });
+                                return;
+                            }
+                            
+                            console.log(`Populating tender_number for ${rows.length} existing tenders...`);
+                            
+                            let processed = 0;
+                            rows.forEach((tender, index) => {
+                                const date = new Date(tender.created_at);
+                                const year = date.getFullYear();
+                                const month = String(date.getMonth() + 1).padStart(2, '0');
+                                const day = String(date.getDate()).padStart(2, '0');
+                                const sequentialNumber = String(index + 1).padStart(3, '0');
+                                const tenderNumber = `RIC-${day}${month}${year}-${sequentialNumber}`;
+                                
+                                db.run('UPDATE demand_tenders SET tender_number = ? WHERE id = ?', [tenderNumber, tender.id], (updateErr) => {
+                                    if (updateErr) {
+                                        console.error(`Error updating tender_number for tender ${tender.id}:`, updateErr);
+                                    } else {
+                                        console.log(`Updated tender ${tender.id} with number ${tenderNumber}`);
+                                    }
+                                    
+                                    processed++;
+                                    if (processed === rows.length) {
+                                        console.log('Finished populating tender_number for existing tenders');
+                                        
+                                        // Create unique index for tender_number
+                                        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_number_unique ON demand_tenders(tender_number)', (indexErr) => {
+                                            if (indexErr) {
+                                                console.error('Error creating unique index for tender_number:', indexErr);
+                                            } else {
+                                                console.log('Created unique index for tender_number');
+                                            }
+                                            resolve();
+                                        });
+                                    }
+                                });
+                            });
+                        });
+                        return; 
+                    }
+                    const stmt = additions.shift();
+                    db.run(stmt, (alterErr) => {
+                        if (alterErr && !alterErr.message.includes('duplicate column name')) {
+                            console.error('Error adding column to demand_tenders:', alterErr);
+                        } else {
+                            console.log('Added column to demand_tenders:', stmt);
+                        }
+                        runNext();
+                    });
+                };
+                runNext();
+            });
+        });
+
         // Migration X2: Ensure technical_evaluations table exists with extended columns (knockout + scoring)
         await new Promise((resolve, reject) => {
             db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='technical_evaluations'", [], (err, row) => {

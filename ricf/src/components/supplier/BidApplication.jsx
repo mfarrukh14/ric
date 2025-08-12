@@ -13,6 +13,14 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const navigate = useNavigate();
     const { tenderId } = useParams();
 
+    // Helper function to get tender display name
+    const getTenderDisplayName = (tender) => {
+        if (tender?.tender_number) {
+            return `Tender ${tender.tender_number}`;
+        }
+        return `Tender #${tender?.id || 'Unknown'}`;
+    };
+
     // Fetch tender data when component mounts (only if not provided as prop)
     useEffect(() => {
         if (propTender) {
@@ -398,7 +406,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             </div>
 
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <h4 className="font-semibold text-blue-900 mb-2">{tender?.item_name}</h4>
+                <h4 className="font-semibold text-blue-900 mb-2">{getTenderDisplayName(tender)}</h4>
+                <p className="text-sm text-blue-700 mb-2">{tender?.item_name}</p>
                 <div className="text-sm text-blue-800 space-y-1">
                     <p><span className="font-medium">Description:</span> {tender?.description}</p>
                     <p><span className="font-medium">Urgency:</span> {tender?.urgency?.toUpperCase()}</p>

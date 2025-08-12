@@ -40,7 +40,11 @@ const {
     createTenderWithCriteria,
     getTenderWithCriteria,
     acknowledgeCriteria,
-    addTenderCriteria
+    addTenderCriteria,
+    getTendersPendingOpening,
+    getTenderOpeningDetails,
+    generateTenderOpeningReport,
+    openTender
 } = require('../controllers/tenderController');
 
 // Create tender documents directory if it doesn't exist
@@ -141,6 +145,18 @@ router.put('/:id/purchase', auth, evaluateDemandPurchase);
 
 // Process expired tenders
 router.post('/process-expired', auth, processExpiredTenders);
+
+// Get tenders pending opening (for purchase department)
+router.get('/tenders/pending-opening', auth, getTendersPendingOpening);
+
+// Get single tender opening details (for purchase department)
+router.get('/tenders/pending-opening/:tenderId', auth, getTenderOpeningDetails);
+
+// Generate tender opening report PDF
+router.get('/tenders/:tenderId/opening-report', auth, generateTenderOpeningReport);
+
+// Open tender and forward to technical evaluation (for purchase department)
+router.post('/tenders/:tenderId/open', auth, openTender);
 
 // Generate supply order PDF
 router.post('/:id/supply-order', auth, generateSupplyOrderPDF);

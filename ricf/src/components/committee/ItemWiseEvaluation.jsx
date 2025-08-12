@@ -19,6 +19,14 @@ const ItemWiseEvaluation = () => {
     const { tenderId } = useParams();
     const navigate = useNavigate();
 
+    // Helper function to get tender display name
+    const getTenderDisplayName = (tender) => {
+        if (tender?.tender_number) {
+            return `Tender ${tender.tender_number}`;
+        }
+        return `Tender #${tender?.id || 'Unknown'}`;
+    };
+
     useEffect(() => {
         if (tenderId) {
             fetchTenderDetails();
@@ -327,7 +335,7 @@ const ItemWiseEvaluation = () => {
                                 Item-wise Technical Evaluation
                             </h3>
                             <p className="text-sm text-gray-600 mt-1">
-                                {tender.item_name} - Tender ID: {tender.id}
+                                {getTenderDisplayName(tender)} - {tender.item_name}
                             </p>
                         </div>
                         <button

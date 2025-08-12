@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api, { apiUrl } from '../../config/api';
 import { generateDemandReport } from '../../utils/excelReportGenerator';
 import TenderCreationWizard from '../purchase/TenderCreationWizard';
 
 const PurchaseDepartment = () => {
+    const navigate = useNavigate();
     const [demands, setDemands] = useState([]);
     const [supplyOrders, setSupplyOrders] = useState([]);
     const [readyTenders, setReadyTenders] = useState([]);
     const [scheduledOpenings, setScheduledOpenings] = useState([]);
+    const [pendingTenders, setPendingTenders] = useState([]);
     const [selectedDemand, setSelectedDemand] = useState(null);
     const [selectedTender, setSelectedTender] = useState(null);
     const [activeTab, setActiveTab] = useState('demands');
@@ -36,11 +39,20 @@ const PurchaseDepartment = () => {
     const [financialOpeningData, setFinancialOpeningData] = useState(null);
     const [scheduleForm, setScheduleForm] = useState({
         openingDateTime: ''
-    }); useEffect(() => {
+    });
+
+    // Helper function to get tender display name
+    const getTenderDisplayName = (tender) => {
+        if (tender.tender_number) {
+            return `Tender ${tender.tender_number}`;
+        }
+        return `Tender #${tender.id}`;
+    }; useEffect(() => {
         fetchPurchaseDemands();
         fetchSupplyOrders();
         fetchReadyTenders();
         fetchScheduledOpenings();
+        fetchPendingTenders();
     }, []);
 
     // Auto-redirect after success modal
@@ -139,6 +151,27 @@ const PurchaseDepartment = () => {
         }
     };
 
+    const fetchPendingTenders = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/tenders/pending-opening`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch pending tenders');
+            }
+
+            const data = await response.json();
+            setPendingTenders(data);
+        } catch (err) {
+            console.error('Error fetching pending tenders:', err);
+        }
+    };
+
     const handleEvaluate = async (demand) => {
         try {
             // Check if a tender already exists for this demand
@@ -164,6 +197,7 @@ const PurchaseDepartment = () => {
         console.log('Tender created successfully:', tender);
         // Refresh the data
         fetchPurchaseDemands();
+        fetchPendingTenders();
         fetchReadyTenders();
         setShowSuccessModal(true);
     };
@@ -265,6 +299,7 @@ const PurchaseDepartment = () => {
 
             setShowEvaluationModal(false);
             fetchPurchaseDemands(); // Refresh the list
+            fetchPendingTenders(); // Refresh pending tenders
             fetchSupplyOrders(); // Refresh supply orders in case new ones were created
 
             // Show success modal
@@ -274,6 +309,40 @@ const PurchaseDepartment = () => {
             }, 2000);
         } catch (err) {
             setError(err.message);
+        }
+    };
+
+    const handleOpenTender = async (tenderId) => {
+        try {
+            // Add tender ID to processing list
+            setProcessingTenderIds(prev => [...prev, tenderId]);
+
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/tenders/${tenderId}/open`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to open tender');
+            }
+
+            const data = await response.json();
+            alert(data.message);
+            
+            // Refresh the lists
+            fetchPendingTenders();
+            fetchReadyTenders();
+        } catch (err) {
+            setError(err.message);
+            alert(`Error: ${err.message}`);
+        } finally {
+            // Remove tender ID from processing list when done
+            setProcessingTenderIds(prev => prev.filter(id => id !== tenderId));
         }
     };
 
@@ -642,6 +711,20 @@ const PurchaseDepartment = () => {
                                 )}
                             </button>
                             <button
+                                onClick={() => setActiveTab('pending-tenders')}
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'pending-tenders'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                Tender Opening
+                                {pendingTenders.length > 0 && (
+                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                        {pendingTenders.length}
+                                    </span>
+                                )}
+                            </button>
+                            <button
                                 onClick={() => setActiveTab('financial-opening')}
                                 className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'financial-opening'
                                         ? 'border-indigo-500 text-indigo-600'
@@ -811,6 +894,102 @@ const PurchaseDepartment = () => {
                         </div>
                     )}
 
+                    {activeTab === 'pending-tenders' && (
+                        <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                            <div className="px-4 py-5 sm:p-6">
+                                <h2 className="text-lg font-medium text-gray-900 mb-4">Tenders Pending Opening</h2>
+                                <p className="text-gray-600 mb-6">
+                                    These tenders have expired and are awaiting opening by the purchase department before forwarding to technical evaluation.
+                                </p>
+
+                                {pendingTenders.length === 0 ? (
+                                    <div className="text-center py-12">
+                                        <div className="text-gray-500">No tenders pending opening at this time.</div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        {pendingTenders.map((tender) => (
+                                            <div key={tender.id} className="border border-gray-200 rounded-lg p-6 bg-yellow-50">
+                                                <div className="flex justify-between items-start mb-4">
+                                                    <div>
+                                                        <h3 className="text-lg font-semibold text-gray-900">
+                                                            {getTenderDisplayName(tender)}
+                                                        </h3>
+                                                        <p className="text-sm text-gray-600 mt-1">
+                                                            {tender.description || tender.item_name}
+                                                        </p>
+                                                        <div className="mt-1 text-sm text-gray-600">
+                                                            <span>Created by: {tender.created_by_name}</span>
+                                                            <span className="mx-2">•</span>
+                                                            <span>Department: {tender.creator_department}</span>
+                                                        </div>
+                                                        <div className="mt-2 text-sm text-gray-600">
+                                                            <span>Bidding Ended: {new Date(tender.bidding_end_time).toLocaleString()}</span>
+                                                            <span className="mx-2">•</span>
+                                                            <span>Total Bids: {tender.bid_count}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center space-x-3">
+                                                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                            Pending Opening
+                                                        </span>
+                                                        <button
+                                                            onClick={() => navigate(`/purchase-department/tender-opening/${tender.id}`)}
+                                                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium transition-colors"
+                                                        >
+                                                            View Details
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleOpenTender(tender.id)}
+                                                            disabled={processingTenderIds.includes(tender.id)}
+                                                            className={`px-4 py-2 ${processingTenderIds.includes(tender.id)
+                                                                ? 'bg-gray-400 cursor-not-allowed' 
+                                                                : 'bg-indigo-600 hover:bg-indigo-700'
+                                                            } text-white rounded-md text-sm font-medium transition-colors`}
+                                                        >
+                                                            {processingTenderIds.includes(tender.id)
+                                                                ? 'Opening...' 
+                                                                : 'Quick Open'
+                                                            }
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {tender.description && (
+                                                    <div className="mb-4">
+                                                        <p className="text-sm text-gray-700">
+                                                            <span className="font-medium">Description:</span> {tender.description}
+                                                        </p>
+                                                    </div>
+                                                )}
+
+                                                {tender.bid_count > 0 && (
+                                                    <div className="border-t border-gray-200 pt-4">
+                                                        <h4 className="text-sm font-medium text-gray-900 mb-3">
+                                                            Submitted Bids ({tender.bid_count})
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {tender.bids.map((bid) => (
+                                                                <div key={bid.id} className="flex justify-between items-center bg-white p-3 rounded border">
+                                                                    <div className="flex-1">
+                                                                        <span className="font-medium text-sm">{bid.company_name}</span>
+                                                                        <div className="text-xs text-gray-500">
+                                                                            Quantity: {bid.proposed_quantity} | Cost: ${bid.total_cost} | Delivery: {bid.delivery_days} days
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {activeTab === 'supply-orders' && (
                         <div className="bg-white shadow overflow-hidden sm:rounded-md">
                             <div className="px-4 py-5 sm:p-6">
@@ -827,8 +1006,11 @@ const PurchaseDepartment = () => {
                                                 <div className="flex justify-between items-start mb-4">
                                                     <div>
                                                         <h3 className="text-lg font-semibold text-gray-900">
-                                                            Tender: {tender.item_name}
+                                                            {getTenderDisplayName(tender)}
                                                         </h3>
+                                                        <p className="text-sm text-gray-600 mt-1">
+                                                            {tender.description || tender.item_name}
+                                                        </p>
                                                         <div className="mt-1 text-sm text-gray-600">
                                                             <span>Total Quantity: {tender.total_quantity}</span>
                                                             <span className="mx-2">•</span>
@@ -949,7 +1131,7 @@ const PurchaseDepartment = () => {
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
-                                                                All suppliers for tender {tender.id} finalized
+                                                                All suppliers for {getTenderDisplayName(tender)} finalized
                                                             </h3>
                                                             <p className="text-sm text-gray-600 mt-1">
                                                                 {tender.description || tender.item_name}
@@ -1013,7 +1195,7 @@ const PurchaseDepartment = () => {
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
-                                                                Tender {opening.tender_id} - {opening.description || opening.item_name}
+                                                                {getTenderDisplayName(opening)} - {opening.description || opening.item_name}
                                                             </h3>
                                                             <p className="text-sm text-red-600 mt-1">
                                                                 <i className="fas fa-exclamation-triangle mr-1"></i>
@@ -1059,7 +1241,7 @@ const PurchaseDepartment = () => {
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
-                                                                Tender {opening.tender_id} - {opening.description || opening.item_name}
+                                                                {getTenderDisplayName(opening)} - {opening.description || opening.item_name}
                                                             </h3>
                                                             <p className="text-sm text-blue-600 mt-1">
                                                                 <i className="fas fa-calendar mr-1"></i>
@@ -1363,7 +1545,8 @@ const PurchaseDepartment = () => {
 
                         {selectedTender && (
                             <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-                                <h4 className="font-medium text-blue-900 mb-2">{selectedTender.description || selectedTender.item_name}</h4>
+                                <h4 className="font-medium text-blue-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm text-blue-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
                                 <div className="grid grid-cols-2 gap-4 text-sm text-blue-800">
                                     <div>
                                         <span className="font-medium text-gray-700">Total Grievances:</span> {selectedTender.grievances_count}

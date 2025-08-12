@@ -1,0 +1,2 @@
+[2025-07-23T05:11:58.312Z] Super Admin (ID: 1) [SUPERADMIN] - LOGIN_SUCCESS | Details: Department: None | Committee: None | IP: 127.0.0.1 | User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36
+[2025-07-23T05:11:58.502Z] Super Admin (ID: 1) [SUPERADMIN] - USERS_LIST_ACCESSED | Details: Data Type: users | ID: multiple | Total users accessed: 0 | Includes passwords | IP: 127.0.0.1 | User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36

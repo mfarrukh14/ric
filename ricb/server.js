@@ -50,11 +50,11 @@ app.get('/', (req, res) => {
 });
 
 // Tender expiry processing
-const { markExpiredTendersForEvaluation } = require('./src/controllers/tenderController');
+const { markExpiredTendersForOpening } = require('./src/controllers/tenderController');
 setInterval(async () => {
   try {
     console.log('Checking for expired tenders...');
-    await markExpiredTendersForEvaluation();
+    await markExpiredTendersForOpening();
   } catch (error) {
     console.error('Error in automatic tender processing:', error);
   }
