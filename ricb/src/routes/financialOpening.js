@@ -6,6 +6,7 @@ const {
     getScheduledFinancialOpenings,
     openFinancialBids,
     downloadFinancialBid,
+    downloadBidCdrDocument,
     downloadFinancialOpeningReport
 } = require('../controllers/financialOpeningController');
 const { authenticateToken } = require('../middleware/auth');
@@ -24,6 +25,9 @@ router.post('/open/:tenderId', authenticateToken, openFinancialBids);
 
 // Download financial bid document
 router.get('/bids/:bidId/financial-document', authenticateToken, downloadFinancialBid);
+
+// Download bid CDR document
+router.get('/bids/:bidId/bid-cdr-document', authenticateToken, downloadBidCdrDocument);
 
 // Download financial opening report
 router.get('/reports/:fileName', authenticateToken, downloadFinancialOpeningReport);

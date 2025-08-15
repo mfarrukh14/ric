@@ -1048,9 +1048,9 @@ const submitBid = async (req, res) => {
         }
 
         // Validate files
-        if (!req.files || !req.files.technicalBid || !req.files.financialBid) {
+        if (!req.files || !req.files.technicalBid || !req.files.financialBid || !req.files.bidCdrDocument) {
             return res.status(400).json({ 
-                error: 'Both technical and financial bid documents are required' 
+                error: 'Technical bid, financial bid, and Bid CDR 2% documents are all required' 
             });
         }
 
@@ -1121,10 +1121,12 @@ const submitBid = async (req, res) => {
         // Get file paths
         const technicalBidPath = req.files.technicalBid[0].filename;
         const financialBidPath = req.files.financialBid[0].filename;
+        const bidCdrDocumentPath = req.files.bidCdrDocument[0].filename;
 
         console.log('📁 File paths:', {
             technical: technicalBidPath,
-            financial: financialBidPath
+            financial: financialBidPath,
+            bidCdr: bidCdrDocumentPath
         });
 
         // Parse items data
@@ -1181,8 +1183,8 @@ const submitBid = async (req, res) => {
                 db.run(
                     `INSERT INTO supplier_bids (
                         tender_id, supplier_id, total_cost, proposed_quantity,
-                        delivery_days, bid_comments, technical_bid_document, financial_bid_document
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        delivery_days, bid_comments, technical_bid_document, financial_bid_document, bid_cdr_document
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         tenderId,
                         supplierId,
@@ -1191,7 +1193,8 @@ const submitBid = async (req, res) => {
                         parseInt(deliveryDays),
                         comments || '',
                         technicalBidPath,
-                        financialBidPath
+                        financialBidPath,
+                        bidCdrDocumentPath
                     ],
                     function(err) {
                         if (err) reject(err);
@@ -1991,6 +1994,46 @@ const getDeadlineStatus = async (req, res) => {
     }
 };
 
+// Get supplier profile for bid form auto-population
+const getSupplierProfile = async (req, res) => {
+    const supplierId = req.user.id;
+    const db = getDatabase();
+
+    try {
+        // Get supplier business profile
+        const businessProfile = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [supplierId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        // Get PPRA registrations to find registration number
+        const ppraRegistrations = await new Promise((resolve, reject) => {
+            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [supplierId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        // Get the first PPRA registration number
+        const ppraNumber = ppraRegistrations && ppraRegistrations.length > 0 
+            ? ppraRegistrations[0].registration_number 
+            : '';
+
+        const profileData = {
+            companyName: businessProfile ? businessProfile.business_name : '',
+            registeredNumber: ppraNumber
+        };
+
+        res.json(profileData);
+
+    } catch (error) {
+        console.error('Error fetching supplier profile:', error);
+        res.status(500).json({ error: 'Failed to fetch supplier profile' });
+    }
+};
+
 module.exports = {
     registerSupplier,
     loginSupplier,
@@ -2005,6 +2048,7 @@ module.exports = {
     getActiveTenders,
     submitBid,
     getSupplierBids,
+    getSupplierProfile,
     // Grievance functions
     submitGrievance,
     getSupplierGrievances,

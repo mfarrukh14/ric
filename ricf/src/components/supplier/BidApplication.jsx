@@ -73,6 +73,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         items: [],
         technicalBid: null,
         financialBid: null,
+        bidCdrDocument: null,
         deliveryTime: '',
         comments: '',
         companyName: '',
@@ -110,6 +111,33 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         };
         fetchDetails();
     }, [tender]);
+
+    // Fetch supplier profile data for auto-population
+    useEffect(() => {
+        const fetchSupplierProfile = async () => {
+            try {
+                const token = localStorage.getItem('supplierToken');
+                const response = await fetch(`${apiUrl}/suppliers/profile/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const profileData = await response.json();
+                    setBidData(prev => ({
+                        ...prev,
+                        companyName: profileData.companyName || '',
+                        registeredNumber: profileData.registeredNumber || ''
+                    }));
+                }
+            } catch (error) {
+                console.error('Error fetching supplier profile:', error);
+            }
+        };
+
+        fetchSupplierProfile();
+    }, []);
 
     // Update bidData when tender is loaded (only if items not already initialized)
     useEffect(() => {
@@ -244,8 +272,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     };
 
     const validateStep2 = () => {
-        if (!bidData.technicalBid || !bidData.financialBid) {
-            setError('Both technical bid and financial bid documents are required');
+        if (!bidData.technicalBid || !bidData.financialBid || !bidData.bidCdrDocument) {
+            setError('Technical bid, financial bid, and Bid CDR 2% documents are all required');
             return false;
         }
 
@@ -254,10 +282,17 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             return false;
         }
 
-        const allowedTypes = ['application/pdf'];
-        if (!allowedTypes.includes(bidData.technicalBid.type) || 
-            !allowedTypes.includes(bidData.financialBid.type)) {
-            setError('Only PDF files are allowed for bid documents');
+        const allowedPdfTypes = ['application/pdf'];
+        const allowedCdrTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/jpg', 'image/png'];
+        
+        if (!allowedPdfTypes.includes(bidData.technicalBid.type) || 
+            !allowedPdfTypes.includes(bidData.financialBid.type)) {
+            setError('Only PDF files are allowed for technical and financial bid documents');
+            return false;
+        }
+
+        if (!allowedCdrTypes.includes(bidData.bidCdrDocument.type)) {
+            setError('Only PDF, DOC, DOCX, JPG, JPEG, PNG files are allowed for Bid CDR document');
             return false;
         }
 
@@ -348,6 +383,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             formData.append('comments', bidData.comments || '');
             formData.append('technicalBid', bidData.technicalBid);
             formData.append('financialBid', bidData.financialBid);
+            formData.append('bidCdrDocument', bidData.bidCdrDocument);
             formData.append('items', JSON.stringify(itemsData));
             formData.append('companyName', bidData.companyName);
             formData.append('registeredNumber', bidData.registeredNumber);
@@ -614,6 +650,22 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 </div>
             </div>
 
+            <div className="w-full">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Bid CDR 2% Document *
+                </label>
+                <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                    onChange={(e) => handleFileChange('bidCdrDocument', e.target.files[0])}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Upload your Bid CDR 2% document (PDF, DOC, DOCX, JPG, JPEG, PNG accepted)</p>
+                {bidData.bidCdrDocument && (
+                    <p className="text-sm text-green-600 mt-1">✓ {bidData.bidCdrDocument.name}</p>
+                )}
+            </div>
+
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                     Delivery Time (Days) *
@@ -694,23 +746,25 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                         <input
                             type="text"
                             value={bidData.companyName}
-                            onChange={(e) => handleInputChange('companyName', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            placeholder="Enter your company name"
+                            readOnly
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                            placeholder="Company name will be auto-populated"
                         />
+                        <p className="text-xs text-gray-500 mt-1">Auto-populated from your registration profile</p>
                     </div>
                     
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Registered Number *
+                            PPRA Registration Number *
                         </label>
                         <input
                             type="text"
                             value={bidData.registeredNumber}
-                            onChange={(e) => handleInputChange('registeredNumber', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                            placeholder="Enter your registration number"
+                            readOnly
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                            placeholder="PPRA number will be auto-populated"
                         />
+                        <p className="text-xs text-gray-500 mt-1">Auto-populated from your registration profile</p>
                     </div>
                 </div>
 

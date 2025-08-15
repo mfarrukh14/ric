@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import api from '../../config/api';
+import * as XLSX from 'xlsx';
 
 const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -30,6 +31,11 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
     minimumRequirement: '',
     weightage: 0
   });
+
+  // Excel upload states
+  const [uploadingExcel, setUploadingExcel] = useState(false);
+  const [knockoutExcelFile, setKnockoutExcelFile] = useState(null);
+  const [scoringExcelFile, setScoringExcelFile] = useState(null);
 
   const steps = [
     { number: 1, title: 'Review Items', description: 'Review demand items and make approval decision' },
@@ -144,6 +150,149 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       ...prev,
       evaluationCriteria: prev.evaluationCriteria.filter(criteria => criteria.id !== id)
     }));
+  };
+
+  // Excel processing functions
+  const processExcelFile = (file, isKnockout = true) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+          if (jsonData.length === 0) {
+            reject(new Error('Excel file is empty'));
+            return;
+          }
+
+          // Validate required columns based on type
+          const requiredColumns = isKnockout 
+            ? ['title', 'description'] 
+            : ['title', 'description', 'weightage'];
+
+          const firstRow = jsonData[0];
+          const availableColumns = Object.keys(firstRow).map(col => col.toLowerCase());
+          
+          const missingColumns = requiredColumns.filter(col => 
+            !availableColumns.includes(col.toLowerCase())
+          );
+
+          if (missingColumns.length > 0) {
+            reject(new Error(`Missing required columns: ${missingColumns.join(', ')}`));
+            return;
+          }
+
+          // Process data
+          const processedData = jsonData.map((row, index) => {
+            const title = row.title || row.Title || '';
+            const description = row.description || row.Description || '';
+            
+            if (!title.trim() || !description.trim()) {
+              throw new Error(`Row ${index + 1}: Title and Description are required`);
+            }
+
+            const criteria = {
+              id: Date.now() + index,
+              title: title.trim(),
+              description: description.trim(),
+              isKnockout: isKnockout,
+              minimumRequirement: ''
+            };
+
+            if (!isKnockout) {
+              const weightage = parseFloat(row.weightage || row.Weightage || 0);
+              if (weightage <= 0 || weightage > 100) {
+                throw new Error(`Row ${index + 1}: Weightage must be between 1 and 100`);
+              }
+              criteria.weightage = weightage;
+            }
+
+            return criteria;
+          });
+
+          resolve(processedData);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const handleExcelUpload = async (file, isKnockout = true) => {
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = [
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Please upload an Excel file (.xls or .xlsx)');
+      return;
+    }
+
+    try {
+      setUploadingExcel(true);
+      const processedData = await processExcelFile(file, isKnockout);
+      
+      // Add to existing criteria
+      setTenderData(prev => ({
+        ...prev,
+        evaluationCriteria: [...prev.evaluationCriteria, ...processedData]
+      }));
+
+      toast.success(`Successfully imported ${processedData.length} ${isKnockout ? 'knockout clauses' : 'scoring criteria'}`);
+      
+      // Clear file input
+      if (isKnockout) {
+        setKnockoutExcelFile(null);
+      } else {
+        setScoringExcelFile(null);
+      }
+    } catch (error) {
+      console.error('Error processing Excel file:', error);
+      toast.error(`Failed to process Excel file: ${error.message}`);
+    } finally {
+      setUploadingExcel(false);
+    }
+  };
+
+  const downloadSampleExcel = (isKnockout = true) => {
+    const sampleData = isKnockout ? [
+      {
+        title: 'Valid Trade License',
+        description: 'Supplier must have a valid trade license from the relevant authority'
+      },
+      {
+        title: 'Tax Registration',
+        description: 'Valid tax registration certificate required'
+      }
+    ] : [
+      {
+        title: 'Years of Experience',
+        description: 'Number of years in business',
+        weightage: 20
+      },
+      {
+        title: 'Quality Certifications',
+        description: 'ISO or other quality certifications',
+        weightage: 15
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(sampleData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sample');
+    
+    const fileName = isKnockout ? 'knockout_clauses_sample.xlsx' : 'scoring_criteria_sample.xlsx';
+    XLSX.writeFile(workbook, fileName);
   };
 
   const createTender = async () => {
@@ -673,12 +822,77 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
           )}
         </div>
 
+        <div className="border-t border-gray-200 pt-4 mb-4">
+          <h5 className="text-sm font-medium text-gray-900 mb-3">Bulk Upload from Excel</h5>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Knockout Clauses Upload */}
+            <div className="border border-gray-200 rounded-md p-3">
+              <h6 className="text-sm font-medium text-gray-700 mb-2">Knockout Clauses</h6>
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={(e) => setKnockoutExcelFile(e.target.files[0])}
+                  className="w-full text-sm border border-gray-300 rounded px-2 py-1"
+                />
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => handleExcelUpload(knockoutExcelFile, true)}
+                    disabled={!knockoutExcelFile || uploadingExcel}
+                    className="flex-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
+                  >
+                    {uploadingExcel ? 'Processing...' : 'Upload'}
+                  </button>
+                  <button
+                    onClick={() => downloadSampleExcel(true)}
+                    className="flex-1 px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Sample
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Scoring Criteria Upload */}
+            <div className="border border-gray-200 rounded-md p-3">
+              <h6 className="text-sm font-medium text-gray-700 mb-2">Scoring Criteria</h6>
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={(e) => setScoringExcelFile(e.target.files[0])}
+                  className="w-full text-sm border border-gray-300 rounded px-2 py-1"
+                />
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => handleExcelUpload(scoringExcelFile, false)}
+                    disabled={!scoringExcelFile || uploadingExcel}
+                    className="flex-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
+                  >
+                    {uploadingExcel ? 'Processing...' : 'Upload'}
+                  </button>
+                  <button
+                    onClick={() => downloadSampleExcel(false)}
+                    className="flex-1 px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    Sample
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Upload Excel files with criteria data. Required columns: Title, Description. 
+            For scoring criteria, also include Weightage column.
+          </p>
+        </div>
+
         <button
           onClick={addEvaluationCriteria}
           className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
         >
           <i className="fas fa-plus h-4 w-4 mr-2"></i>
-          Add Criteria
+          Add Criteria Manually
         </button>
       </div>
 

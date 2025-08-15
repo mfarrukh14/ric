@@ -1,5 +1,40 @@
 const { getDatabase } = require('../config/database');
 const EmailService = require('../utils/emailService');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for minutes of meeting upload
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/grievance-minutes';
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'grievance-minutes-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const uploadMinutes = multer({
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB limit
+    },
+    fileFilter: function (req, file, cb) {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed for minutes of meeting'));
+        }
+    }
+});
+
+// Store the current minutes file path for use in approve/reject functions
+let currentMinutesFilePath = null;
 
 // Get supplier's rejected items for grievance
 const getSupplierRejectedItems = async (req, res) => {
@@ -308,27 +343,12 @@ const scheduleGrievanceMeeting = async (req, res) => {
         // Send email notification to supplier
         try {
             const emailService = new EmailService();
-            const emailContent = `
-Dear ${grievance.contact_person || grievance.company_name},
-
-Your grievance application for item "${grievance.item_name}" has been reviewed by the Grievance Committee.
-
-A meeting has been scheduled to discuss your grievance:
-
-Date: ${meetingDate}
-Time: ${meetingTime}
-Location: ${meetingLocation}
-
-Meeting Details:
-${meetingDetails}
-
-Please ensure your attendance at the scheduled meeting. If you have any questions or need to reschedule, please contact us immediately.
-
-Thank you for your cooperation.
-
-Best regards,
-RIC Grievance Committee
-            `;
+            
+            // Get grievance letter attachment if provided
+            let grievanceLetterPath = null;
+            if (req.file) {
+                grievanceLetterPath = req.file.path;
+            }
 
             await emailService.sendGrievanceMeetingNotification(
                 grievance.company_email,
@@ -337,7 +357,8 @@ RIC Grievance Committee
                 meetingDate,
                 meetingTime,
                 meetingLocation,
-                meetingDetails
+                meetingDetails,
+                grievanceLetterPath
             );
         } catch (emailError) {
             console.error('Failed to send email notification:', emailError);
@@ -509,14 +530,15 @@ const approveGrievance = async (req, res) => {
             );
         });
 
-        // Send approval email to supplier
+        // Send approval email to supplier with minutes attachment
         try {
             const emailService = new EmailService();
             await emailService.sendGrievanceApprovalEmail(
                 grievance.company_email,
                 grievance.company_name,
                 grievance.item_name,
-                grievance.contact_person
+                grievance.contact_person,
+                currentMinutesFilePath // Add minutes as attachment
             );
         } catch (emailError) {
             console.error('Failed to send approval email:', emailError);
@@ -615,7 +637,7 @@ const rejectGrievance = async (req, res) => {
             );
         });
 
-        // Send rejection email to supplier
+        // Send rejection email to supplier with minutes attachment
         try {
             const emailService = new EmailService();
             await emailService.sendGrievanceRejectionEmail(
@@ -623,7 +645,8 @@ const rejectGrievance = async (req, res) => {
                 grievance.company_name,
                 grievance.item_name,
                 rejectionReason,
-                grievance.contact_person
+                grievance.contact_person,
+                currentMinutesFilePath // Add minutes as attachment
             );
         } catch (emailError) {
             console.error('Failed to send rejection email:', emailError);
@@ -716,14 +739,201 @@ const checkGrievanceDeadlineExpired = async (req, res) => {
     }
 };
 
+// Schedule bulk meeting for all pending grievances
+const scheduleBulkGrievanceMeeting = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    const { meetingDate, meetingTime, meetingLocation, meetingDetails } = req.body;
+
+    // Check if user is from grievance committee
+    const canSchedule = user.role === 'superadmin' || 
+                       (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));
+
+    if (!canSchedule) {
+        return res.status(403).json({ message: 'Only Grievance Committee members can schedule meetings' });
+    }
+
+    if (!meetingDate || !meetingTime || !meetingLocation || !meetingDetails) {
+        return res.status(400).json({ message: 'All meeting details are required' });
+    }
+
+    try {
+        // Get all pending grievances with supplier info
+        const pendingGrievances = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT ga.*, sbp.business_name as company_name, s.business_email as company_email, 
+                        sbp.contact_person_name as contact_person,
+                        di.item_name, te.rejection_reason
+                 FROM grievance_applications ga
+                 JOIN suppliers s ON ga.supplier_id = s.id
+                 LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+                 JOIN demand_items di ON ga.item_id = di.id
+                 JOIN technical_evaluations te ON ga.technical_evaluation_id = te.id
+                 WHERE ga.status = 'submitted'
+                 ORDER BY ga.submitted_at ASC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        if (pendingGrievances.length === 0) {
+            return res.status(400).json({ message: 'No pending grievances found to schedule meetings for' });
+        }
+
+        const meetingDateTime = `${meetingDate} ${meetingTime}`;
+        const meetingInfo = {
+            date: meetingDate,
+            time: meetingTime,
+            location: meetingLocation,
+            details: meetingDetails
+        };
+
+        // Begin transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Update all pending grievances with meeting details
+            for (const grievance of pendingGrievances) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE grievance_applications SET 
+                         status = 'meeting_scheduled',
+                         meeting_scheduled_date = ?,
+                         meeting_details = ?,
+                         reviewed_by = ?,
+                         reviewed_at = CURRENT_TIMESTAMP
+                         WHERE id = ?`,
+                        [meetingDateTime, JSON.stringify(meetingInfo), user.id, grievance.id],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            // Get grievance letter attachment if provided
+            let grievanceLetterPath = null;
+            if (req.file) {
+                grievanceLetterPath = req.file.path;
+            }
+
+            // Send bulk email notifications to all suppliers
+            const EmailService = require('../utils/emailService');
+            const emailService = new EmailService();
+
+            const uniqueSuppliers = new Map();
+            pendingGrievances.forEach(grievance => {
+                if (!uniqueSuppliers.has(grievance.supplier_id)) {
+                    uniqueSuppliers.set(grievance.supplier_id, {
+                        email: grievance.company_email,
+                        companyName: grievance.company_name,
+                        contactPerson: grievance.contact_person,
+                        grievances: []
+                    });
+                }
+                uniqueSuppliers.get(grievance.supplier_id).grievances.push(grievance);
+            });
+
+            // Send notifications to each unique supplier
+            const emailPromises = Array.from(uniqueSuppliers.values()).map(supplier => {
+                const grievanceItems = supplier.grievances.map(g => g.item_name).join(', ');
+                
+                return emailService.sendBulkGrievanceMeetingNotification(
+                    supplier.email,
+                    supplier.companyName,
+                    grievanceItems,
+                    meetingDate,
+                    meetingTime,
+                    meetingLocation,
+                    meetingDetails,
+                    grievanceLetterPath
+                );
+            });
+
+            // Wait for all emails to be sent (but don't fail if some emails fail)
+            await Promise.allSettled(emailPromises);
+
+            res.json({ 
+                message: `Grievance meeting scheduled successfully for ${pendingGrievances.length} grievances. Email notifications sent to ${uniqueSuppliers.size} suppliers.`,
+                meetingDate: meetingDate,
+                meetingTime: meetingTime,
+                affectedGrievances: pendingGrievances.length,
+                notifiedSuppliers: uniqueSuppliers.size
+            });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('Error scheduling bulk grievance meeting:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// Upload minutes of meeting (used by grievance committee)
+const uploadMinutesOfMeeting = async (req, res) => {
+    try {
+        const { uploadedBy } = req.body;
+        
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'No PDF file uploaded'
+            });
+        }
+
+        // Store the path globally for use in approve/reject functions
+        currentMinutesFilePath = req.file.path;
+
+        console.log('Minutes of meeting uploaded:', currentMinutesFilePath);
+
+        res.json({
+            success: true,
+            message: 'Minutes of meeting uploaded successfully',
+            minutesPath: currentMinutesFilePath
+        });
+    } catch (error) {
+        console.error('Error uploading minutes of meeting:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to upload minutes of meeting'
+        });
+    }
+};
+
 module.exports = {
     getSupplierRejectedItems,
     submitGrievanceApplication,
     getSupplierGrievances,
     getAllGrievances,
     scheduleGrievanceMeeting,
+    scheduleBulkGrievanceMeeting,
     updateGrievanceStatus,
     approveGrievance,
     rejectGrievance,
-    checkGrievanceDeadlineExpired
+    checkGrievanceDeadlineExpired,
+    uploadMinutesOfMeeting,
+    uploadMinutes
 };

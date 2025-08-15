@@ -480,7 +480,7 @@ class EmailService {
     }
 
     // Send grievance meeting notification email
-    async sendGrievanceMeetingNotification(supplierEmail, companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails) {
+    async sendGrievanceMeetingNotification(supplierEmail, companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails, grievanceLetterPath = null) {
         const htmlContent = this.generateGrievanceMeetingEmailHTML(companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails);
 
         const mailOptions = {
@@ -490,8 +490,18 @@ class EmailService {
             },
             to: supplierEmail,
             subject: `Grievance Meeting Scheduled - ${itemName}`,
-            html: htmlContent
+            html: htmlContent,
+            attachments: []
         };
+
+        // Add grievance letter attachment if provided
+        if (grievanceLetterPath && require('fs').existsSync(grievanceLetterPath)) {
+            mailOptions.attachments.push({
+                filename: 'Grievance_Letter.pdf',
+                path: grievanceLetterPath,
+                contentType: 'application/pdf'
+            });
+        }
 
         try {
             const info = await this.transporter.sendMail(mailOptions);
@@ -714,7 +724,7 @@ class EmailService {
     }
 
     // Send grievance approval email
-    async sendGrievanceApprovalEmail(supplierEmail, companyName, itemName, contactPerson) {
+    async sendGrievanceApprovalEmail(supplierEmail, companyName, itemName, contactPerson, minutesFilePath = null) {
         const htmlContent = this.generateGrievanceApprovalEmailHTML(companyName, itemName, contactPerson);
 
         const mailOptions = {
@@ -727,9 +737,23 @@ class EmailService {
             html: htmlContent
         };
 
+        // Add minutes of meeting as attachment if provided
+        if (minutesFilePath) {
+            mailOptions.attachments = [
+                {
+                    filename: 'Minutes_of_Meeting.pdf',
+                    path: minutesFilePath,
+                    contentType: 'application/pdf'
+                }
+            ];
+        }
+
         try {
             const info = await this.transporter.sendMail(mailOptions);
             console.log('Grievance approval notification sent successfully to:', supplierEmail);
+            if (minutesFilePath) {
+                console.log('Minutes of meeting attached to email');
+            }
             console.log('Message ID:', info.messageId);
             return { success: true, messageId: info.messageId };
         } catch (error) {
@@ -921,7 +945,7 @@ class EmailService {
     }
 
     // Send grievance rejection email
-    async sendGrievanceRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, contactPerson) {
+    async sendGrievanceRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, contactPerson, minutesFilePath = null) {
         const htmlContent = this.generateGrievanceRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson);
 
         const mailOptions = {
@@ -934,9 +958,23 @@ class EmailService {
             html: htmlContent
         };
 
+        // Add minutes of meeting as attachment if provided
+        if (minutesFilePath) {
+            mailOptions.attachments = [
+                {
+                    filename: 'Minutes_of_Meeting.pdf',
+                    path: minutesFilePath,
+                    contentType: 'application/pdf'
+                }
+            ];
+        }
+
         try {
             const info = await this.transporter.sendMail(mailOptions);
             console.log('Grievance rejection notification sent successfully to:', supplierEmail);
+            if (minutesFilePath) {
+                console.log('Minutes of meeting attached to email');
+            }
             console.log('Message ID:', info.messageId);
             return { success: true, messageId: info.messageId };
         } catch (error) {
@@ -2077,6 +2115,202 @@ class EmailService {
                 </div>
             </body>
             </html>
+        `;
+    }
+
+    // Send bulk grievance meeting notification email (for multiple grievances)
+    async sendBulkGrievanceMeetingNotification(supplierEmail, companyName, grievanceItems, meetingDate, meetingTime, meetingLocation, meetingDetails, grievanceLetterPath = null) {
+        const htmlContent = this.generateBulkGrievanceMeetingEmailHTML(companyName, grievanceItems, meetingDate, meetingTime, meetingLocation, meetingDetails);
+
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `Grievance Meeting Scheduled - Multiple Items`,
+            html: htmlContent,
+            attachments: []
+        };
+
+        // Add grievance letter attachment if provided
+        if (grievanceLetterPath && require('fs').existsSync(grievanceLetterPath)) {
+            mailOptions.attachments.push({
+                filename: 'Grievance_Letter.pdf',
+                path: grievanceLetterPath,
+                contentType: 'application/pdf'
+            });
+        }
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Bulk grievance meeting notification sent successfully to:', supplierEmail);
+            console.log('Message ID:', info.messageId);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending bulk grievance meeting notification:', error);
+            throw error;
+        }
+    }
+
+    generateBulkGrievanceMeetingEmailHTML(companyName, grievanceItems, meetingDate, meetingTime, meetingLocation, meetingDetails) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+        <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grievance Meeting Scheduled</title>
+    <style>
+        /* Reset */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f2f2f2;
+            color: #333333;
+            line-height: 1.6;
+        }
+        .email-container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        /* Colors: Primary (#00509e) and Accent (#f2a900) */
+        :root { --primary: #00509e; --accent: #f2a900; }
+        .header {
+            background-color: var(--primary);
+            color: #ffffff;
+            text-align: center;
+            padding: 30px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .badge {
+            display: inline-block;
+            background-color: var(--accent);
+            color: #ffffff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        .content { padding: 30px; }
+        .content p { margin-bottom: 20px; font-size: 16px; }
+        .company-name { color: var(--accent); font-weight: 700; }
+        .message { color: #555555; line-height: 1.7; }
+        .item-info {
+            background-color: #f9fafb;
+            border-left: 4px solid var(--primary);
+            border-radius: 4px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .item-info h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 10px;
+        }
+        .meeting-details {
+            background-color: #fef3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .meeting-details h4 {
+            color: #856404;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .meeting-details p {
+            margin-bottom: 10px;
+            color: #856404;
+        }
+        .meeting-details strong { color: #6c5ce7; }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-top: 1px solid #dee2e6;
+        }
+        .footer p { font-size: 12px; color: #6c757d; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1>Grievance Meeting Scheduled</h1>
+            <p>RIC Grievance Committee</p>
+        </div>
+        
+        <div class="content">
+            <div class="badge">Meeting Notice</div>
+            
+            <p>Dear <span class="company-name">${companyName}</span>,</p>
+            
+            <p class="message">
+                The Grievance Committee has reviewed your grievance applications and has scheduled a meeting to discuss your concerns regarding multiple items.
+            </p>
+            
+            <div class="item-info">
+                <h4>📋 Grievance Items:</h4>
+                <p><strong>${grievanceItems}</strong></p>
+            </div>
+            
+            <div class="meeting-details">
+                <h4>📅 Meeting Details</h4>
+                <p><strong>Date:</strong> ${meetingDate}</p>
+                <p><strong>Time:</strong> ${meetingTime}</p>
+                <p><strong>Location:</strong> ${meetingLocation}</p>
+                <p><strong>Additional Details:</strong> ${meetingDetails}</p>
+            </div>
+            
+            <p class="message">
+                Please ensure your attendance at the scheduled meeting. If you have any questions or need to reschedule, please contact us immediately.
+            </p>
+            
+            <p class="message">
+                <strong>Important:</strong> Please bring all relevant documentation and be prepared to discuss your grievances in detail.
+            </p>
+            
+            <p>
+                Thank you for your cooperation.
+            </p>
+            
+            <p>
+                <strong>Best regards,</strong><br>
+                RIC Grievance Committee
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
+            <p>Date: ${currentDate}</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
         `;
     }
 }

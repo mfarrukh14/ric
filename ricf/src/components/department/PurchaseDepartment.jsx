@@ -12,6 +12,8 @@ const PurchaseDepartment = () => {
     const [readyTenders, setReadyTenders] = useState([]);
     const [scheduledOpenings, setScheduledOpenings] = useState([]);
     const [pendingTenders, setPendingTenders] = useState([]);
+    const [pendingGrievances, setPendingGrievances] = useState([]);
+    const [allGrievances, setAllGrievances] = useState([]);
     const [selectedDemand, setSelectedDemand] = useState(null);
     const [selectedTender, setSelectedTender] = useState(null);
     const [activeTab, setActiveTab] = useState('demands');
@@ -53,6 +55,7 @@ const PurchaseDepartment = () => {
         fetchReadyTenders();
         fetchScheduledOpenings();
         fetchPendingTenders();
+        fetchGrievances();
     }, []);
 
     // Auto-redirect after success modal
@@ -172,6 +175,38 @@ const PurchaseDepartment = () => {
         }
     };
 
+    const fetchGrievances = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const [pendingResponse, allResponse] = await Promise.all([
+                fetch(`${apiUrl}/purchase-grievances/pending`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }),
+                fetch(`${apiUrl}/purchase-grievances/all`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                })
+            ]);
+
+            if (pendingResponse.ok) {
+                const pendingData = await pendingResponse.json();
+                setPendingGrievances(pendingData.grievances || []);
+            }
+
+            if (allResponse.ok) {
+                const allData = await allResponse.json();
+                setAllGrievances(allData.grievances || []);
+            }
+        } catch (err) {
+            console.error('Error fetching grievances:', err);
+        }
+    };
+
     const handleEvaluate = async (demand) => {
         try {
             // Check if a tender already exists for this demand
@@ -191,6 +226,90 @@ const PurchaseDepartment = () => {
         // No existing tender found, proceed with creation
         setSelectedDemandForTender(demand);
         setShowTenderWizard(true);
+    };
+
+    // Grievance management functions
+    const handleApproveGrievance = async (grievanceId, approvalComments = '') => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/purchase-grievances/${grievanceId}/approve`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    approvalComments,
+                    reviewedBy: 'Purchase Department'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to approve grievance');
+            }
+
+            toast.success('Grievance approved and notification sent to supplier');
+            fetchGrievances(); // Refresh the list
+        } catch (err) {
+            console.error('Error approving grievance:', err);
+            toast.error(err.message);
+        }
+    };
+
+    const handleRejectGrievance = async (grievanceId, rejectionComments = '') => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/purchase-grievances/${grievanceId}/reject`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    rejectionComments,
+                    reviewedBy: 'Purchase Department'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to reject grievance');
+            }
+
+            toast.success('Grievance rejected - supplier will not be notified');
+            fetchGrievances(); // Refresh the list
+        } catch (err) {
+            console.error('Error rejecting grievance:', err);
+            toast.error(err.message);
+        }
+    };
+
+    const handleBulkApproveGrievances = async (selectedIds, approvalComments = '') => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/purchase-grievances/bulk-approve`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    grievanceIds: selectedIds,
+                    approvalComments,
+                    reviewedBy: 'Purchase Department'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to bulk approve grievances');
+            }
+
+            const result = await response.json();
+            toast.success(`Bulk approval completed: ${result.summary.successful} successful, ${result.summary.failed} failed`);
+            fetchGrievances(); // Refresh the list
+        } catch (err) {
+            console.error('Error bulk approving grievances:', err);
+            toast.error(err.message);
+        }
     };
 
     const handleTenderCreated = (tender) => {
@@ -492,6 +611,71 @@ const PurchaseDepartment = () => {
         }
     };
 
+    const downloadTechnicalBid = async (bidId, companyName) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/technical-evaluation/bids/${bidId}/technical-document`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download technical bid');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `technical-bid-${companyName}-${bidId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            alert(`Error downloading technical bid: ${err.message}`);
+        }
+    };
+
+    const downloadBidCdrDocument = async (bidId, companyName) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-opening/bids/${bidId}/cdr-document`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download bid CDR document');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            
+            // Get file extension from content-disposition header if available
+            const contentDisposition = response.headers.get('content-disposition');
+            let fileName = `bid-cdr-${companyName}-${bidId}`;
+            if (contentDisposition) {
+                const fileNameMatch = contentDisposition.match(/filename="([^"]+)"/);
+                if (fileNameMatch) {
+                    fileName = fileNameMatch[1];
+                }
+            }
+            
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            alert(`Error downloading bid CDR document: ${err.message}`);
+        }
+    };
+
     const downloadFinancialOpeningReport = async (fileName) => {
         try {
             const token = localStorage.getItem('token');
@@ -735,6 +919,20 @@ const PurchaseDepartment = () => {
                                 {(readyTenders.length + scheduledOpenings.ready_to_open?.length + scheduledOpenings.scheduled_future?.length) > 0 && (
                                     <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
                                         {readyTenders.length + (scheduledOpenings.ready_to_open?.length || 0) + (scheduledOpenings.scheduled_future?.length || 0)}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('grievance-management')}
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'grievance-management'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                Grievance Management
+                                {pendingGrievances.length > 0 && (
+                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                        {pendingGrievances.length}
                                     </span>
                                 )}
                             </button>
@@ -1279,6 +1477,218 @@ const PurchaseDepartment = () => {
             </div>
             )}
 
+            {/* Grievance Management Tab */}
+            {activeTab === 'grievance-management' && (
+                <div className="space-y-6">
+                    <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                        <div className="px-4 py-5 sm:p-6">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-lg font-medium text-gray-900">
+                                    <i className="fas fa-exclamation-triangle mr-2 text-yellow-600"></i>
+                                    Pending Grievance Notifications ({pendingGrievances.length})
+                                </h2>
+                                {pendingGrievances.length > 0 && (
+                                    <button
+                                        onClick={() => {
+                                            const selectedIds = pendingGrievances.map(g => g.id);
+                                            const comments = prompt('Enter approval comments (optional):');
+                                            if (comments !== null) {
+                                                handleBulkApproveGrievances(selectedIds, comments);
+                                            }
+                                        }}
+                                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium"
+                                    >
+                                        <i className="fas fa-check-double mr-2"></i>
+                                        Approve All
+                                    </button>
+                                )}
+                            </div>
+
+                            {pendingGrievances.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <div className="text-gray-500">
+                                        <i className="fas fa-check-circle text-4xl text-green-400 mb-4"></i>
+                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Pending Grievances</h3>
+                                        <p>All grievance notifications have been processed.</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {pendingGrievances.map((grievance) => (
+                                        <div key={grievance.id} className="border border-yellow-200 rounded-lg p-6 bg-yellow-50">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="flex-1">
+                                                    <h3 className="text-lg font-semibold text-gray-900">
+                                                        {grievance.tender_title}
+                                                    </h3>
+                                                    <p className="text-sm text-gray-600 mt-1">
+                                                        PPRA Reference: {grievance.ppra_reference_number}
+                                                    </p>
+                                                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Supplier:</span>
+                                                            <span className="ml-2">{grievance.supplier_name}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Contact:</span>
+                                                            <span className="ml-2">{grievance.supplier_email}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Item:</span>
+                                                            <span className="ml-2">{grievance.item_name}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium text-gray-700">Submitted:</span>
+                                                            <span className="ml-2">{new Date(grievance.created_at).toLocaleString()}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="flex space-x-3">
+                                                    <button
+                                                        onClick={() => {
+                                                            const comments = prompt('Enter approval comments (optional):');
+                                                            if (comments !== null) {
+                                                                handleApproveGrievance(grievance.id, comments);
+                                                            }
+                                                        }}
+                                                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium"
+                                                    >
+                                                        <i className="fas fa-check mr-2"></i>
+                                                        Approve & Send
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            const comments = prompt('Enter rejection reason:');
+                                                            if (comments !== null && comments.trim() !== '') {
+                                                                handleRejectGrievance(grievance.id, comments);
+                                                            }
+                                                        }}
+                                                        className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-medium"
+                                                    >
+                                                        <i className="fas fa-times mr-2"></i>
+                                                        Reject
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="border-t border-yellow-300 pt-3">
+                                                <h4 className="font-medium text-gray-900 mb-2">Rejection Reason:</h4>
+                                                <p className="text-gray-700 bg-white p-3 rounded border">
+                                                    {grievance.rejection_reason}
+                                                </p>
+                                                <p className="text-xs text-gray-500 mt-2">
+                                                    <i className="fas fa-info-circle mr-1"></i>
+                                                    Approving will send a grievance notification email to the supplier. Rejecting will prevent the notification.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* All Grievances History */}
+                    <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                        <div className="px-4 py-5 sm:p-6">
+                            <h2 className="text-lg font-medium text-gray-900 mb-4">
+                                <i className="fas fa-history mr-2 text-blue-600"></i>
+                                All Grievances History
+                            </h2>
+
+                            {allGrievances.length === 0 ? (
+                                <div className="text-center py-8">
+                                    <div className="text-gray-500">No grievance records found.</div>
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Tender & Supplier
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Item & Reason
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Status
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Review Details
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Date
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {allGrievances.map((grievance) => (
+                                                <tr key={grievance.id} className="hover:bg-gray-50">
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div>
+                                                            <div className="text-sm font-medium text-gray-900">
+                                                                {grievance.tender_title}
+                                                            </div>
+                                                            <div className="text-sm text-gray-500">
+                                                                {grievance.supplier_name}
+                                                            </div>
+                                                            <div className="text-xs text-gray-400">
+                                                                {grievance.supplier_email}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div>
+                                                            <div className="text-sm font-medium text-gray-900">
+                                                                {grievance.item_name}
+                                                            </div>
+                                                            <div className="text-sm text-gray-600 mt-1">
+                                                                {grievance.rejection_reason}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                            grievance.status === 'pending' 
+                                                                ? 'bg-yellow-100 text-yellow-800'
+                                                                : grievance.status === 'approved'
+                                                                ? 'bg-green-100 text-green-800'
+                                                                : 'bg-red-100 text-red-800'
+                                                        }`}>
+                                                            {grievance.status.toUpperCase()}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        {grievance.reviewed_by && (
+                                                            <div className="text-sm text-gray-900">
+                                                                <div>By: {grievance.reviewed_by}</div>
+                                                                {grievance.reviewed_at && (
+                                                                    <div className="text-xs text-gray-500">
+                                                                        {new Date(grievance.reviewed_at).toLocaleString()}
+                                                                    </div>
+                                                                )}
+                                                                {grievance.approval_comments && (
+                                                                    <div className="text-xs text-gray-600 mt-1">
+                                                                        {grievance.approval_comments}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {new Date(grievance.created_at).toLocaleDateString()}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Evaluation Modal */}
             {showEvaluationModal && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
@@ -1725,7 +2135,7 @@ const PurchaseDepartment = () => {
                                                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total Cost</th>
                                                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Delivery Days</th>
                                                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Contact</th>
-                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Financial Bid</th>
+                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Documents</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -1749,13 +2159,29 @@ const PurchaseDepartment = () => {
                                                                 {supplier.company_email}
                                                             </td>
                                                             <td className="px-4 py-2 text-sm">
-                                                                <button
-                                                                    onClick={() => downloadFinancialBid(supplier.bid_id, supplier.company_name)}
-                                                                    className="text-blue-600 hover:text-blue-800 text-sm"
-                                                                >
-                                                                    <i className="fas fa-download mr-1"></i>
-                                                                    Download
-                                                                </button>
+                                                                <div className="flex flex-col space-y-1">
+                                                                    <button
+                                                                        onClick={() => downloadTechnicalBid(supplier.bid_id, supplier.company_name)}
+                                                                        className="text-blue-600 hover:text-blue-800 text-xs"
+                                                                    >
+                                                                        <i className="fas fa-download mr-1"></i>
+                                                                        Technical Bid
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => downloadFinancialBid(supplier.bid_id, supplier.company_name)}
+                                                                        className="text-green-600 hover:text-green-800 text-xs"
+                                                                    >
+                                                                        <i className="fas fa-download mr-1"></i>
+                                                                        Financial Bid
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => downloadBidCdrDocument(supplier.bid_id, supplier.company_name)}
+                                                                        className="text-purple-600 hover:text-purple-800 text-xs"
+                                                                    >
+                                                                        <i className="fas fa-download mr-1"></i>
+                                                                        Bid CDR 2%
+                                                                    </button>
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     ))}

@@ -18,6 +18,7 @@ const {
     getActiveTenders,
     submitBid,
     getSupplierBids,
+    getSupplierProfile,
     getComprehensiveSupplierData,
     getSupplierRegistrationData,
     requestResubmission,
@@ -54,13 +55,31 @@ const storage = multer.diskStorage({
     }
 });
 
-// File filter to allow only PDF files
+// File filter to allow only PDF files for most documents, but various formats for bid CDR
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = ['application/pdf'];
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
+    if (file.fieldname === 'bidCdrDocument') {
+        // Allow PDF, DOC, DOCX, JPG, JPEG, PNG for bid CDR document
+        const allowedCdrTypes = [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'image/jpeg',
+            'image/jpg', 
+            'image/png'
+        ];
+        if (allowedCdrTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF, DOC, DOCX, JPG, JPEG, PNG files are allowed for Bid CDR document'), false);
+        }
     } else {
-        cb(new Error('Only PDF files are allowed'), false);
+        // Only PDF for other documents
+        const allowedTypes = ['application/pdf'];
+        if (allowedTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed'), false);
+        }
     }
 };
 
@@ -84,7 +103,8 @@ const uploadRegistrationFields = upload.fields([
 // Define upload fields for bid documents
 const uploadBidFields = upload.fields([
     { name: 'technicalBid', maxCount: 1 },
-    { name: 'financialBid', maxCount: 1 }
+    { name: 'financialBid', maxCount: 1 },
+    { name: 'bidCdrDocument', maxCount: 1 }
 ]);
 
 // Public routes
@@ -121,6 +141,9 @@ router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
 
 // Get supplier's own bids
 router.get('/bids/my-bids', auth, getSupplierBids);
+
+// Get current supplier's profile (for bid form auto-population)
+router.get('/profile/me', auth, getSupplierProfile);
 
 // Grievance routes
 router.post('/grievances/submit', auth, submitGrievance);

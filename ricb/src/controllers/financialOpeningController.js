@@ -947,11 +947,91 @@ const downloadFinancialOpeningReport = async (req, res) => {
     }
 };
 
+// Download bid CDR document
+const downloadBidCdrDocument = async (req, res) => {
+    const db = getDatabase();
+    const { bidId } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canDownload = user.role === 'superadmin' || 
+                       (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canDownload) {
+        return res.status(403).json({ message: 'You do not have permission to download bid CDR documents' });
+    }
+
+    try {
+        // Get bid details
+        const bid = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT bid_cdr_document FROM supplier_bids WHERE id = ?',
+                [bidId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!bid || !bid.bid_cdr_document) {
+            return res.status(404).json({ message: 'Bid CDR document not found' });
+        }
+
+        // Construct file path - check if it's already a full path or just filename
+        let filePath = bid.bid_cdr_document;
+        
+        // If we stored only filename, build absolute path inside uploads directory
+        if (!path.isAbsolute(filePath) && !filePath.includes('uploads')) {
+            filePath = path.join(__dirname, '../../uploads', filePath);
+        }
+
+        if (!fs.existsSync(filePath)) {
+            console.error('File not found at path:', filePath);
+            return res.status(404).json({ message: 'Bid CDR document file not found on server' });
+        }
+
+        // Get file extension to set proper content type
+        const fileExt = path.extname(filePath).toLowerCase();
+        let contentType = 'application/octet-stream';
+        
+        switch (fileExt) {
+            case '.pdf':
+                contentType = 'application/pdf';
+                break;
+            case '.doc':
+                contentType = 'application/msword';
+                break;
+            case '.docx':
+                contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+                break;
+            case '.jpg':
+            case '.jpeg':
+                contentType = 'image/jpeg';
+                break;
+            case '.png':
+                contentType = 'image/png';
+                break;
+        }
+
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="bid-cdr-${bidId}${fileExt}"`);
+        res.setHeader('Content-Type', contentType);
+        
+        // Send file
+        res.sendFile(path.resolve(filePath));
+    } catch (error) {
+        console.error('Error downloading bid CDR document:', error);
+        res.status(500).json({ message: 'Failed to download bid CDR document' });
+    }
+};
+
 module.exports = {
     getTendersReadyForFinancialOpening,
     scheduleFinancialOpening,
     getScheduledFinancialOpenings,
     openFinancialBids,
     downloadFinancialBid,
+    downloadBidCdrDocument,
     downloadFinancialOpeningReport
 };

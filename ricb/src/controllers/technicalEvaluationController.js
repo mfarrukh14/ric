@@ -340,12 +340,13 @@ const downloadTechnicalBid = async (req, res) => {
     const { bidId } = req.params;
     const user = req.user;
 
-    // Check if user is from technical evaluation committee
+    // Check if user is from technical evaluation committee or purchase department
     const canDownload = user.role === 'superadmin' || 
-                       (user.committee_name && user.committee_name.toLowerCase().includes('technical evaluation'));
+                       (user.committee_name && user.committee_name.toLowerCase().includes('technical evaluation')) ||
+                       (user.department_name && user.department_name.toLowerCase() === 'purchase');
 
     if (!canDownload) {
-        return res.status(403).json({ message: 'You do not have permission to download bid documents' });
+        return res.status(403).json({ message: 'You do not have permission to download technical bid documents' });
     }
 
     try {
@@ -664,7 +665,7 @@ const submitItemWiseEvaluation = async (req, res) => {
                             }
                         }
 
-                        // Send emails to rejected companies for this item
+                        // Create grievance records for purchase department approval instead of sending emails directly
                         for (const rejected of itemEval.rejectedCompanies) {
                             try {
                                 // Get supplier details from bid
@@ -672,6 +673,7 @@ const submitItemWiseEvaluation = async (req, res) => {
                                     db.get(
                                         `SELECT s.business_email as company_email,
                                                 s.username,
+                                                s.id as supplier_id,
                                                 bp.business_name as company_name,
                                                 bp.contact_person_name as contact_person
                                          FROM supplier_bids sb
@@ -687,30 +689,49 @@ const submitItemWiseEvaluation = async (req, res) => {
                                 });
 
                                 if (supplierDetails && supplierDetails.company_email) {
-                                    console.log(`📧 Sending rejection email to ${supplierDetails.company_name} for item: ${itemName}`);
+                                    console.log(`� Creating grievance record for purchase department: ${supplierDetails.company_name} for item: ${itemName}`);
                                     
-                                    await emailService.sendTechnicalEvaluationRejectionEmail(
-                                        supplierDetails.company_email,
-                                        supplierDetails.company_name,
-                                        itemName,
-                                        rejected.reason,
-                                        supplierDetails.contact_person
-                                    );
-                                    
-                                    console.log(`✅ Rejection email sent successfully to ${supplierDetails.company_name}`);
+                                    // Insert into purchase_department_grievances table
+                                    await new Promise((resolve, reject) => {
+                                        db.run(
+                                            `INSERT INTO purchase_department_grievances 
+                                             (tender_id, supplier_id, bid_id, item_name, rejection_reason, 
+                                              supplier_email, supplier_name, contact_person) 
+                                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                                            [
+                                                tenderId,
+                                                supplierDetails.supplier_id,
+                                                rejected.bidId,
+                                                itemName,
+                                                rejected.reason,
+                                                supplierDetails.company_email,
+                                                supplierDetails.company_name,
+                                                supplierDetails.contact_person
+                                            ],
+                                            function(err) {
+                                                if (err) {
+                                                    console.error(`❌ Failed to create grievance record for bid ${rejected.bidId}:`, err);
+                                                    reject(err);
+                                                } else {
+                                                    console.log(`✅ Grievance record created successfully for ${supplierDetails.company_name}`);
+                                                    resolve();
+                                                }
+                                            }
+                                        );
+                                    });
                                 } else {
                                     console.warn(`⚠️ No email found for bid ID: ${rejected.bidId}`);
                                 }
-                            } catch (emailError) {
-                                console.error(`❌ Failed to send rejection email for bid ${rejected.bidId}:`, emailError);
-                                // Continue with other emails even if one fails
+                            } catch (recordError) {
+                                console.error(`❌ Failed to create grievance record for bid ${rejected.bidId}:`, recordError);
+                                // Continue with other records even if one fails
                             }
                         }
                     }
 
-                    console.log('📧 All rejection email notifications processed successfully');
+                    console.log('� All grievance records created successfully for purchase department review');
                 } catch (error) {
-                    console.error('❌ Error sending rejection email notifications:', error);
+                    console.error('❌ Error creating grievance records:', error);
                 }
             }, 1000); // Send emails 1 second after the response to avoid blocking
 
@@ -718,7 +739,7 @@ const submitItemWiseEvaluation = async (req, res) => {
             const excelFilePath = await generateTechnicalEvaluationReport(db, tenderId, evaluations);
 
             res.json({ 
-                message: 'Technical evaluation completed successfully. Approved companies have been added to temporary pools for each item. Rejected companies have been notified via email and can apply for grievance within 3 days.',
+                message: 'Technical evaluation completed successfully. Approved companies have been added to temporary pools for each item. Rejected companies\' grievance notifications have been sent to purchase department for approval.',
                 tenderId: tenderId,
                 reportFile: excelFilePath
             });

@@ -65,6 +65,52 @@ const TenderOpeningDetails = () => {
         }
     };
 
+    const handleDownloadTechnicalBid = async (bidId, companyName) => {
+        try {
+            const response = await api.get(`/technical-evaluation/bids/${bidId}/technical-document`, {
+                responseType: 'blob'
+            });
+            
+            // Create blob link to download
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Technical_Bid_${companyName}_${bidId}.pdf`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+            
+            toast.success('Technical bid downloaded successfully');
+        } catch (error) {
+            console.error('Error downloading technical bid:', error);
+            toast.error('Failed to download technical bid');
+        }
+    };
+
+    const handleDownloadBidCdr = async (bidId, companyName) => {
+        try {
+            const response = await api.get(`/financial-opening/bids/${bidId}/bid-cdr-document`, {
+                responseType: 'blob'
+            });
+            
+            // Create blob link to download
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Bid_CDR_${companyName}_${bidId}`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+            
+            toast.success('Bid CDR document downloaded successfully');
+        } catch (error) {
+            console.error('Error downloading bid CDR document:', error);
+            toast.error('Failed to download bid CDR document');
+        }
+    };
+
     const handleForwardToTechnicalEvaluation = async () => {
         try {
             setProcessing(true);
@@ -321,6 +367,12 @@ const TenderOpeningDetails = () => {
                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                 Submission Time
                                             </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Technical Bid
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Bid CDR 2%
+                                            </th>
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-200">
@@ -350,6 +402,24 @@ const TenderOpeningDetails = () => {
                                                     <div className="text-sm text-gray-900">
                                                         {new Date(bid.created_at).toLocaleString('en-PK')}
                                                     </div>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <button
+                                                        onClick={() => handleDownloadTechnicalBid(bid.id, bid.company_name || 'Unknown')}
+                                                        className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                                    >
+                                                        <i className="fas fa-download mr-1"></i>
+                                                        Download
+                                                    </button>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <button
+                                                        onClick={() => handleDownloadBidCdr(bid.id, bid.company_name || 'Unknown')}
+                                                        className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                                                    >
+                                                        <i className="fas fa-download mr-1"></i>
+                                                        Download
+                                                    </button>
                                                 </td>
                                             </tr>
                                         ))}

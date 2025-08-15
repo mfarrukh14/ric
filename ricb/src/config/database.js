@@ -2308,6 +2308,66 @@ const runMigrations = async () => {
                 }
             });
         });
+
+        // Migration 15: Add bid_cdr_document column to supplier_bids table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(supplier_bids)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasBidCdrDocument = columnNames.includes('bid_cdr_document');
+                
+                if (!hasBidCdrDocument) {
+                    console.log('Adding bid_cdr_document column to supplier_bids table...');
+                    db.run("ALTER TABLE supplier_bids ADD COLUMN bid_cdr_document TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding bid_cdr_document column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added bid_cdr_document column to supplier_bids table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('bid_cdr_document column already exists in supplier_bids table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 16: Create purchase_department_grievances table for approval workflow
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS purchase_department_grievances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                rejection_reason TEXT NOT NULL,
+                supplier_email TEXT NOT NULL,
+                supplier_name TEXT,
+                contact_person TEXT,
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_by TEXT,
+                reviewed_at DATETIME,
+                approval_comments TEXT,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids(id)
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating purchase_department_grievances table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created purchase_department_grievances table');
+                    resolve();
+                }
+            });
+        });
         
         console.log('Database migrations completed successfully');
     } catch (error) {
