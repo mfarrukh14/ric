@@ -1,394 +1,502 @@
 const { getDatabase } = require('../config/database');
-const ExcelJS = require('exceljs');
 const path = require('path');
 const fs = require('fs');
+const ExcelJS = require('exceljs');
+const EmailService = require('../utils/emailService');
 
-// Get tenders ready for financial opening (all grievances resolved and suppliers finalized)
+// Create email service instance
+const emailService = new EmailService();
+
+// Get tenders ready for financial opening
 const getTendersReadyForFinancialOpening = async (req, res) => {
-    const db = getDatabase();
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canView = user.role === 'superadmin' || 
-                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canView) {
-        console.log('❌ Access denied for user');
-        return res.status(403).json({ message: 'You do not have permission to view financial openings' });
-    }
-
     try {
-        console.log('📋 Fetching tenders ready for financial opening...');
+        const db = getDatabase();
         
-        // Ensure temporary_approvals table exists
-        await new Promise((resolve, reject) => {
-            db.run(`
-                CREATE TABLE IF NOT EXISTS temporary_approvals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    supplier_id INTEGER NOT NULL,
-                    tender_id INTEGER NOT NULL,
-                    item_id INTEGER NOT NULL,
-                    grievance_id INTEGER NOT NULL,
-                    approved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    approved_by INTEGER NOT NULL,
-                    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'used', 'expired')),
-                    FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
-                    FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
-                    FOREIGN KEY (item_id) REFERENCES demand_items(id),
-                    FOREIGN KEY (grievance_id) REFERENCES grievance_applications(id),
-                    FOREIGN KEY (approved_by) REFERENCES users(id),
-                    UNIQUE(supplier_id, tender_id, item_id, grievance_id)
-                )
-            `, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
+        const query = `
+            SELECT 
+                dt.id,
+                dt.tender_number,
+                dt.demand_id,
+                dt.bidding_end_time,
+                dt.technical_evaluation_completed_at,
+                dt.tender_status,
+                d.item_name,
+                d.description,
+                d.urgency,
+                d.required_by,
+                u.name as created_by_name,
+                dept.name as creator_department,
+                COUNT(sb.id) as total_bids,
+                COUNT(te.id) as evaluated_bids,
+                fo.scheduled_opening_time,
+                fo.status as opening_status,
+                COUNT(ga.id) as total_grievances,
+                COUNT(CASE WHEN ga.status NOT IN ('resolved', 'rejected') THEN 1 END) as unresolved_grievances
+            FROM demand_tenders dt
+            JOIN demands d ON dt.demand_id = d.id
+            LEFT JOIN users u ON d.created_by = u.id
+            LEFT JOIN departments dept ON u.department_id = dept.id
+            LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
+            LEFT JOIN technical_evaluations te ON sb.id = te.bid_id AND te.status = 'approved'
+            LEFT JOIN financial_openings fo ON dt.id = fo.tender_id
+            LEFT JOIN grievance_applications ga ON dt.id = ga.tender_id
+            WHERE dt.technical_evaluation_completed_at IS NOT NULL
+            AND dt.tender_status NOT IN ('awarded', 'cancelled')
+            GROUP BY dt.id
+            HAVING COUNT(te.id) > 0 
+            AND COUNT(CASE WHEN ga.status NOT IN ('resolved', 'rejected') THEN 1 END) = 0
+            ORDER BY dt.created_at DESC
+        `;
+
+        db.all(query, [], (err, tenders) => {
+            if (err) {
+                console.error('Error fetching tenders ready for financial opening:', err);
+                return res.status(500).json({ error: 'Failed to fetch tenders' });
+            }
+
+            res.json(tenders);
         });
-        
-        // Get tenders that have been technically evaluated
-        const technicallyEvaluatedTenders = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
-                        u.name as created_by_name, dept.name as creator_department,
-                        dt.technical_evaluation_completed_at
-                 FROM demand_tenders dt
-                 JOIN demands d ON dt.demand_id = d.id
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN departments dept ON u.department_id = dept.id
-                 WHERE dt.tender_status = 'technically_evaluated'
-                 ORDER BY dt.technical_evaluation_completed_at ASC`,
-                [],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
-
-        console.log(`🔍 Found ${technicallyEvaluatedTenders.length} technically evaluated tenders`);
-
-        // For each tender, check if all grievances are resolved
-        const readyTenders = [];
-        
-        for (const tender of technicallyEvaluatedTenders) {
-            console.log(`🎯 Checking tender ${tender.id}...`);
-            
-            // Get all grievances for this tender
-            const grievances = await new Promise((resolve, reject) => {
-                db.all(
-                    `SELECT ga.status, ga.id
-                     FROM grievance_applications ga
-                     WHERE ga.tender_id = ?`,
-                    [tender.id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
-
-            // Check if all grievances are resolved or rejected (finalized)
-            const hasUnfinishedGrievances = grievances.some(g => 
-                !['resolved', 'rejected'].includes(g.status)
-            );
-
-            // Get count of approved suppliers for each item
-            const itemsWithApprovedSuppliers = await new Promise((resolve, reject) => {
-                db.all(
-                    `SELECT 
-                        COALESCE(di.id, 0) as item_id,
-                        COALESCE(di.item_name, d.item_name) as item_name,
-                        COUNT(DISTINCT COALESCE(tap.supplier_id, ta.supplier_id)) as approved_suppliers_count
-                     FROM demand_items di
-                     LEFT JOIN temporary_approved_pools tap ON di.id = tap.item_id AND tap.tender_id = ?
-                     LEFT JOIN temporary_approvals ta ON di.id = ta.item_id AND ta.tender_id = ? AND ta.status = 'active'
-                     JOIN demands d ON di.demand_id = d.id
-                     WHERE di.demand_id = ?
-                        AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
-                        AND (di.store_status != 'available' OR di.store_status IS NULL)
-                     GROUP BY di.id, di.item_name
-                     
-                     UNION ALL
-                     
-                     SELECT 
-                        0 as item_id,
-                        d.item_name,
-                        COUNT(DISTINCT COALESCE(tap.supplier_id, ta.supplier_id)) as approved_suppliers_count
-                     FROM demands d
-                     LEFT JOIN temporary_approved_pools tap ON tap.item_id = 0 AND tap.tender_id = ?
-                     LEFT JOIN temporary_approvals ta ON ta.item_id = 0 AND ta.tender_id = ? AND ta.status = 'active'
-                     LEFT JOIN demand_items di ON di.demand_id = d.id
-                     WHERE d.id = ? AND di.id IS NULL
-                     GROUP BY d.item_name`,
-                    [tender.id, tender.id, tender.demand_id, tender.id, tender.id, tender.demand_id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
-
-            // Check if there are approved suppliers for all items
-            const hasApprovedSuppliersForAllItems = itemsWithApprovedSuppliers.length > 0 && 
-                itemsWithApprovedSuppliers.every(item => item.approved_suppliers_count > 0);
-
-            // Check if financial opening is already scheduled
-            const financialOpening = await new Promise((resolve, reject) => {
-                db.get(
-                    `SELECT * FROM financial_openings WHERE tender_id = ?`,
-                    [tender.id],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
-
-            // Only include tender if:
-            // 1. No unfinished grievances
-            // 2. Has approved suppliers for all items
-            // 3. Financial opening not yet scheduled or is scheduled for future
-            if (!hasUnfinishedGrievances && hasApprovedSuppliersForAllItems) {
-                tender.grievances_count = grievances.length;
-                tender.resolved_grievances_count = grievances.filter(g => g.status === 'resolved').length;
-                tender.rejected_grievances_count = grievances.filter(g => g.status === 'rejected').length;
-                tender.items_with_suppliers = itemsWithApprovedSuppliers;
-                tender.financial_opening = financialOpening;
-                
-                readyTenders.push(tender);
-            }        }
-
-        console.log(`✅ Found ${readyTenders.length} tenders ready for financial opening`);
-        res.json(readyTenders);
     } catch (error) {
-        console.error('Error fetching tenders ready for financial opening:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        console.error('Error in getTendersReadyForFinancialOpening:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 };
 
 // Schedule financial opening for a tender
 const scheduleFinancialOpening = async (req, res) => {
-    const db = getDatabase();
-    const { tenderId } = req.params;
-    const { openingDateTime } = req.body;
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canSchedule = user.role === 'superadmin' || 
-                       (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canSchedule) {
-        return res.status(403).json({ message: 'Only purchase department members can schedule financial openings' });
-    }
-
-    if (!openingDateTime) {
-        return res.status(400).json({ message: 'Financial opening date and time is required' });
-    }
-
-    // Validate that opening time is in the future (Pakistan time UTC+5)
-    const now = new Date();
-    const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
-    const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
-    const scheduledTime = new Date(openingDateTime);
-
-    if (scheduledTime <= pakistanTime) {
-        return res.status(400).json({ message: 'Financial opening must be scheduled for a future date and time' });
-    }
-
     try {
-        // Create financial_openings table if it doesn't exist
-        await new Promise((resolve, reject) => {
-            db.run(`
-                CREATE TABLE IF NOT EXISTS financial_openings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tender_id INTEGER NOT NULL,
-                    scheduled_opening_time DATETIME NOT NULL,
-                    status TEXT DEFAULT 'scheduled' CHECK(status IN ('scheduled', 'opened', 'completed')),
-                    scheduled_by INTEGER NOT NULL,
-                    scheduled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    opened_at DATETIME,
-                    opened_by INTEGER,
-                    FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
-                    FOREIGN KEY (scheduled_by) REFERENCES users(id),
-                    FOREIGN KEY (opened_by) REFERENCES users(id),
-                    UNIQUE(tender_id)
-                )
-            `, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
+        const { tenderId } = req.params;
+        const { scheduledDateTime, openingDateTime } = req.body;
+        const userId = req.user.id;
+        const db = getDatabase();
+
+        console.log('Schedule financial opening request:', {
+            tenderId,
+            scheduledDateTime,
+            openingDateTime,
+            userId,
+            body: req.body
         });
 
-        // Check if financial opening already exists for this tender
+        // Use scheduledDateTime or openingDateTime (for compatibility)
+        const finalDateTime = scheduledDateTime || openingDateTime;
+
+        if (!finalDateTime) {
+            console.error('No scheduled date/time provided');
+            return res.status(400).json({ 
+                error: 'Scheduled date and time is required',
+                received: { scheduledDateTime, openingDateTime, body: req.body }
+            });
+        }
+
+        // Validate the datetime format
+        const dateTime = new Date(finalDateTime);
+        if (isNaN(dateTime.getTime())) {
+            console.error('Invalid date format:', finalDateTime);
+            return res.status(400).json({ 
+                error: 'Invalid date format. Please provide a valid ISO datetime string',
+                received: finalDateTime
+            });
+        }
+
+        console.log('Parsed datetime:', dateTime.toISOString());
+
+        // Check if financial opening is already scheduled
         const existingOpening = await new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM financial_openings WHERE tender_id = ?',
+                'SELECT id, scheduled_opening_time, status FROM financial_openings WHERE tender_id = ?',
                 [tenderId],
                 (err, row) => {
                     if (err) reject(err);
                     else resolve(row);
                 }
             );
-        });        if (existingOpening) {
-            // Update existing schedule
+        });
+
+        if (existingOpening) {
+            console.log('Existing opening found:', existingOpening);
+            
+            // Update existing schedule instead of creating new one
             await new Promise((resolve, reject) => {
                 db.run(
-                    `UPDATE financial_openings SET 
-                     scheduled_opening_time = ?,
-                     scheduled_by = ?,
-                     status = 'scheduled'
+                    `UPDATE financial_openings 
+                     SET scheduled_opening_time = ?, scheduled_by = ?, status = 'scheduled'
                      WHERE tender_id = ?`,
-                    [openingDateTime, user.id, tenderId],
-                    (err) => {
-                        if (err) reject(err);
-                        else resolve();
+                    [dateTime.toISOString(), userId, tenderId],
+                    function(err) {
+                        if (err) {
+                            console.error('Error updating financial opening:', err);
+                            reject(err);
+                        } else {
+                            console.log('Financial opening updated successfully');
+                            resolve();
+                        }
                     }
                 );
             });
-        } else {
-            // Create new schedule
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `INSERT INTO financial_openings 
-                     (tender_id, scheduled_opening_time, scheduled_by)
-                     VALUES (?, ?, ?)`,
-                    [tenderId, openingDateTime, user.id],
-                    (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    }
-                );
+
+            return res.json({ 
+                message: 'Financial opening schedule updated successfully',
+                scheduledDateTime: dateTime.toISOString(),
+                action: 'updated'
             });
         }
 
+        console.log('Creating new financial opening schedule...');
+
+        // Insert financial opening schedule
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO financial_openings 
+                (tender_id, scheduled_opening_time, scheduled_by, status) 
+                VALUES (?, ?, ?, 'scheduled')`,
+                [tenderId, dateTime.toISOString(), userId],
+                function(err) {
+                    if (err) {
+                        console.error('Error inserting financial opening:', err);
+                        reject(err);
+                    } else {
+                        console.log('Financial opening created successfully with ID:', this.lastID);
+                        resolve(this.lastID);
+                    }
+                }
+            );
+        });
+
         res.json({ 
             message: 'Financial opening scheduled successfully',
-            tenderId: tenderId,
-            scheduledTime: openingDateTime
+            scheduledDateTime: dateTime.toISOString(),
+            action: 'created'
         });
 
     } catch (error) {
         console.error('Error scheduling financial opening:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ 
+            error: 'Failed to schedule financial opening',
+            details: error.message
+        });
     }
 };
 
 // Get scheduled financial openings
 const getScheduledFinancialOpenings = async (req, res) => {
-    const db = getDatabase();
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canView = user.role === 'superadmin' || 
-                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canView) {
-        return res.status(403).json({ message: 'You do not have permission to view financial openings' });
-    }
-
     try {
-        // Get current Pakistan time (UTC+5)
-        const now = new Date();
-        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
-        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
+        const db = getDatabase();
+        
+        const query = `
+            SELECT 
+                fo.id,
+                fo.tender_id,
+                fo.scheduled_opening_time,
+                fo.status,
+                fo.opened_at,
+                fo.opened_by,
+                dt.tender_number,
+                d.item_name,
+                d.description,
+                u1.name as scheduled_by_name,
+                u2.name as opened_by_name,
+                COUNT(sb.id) as total_bids
+            FROM financial_openings fo
+            JOIN demand_tenders dt ON fo.tender_id = dt.id
+            JOIN demands d ON dt.demand_id = d.id
+            LEFT JOIN users u1 ON fo.scheduled_by = u1.id
+            LEFT JOIN users u2 ON fo.opened_by = u2.id
+            LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
+            GROUP BY fo.id
+            ORDER BY fo.scheduled_opening_time DESC
+        `;
 
-        const financialOpenings = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT fo.*, dt.*, d.item_name, d.description, d.urgency, d.required_by,
-                        u.name as created_by_name, dept.name as creator_department,
-                        sb.name as scheduled_by_name
-                 FROM financial_openings fo
-                 JOIN demand_tenders dt ON fo.tender_id = dt.id
-                 JOIN demands d ON dt.demand_id = d.id
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN users sb ON fo.scheduled_by = sb.id
-                 WHERE fo.status IN ('scheduled', 'opened')
-                 ORDER BY fo.scheduled_opening_time ASC`,
-                [],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
-
-        // Categorize openings
-        const categorizedOpenings = {
-            ready_to_open: [],
-            scheduled_future: [],
-            opened: []
-        };
-
-        for (const opening of financialOpenings) {
-            const scheduledTime = new Date(opening.scheduled_opening_time);
-            
-            if (opening.status === 'opened') {
-                categorizedOpenings.opened.push(opening);
-            } else if (scheduledTime <= pakistanTime) {
-                categorizedOpenings.ready_to_open.push(opening);
-            } else {
-                categorizedOpenings.scheduled_future.push(opening);
+        db.all(query, [], (err, openings) => {
+            if (err) {
+                console.error('Error fetching scheduled financial openings:', err);
+                return res.status(500).json({ error: 'Failed to fetch scheduled openings' });
             }
-        }
 
-        res.json({
-            current_pakistan_time: pakistanTime.toISOString(),
-            ...categorizedOpenings
+            // Separate into ready to open and future scheduled
+            const now = new Date();
+            const readyToOpen = openings.filter(opening => 
+                opening.status === 'scheduled' && new Date(opening.scheduled_opening_time) <= now
+            );
+            const scheduledFuture = openings.filter(opening => 
+                opening.status === 'scheduled' && new Date(opening.scheduled_opening_time) > now
+            );
+            const opened = openings.filter(opening => opening.status === 'opened');
+
+            res.json({
+                ready_to_open: readyToOpen,
+                scheduled_future: scheduledFuture,
+                opened: opened
+            });
         });
-
     } catch (error) {
-        console.error('Error fetching scheduled financial openings:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        console.error('Error in getScheduledFinancialOpenings:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 };
 
-// Open financial bids and generate optimal combinations
+// Open financial bids and display comparative analysis (no automatic award)
 const openFinancialBids = async (req, res) => {
-    const db = getDatabase();
-    const { tenderId } = req.params;
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canOpen = user.role === 'superadmin' || 
-                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canOpen) {
-        return res.status(403).json({ message: 'Only purchase department members can open financial bids' });
-    }
-
     try {
-        // Check if financial opening is scheduled and time has passed
-        const financialOpening = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM financial_openings WHERE tender_id = ?',
-                [tenderId],
-                (err, row) => {
+        const { tenderId } = req.params;
+        const userId = req.user.id;
+        const db = getDatabase();
+
+        // Update financial opening status
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE financial_openings SET status = ?, opened_at = CURRENT_TIMESTAMP, opened_by = ? WHERE tender_id = ?',
+                ['opened', userId, tenderId],
+                (err) => {
                     if (err) reject(err);
-                    else resolve(row);
+                    else resolve();
                 }
             );
         });
 
-        if (!financialOpening) {
-            return res.status(404).json({ message: 'Financial opening not scheduled for this tender' });
-        }
+        // Get all technically approved bids with supplier details
+        const bidsQuery = `
+            SELECT 
+                sb.id as bid_id,
+                sb.supplier_id,
+                sb.total_cost,
+                sb.proposed_quantity,
+                sb.delivery_days,
+                sb.bid_comments,
+                sb.technical_bid_document,
+                sb.financial_bid_document,
+                sb.bid_cdr_document,
+                s.business_email,
+                sbp.business_name,
+                sbp.contact_person_name,
+                sbi.item_id,
+                sbi.item_name,
+                sbi.required_quantity,
+                sbi.proposed_quantity as item_proposed_quantity,
+                sbi.unit_price,
+                sbi.total_cost as item_total_cost,
+                sbi.unit,
+                sbi.manufacturer_brand,
+                di.specifications,
+                te.status as technical_status
+            FROM supplier_bids sb
+            JOIN suppliers s ON sb.supplier_id = s.id
+            JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+            LEFT JOIN supplier_bid_items sbi ON sb.id = sbi.bid_id
+            LEFT JOIN demand_items di ON sbi.item_id = di.id
+            LEFT JOIN technical_evaluations te ON sb.id = te.bid_id
+            WHERE sb.tender_id = ? AND te.status = 'approved'
+            ORDER BY sbi.item_name, sb.total_cost ASC
+        `;
 
-        // Get current Pakistan time (UTC+5)
-        const now = new Date();
-        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
-        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
-        const scheduledTime = new Date(financialOpening.scheduled_opening_time);
-
-        if (scheduledTime > pakistanTime) {
-            return res.status(400).json({ 
-                message: 'Financial opening time has not yet arrived',
-                scheduled_time: scheduledTime.toISOString(),
-                current_time: pakistanTime.toISOString()
+        const bids = await new Promise((resolve, reject) => {
+            db.all(bidsQuery, [tenderId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
             });
+        });
+
+        // Group bids by item for comparative analysis
+        const itemAnalysis = {};
+        
+        bids.forEach(bid => {
+            if (!itemAnalysis[bid.item_name]) {
+                itemAnalysis[bid.item_name] = {
+                    item_id: bid.item_id,
+                    item_name: bid.item_name,
+                    required_quantity: bid.required_quantity,
+                    specifications: bid.specifications,
+                    suppliers: []
+                };
+            }
+            
+            itemAnalysis[bid.item_name].suppliers.push({
+                bid_id: bid.bid_id,
+                supplier_id: bid.supplier_id,
+                company_name: bid.business_name,
+                contact_person: bid.contact_person_name,
+                email: bid.business_email,
+                proposed_quantity: bid.item_proposed_quantity,
+                unit_price: bid.unit_price,
+                total_cost: bid.item_total_cost,
+                unit: bid.unit,
+                manufacturer_brand: bid.manufacturer_brand,
+                delivery_days: bid.delivery_days,
+                bid_comments: bid.bid_comments,
+                technical_bid_document: bid.technical_bid_document,
+                financial_bid_document: bid.financial_bid_document,
+                bid_cdr_document: bid.bid_cdr_document
+            });
+        });
+
+        // Sort suppliers by unit price for each item
+        Object.keys(itemAnalysis).forEach(itemName => {
+            itemAnalysis[itemName].suppliers.sort((a, b) => a.unit_price - b.unit_price);
+        });
+
+        // Calculate optimal supplier combinations
+        const optimalCombinations = calculateOptimalCombinations(itemAnalysis);
+
+        // Generate detailed comparative report with multiple tabs
+        const reportPath = await generateEnhancedComparativeReport(tenderId, itemAnalysis, optimalCombinations);
+
+        res.json({
+            message: 'Financial bids opened successfully',
+            comparative_analysis: itemAnalysis,
+            optimal_combinations: optimalCombinations,
+            report_file: path.basename(reportPath),
+            total_items: Object.keys(itemAnalysis).length,
+            opened_at: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Error opening financial bids:', error);
+        res.status(500).json({ error: 'Failed to open financial bids' });
+    }
+};
+
+// Calculate optimal supplier combinations
+const calculateOptimalCombinations = (itemAnalysis) => {
+    const items = Object.keys(itemAnalysis);
+    const combinations = [];
+
+    // Generate all possible supplier combinations (one supplier per item)
+    function generateCombinations(itemIndex, currentCombo) {
+        if (itemIndex >= items.length) {
+            const combo = {
+                suppliers: [...currentCombo],
+                total_cost: currentCombo.reduce((sum, supplier) => sum + supplier.total_cost, 0),
+                average_delivery_time: Math.round(currentCombo.reduce((sum, supplier) => sum + supplier.delivery_days, 0) / currentCombo.length),
+                items_count: currentCombo.length
+            };
+            combinations.push(combo);
+            return;
         }
 
-        // Start transaction for the entire process
+        const itemName = items[itemIndex];
+        const suppliers = itemAnalysis[itemName].suppliers;
+        
+        // For each supplier of this item, try combinations
+        suppliers.forEach(supplier => {
+            generateCombinations(itemIndex + 1, [...currentCombo, {
+                ...supplier,
+                item_name: itemName,
+                required_quantity: itemAnalysis[itemName].required_quantity,
+                specifications: itemAnalysis[itemName].specifications
+            }]);
+        });
+    }
+
+    generateCombinations(0, []);
+
+    // Sort combinations by total cost, then by delivery time
+    combinations.sort((a, b) => {
+        if (a.total_cost !== b.total_cost) {
+            return a.total_cost - b.total_cost;
+        }
+        return a.average_delivery_time - b.average_delivery_time;
+    });
+
+    // Return top 10 combinations
+    return combinations.slice(0, 10);
+};
+
+// Generate detailed comparative report
+const generateDetailedComparativeReport = async (tenderId, itemAnalysis, optimalCombinations) => {
+    try {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Comparative Analysis');
+
+        // Set up headers
+        worksheet.columns = [
+            { header: 'Item Name', key: 'item_name', width: 25 },
+            { header: 'Required Quantity', key: 'required_quantity', width: 15 },
+            { header: 'Specifications', key: 'specifications', width: 30 },
+            { header: 'Supplier Name', key: 'supplier_name', width: 25 },
+            { header: 'Contact Person', key: 'contact_person', width: 20 },
+            { header: 'Manufacturer/Brand', key: 'manufacturer_brand', width: 20 },
+            { header: 'Proposed Quantity', key: 'proposed_quantity', width: 15 },
+            { header: 'Unit Price (Rs)', key: 'unit_price', width: 15 },
+            { header: 'Total Cost (Rs)', key: 'total_cost', width: 15 },
+            { header: 'Unit', key: 'unit', width: 10 },
+            { header: 'Delivery Days', key: 'delivery_days', width: 15 },
+            { header: 'Ranking', key: 'ranking', width: 10 }
+        ];
+
+        // Style the header row
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE6F2FF' }
+        };
+
+        // Add data rows
+        let rowNumber = 2;
+        Object.keys(itemAnalysis).forEach(itemName => {
+            const item = itemAnalysis[itemName];
+            
+            item.suppliers.forEach((supplier, index) => {
+                worksheet.addRow({
+                    item_name: item.item_name,
+                    required_quantity: item.required_quantity,
+                    specifications: item.specifications || 'N/A',
+                    supplier_name: supplier.company_name,
+                    contact_person: supplier.contact_person || 'N/A',
+                    manufacturer_brand: supplier.manufacturer_brand || 'N/A',
+                    proposed_quantity: supplier.proposed_quantity,
+                    unit_price: supplier.unit_price,
+                    total_cost: supplier.total_cost,
+                    unit: supplier.unit,
+                    delivery_days: supplier.delivery_days,
+                    ranking: index + 1
+                });
+
+                // Highlight the best (lowest cost) option
+                if (index === 0) {
+                    worksheet.getRow(rowNumber).fill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFE6FFE6' }
+                    };
+                }
+                
+                rowNumber++;
+            });
+        });
+
+        // Auto-fit columns
+        worksheet.columns.forEach(column => {
+            column.width = Math.max(column.width, 10);
+        });
+
+        // Save the file
+        const reportsDir = path.join(__dirname, '../../financial-reports');
+        if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+        }
+
+        const fileName = `financial-comparative-analysis-tender-${tenderId}-${Date.now()}.xlsx`;
+        const filePath = path.join(reportsDir, fileName);
+        
+        await workbook.xlsx.writeFile(filePath);
+        
+        return filePath;
+    } catch (error) {
+        console.error('Error generating comparative report:', error);
+        throw error;
+    }
+};
+
+// Manually award tender after reviewing comparative analysis
+const awardTenderManually = async (req, res) => {
+    try {
+        const { tenderId } = req.params;
+        const { selectedBids, awardComments } = req.body; // Array of {bid_id, item_id}
+        const userId = req.user.id;
+        const db = getDatabase();
+
+        // Begin transaction
         await new Promise((resolve, reject) => {
             db.run('BEGIN TRANSACTION', (err) => {
                 if (err) reject(err);
@@ -397,177 +505,11 @@ const openFinancialBids = async (req, res) => {
         });
 
         try {
-            // Update financial opening status
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `UPDATE financial_openings SET 
-                     status = 'opened',
-                     opened_at = CURRENT_TIMESTAMP,
-                     opened_by = ?
-                     WHERE tender_id = ?`,
-                    [user.id, tenderId],
-                    (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    }
-                );
-            });
-
-            // Get tender details
-            const tender = await new Promise((resolve, reject) => {
-                db.get(
-                    `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by
-                     FROM demand_tenders dt
-                     JOIN demands d ON dt.demand_id = d.id
-                     WHERE dt.id = ?`,
-                    [tenderId],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
-
-            // Get demand items with detailed information
-            const items = await new Promise((resolve, reject) => {
-                db.all(
-                    `SELECT di.*, 
-                            ic.name as category_name,
-                            in_t.name as item_name_full,
-                            dc.name as drug_category_name,
-                            dn.name as drug_name,
-                            su.name as strength_unit_name,
-                            df.name as dosage_form_name,
-                            p.name as preparation_name,
-                            ec.name as equipment_category_name,
-                            et.name as equipment_type_name
-                     FROM demand_items di
-                     LEFT JOIN item_categories ic ON di.category_id = ic.id
-                     LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                     LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
-                     LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
-                     LEFT JOIN strength_units su ON di.strength_unit_id = su.id
-                     LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
-                     LEFT JOIN preparations p ON di.preparation_id = p.id
-                     LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
-                     LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
-                     WHERE di.demand_id = ? 
-                     AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
-                     AND (di.store_status != 'available' OR di.store_status IS NULL)
-                     ORDER BY di.id`,
-                    [tender.demand_id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
-
-            // Format items with detailed information
-            const formattedItems = items.map(item => {
-                const categoryName = item.category_name?.toLowerCase() || '';
-                const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
-                const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
-                
-                return {
-                    id: item.id,
-                    item_name: item.item_name || item.item_name_full || item.drug_name || item.equipment_type_name || 'Unknown Item',
-                    category: item.category_name || 'Unknown Category',
-                    quantity: item.quantity,
-                    unit: item.unit,
-                    specifications: item.specifications,
-                    estimated_cost: item.current_year_cost,
-                    item_type: isPharmaCategory ? 'pharmaceutical' : isEquipmentCategory ? 'equipment' : 'general',
-                    pharmaceutical_details: isPharmaCategory ? {
-                        drug_category: item.drug_category_name,
-                        drug_name: item.drug_name,
-                        strength: item.strength_value ? `${item.strength_value} ${item.strength_unit_name || ''}`.trim() : null,
-                        dosage_form: item.dosage_form_name,
-                        preparation: item.preparation_name
-                    } : null,
-                    equipment_details: isEquipmentCategory ? {
-                        equipment_category: item.equipment_category_name,
-                        equipment_type: item.equipment_type_name
-                    } : null
-                };
-            });
-
-            // If no items found (legacy single-item demand), create from main demand
-            const finalItems = formattedItems.length === 0 ? [{
-                id: 0,
-                item_name: tender.item_name,
-                category: 'General',
-                quantity: tender.quantity || 0,
-                estimated_cost: tender.estimated_cost || 0,
-                unit: 'pieces',
-                item_type: 'general'
-            }] : formattedItems;
-
-            // Get approved suppliers for each item from temporary pools
-            const itemSupplierCombinations = [];
-
-            for (const item of finalItems) {
-                const approvedSuppliers = await new Promise((resolve, reject) => {
-                    db.all(
-                        `SELECT DISTINCT 
-                            COALESCE(tap.supplier_id, ta.supplier_id) as supplier_id,
-                            COALESCE(tap.bid_id, ta.grievance_id) as bid_id,
-                            COALESCE(bp.business_name, s.username) as company_name, 
-                            s.business_email as company_email, 
-                            bp.contact_person_name as contact_person,
-                            sb.total_cost, sb.proposed_quantity, sb.delivery_days,
-                            sb.financial_bid_document, sb.technical_bid_document,
-                            sbi.unit_price, sbi.proposed_quantity as item_quantity, sbi.total_cost as item_total_cost,
-                            CASE WHEN tap.supplier_id IS NOT NULL THEN 'technical' ELSE 'grievance' END as approval_source
-                         FROM (
-                            SELECT supplier_id, bid_id FROM temporary_approved_pools WHERE tender_id = ? AND item_id = ?
-                            UNION
-                            SELECT supplier_id, grievance_id as bid_id FROM temporary_approvals WHERE tender_id = ? AND item_id = ? AND status = 'active'
-                         ) combined
-                         LEFT JOIN temporary_approved_pools tap ON combined.supplier_id = tap.supplier_id AND tap.tender_id = ? AND tap.item_id = ?
-                         LEFT JOIN temporary_approvals ta ON combined.supplier_id = ta.supplier_id AND ta.tender_id = ? AND ta.item_id = ? AND ta.status = 'active'
-                         JOIN suppliers s ON combined.supplier_id = s.id
-                         LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id
-                         JOIN supplier_bids sb ON combined.bid_id = sb.id
-                         LEFT JOIN supplier_bid_items sbi ON sb.id = sbi.bid_id AND sbi.item_id = ?
-                         ORDER BY 
-                            CASE 
-                                WHEN sbi.total_cost IS NOT NULL THEN sbi.total_cost 
-                                ELSE sb.total_cost 
-                            END ASC`,
-                        [tenderId, item.id, tenderId, item.id, tenderId, item.id, tenderId, item.id, item.id],
-                        (err, rows) => {
-                            if (err) reject(err);
-                            else resolve(rows);
-                        }
-                    );
-                });
-
-                itemSupplierCombinations.push({
-                    item: item,
-                    approved_suppliers: approvedSuppliers
-                });
-            }
-
-            // Generate optimal combinations
-            const optimalCombinations = generateOptimalCombinations(itemSupplierCombinations);
-
-            if (optimalCombinations.length === 0) {
-                throw new Error('No valid supplier combinations found');
-            }
-
-            // Automatically award to the best combination (lowest cost, best delivery time)
-            const winningCombination = optimalCombinations[0];
-            
             // Update tender status to awarded
             await new Promise((resolve, reject) => {
                 db.run(
-                    `UPDATE demand_tenders SET 
-                     tender_status = 'awarded', 
-                     awarded_at = CURRENT_TIMESTAMP,
-                     evaluation_remarks = ?
-                     WHERE id = ?`,
-                    ['Automatically awarded based on financial opening - best cost and delivery combination', tenderId],
+                    'UPDATE demand_tenders SET tender_status = ?, awarded_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    ['awarded', tenderId],
                     (err) => {
                         if (err) reject(err);
                         else resolve();
@@ -575,92 +517,89 @@ const openFinancialBids = async (req, res) => {
                 );
             });
 
-            // Create supply orders for each supplier in the winning combination
-            const supplyOrders = [];
-            const EmailService = require('../utils/emailService');
-            const pdfService = require('../utils/pdfService');
-            const emailService = new EmailService();
-
-            for (const supplierData of winningCombination.suppliers) {
-                const orderNumber = `SO-${Date.now()}-${tenderId}-${supplierData.supplier_id}`;
+            // Create supply orders for each selected bid
+            for (const selection of selectedBids) {
+                const { bid_id, item_id } = selection;
                 
-                // Create supply order
-                const supplyOrderResult = await new Promise((resolve, reject) => {
-                    db.run(
-                        `INSERT INTO supply_orders (
-                            order_number, demand_id, supplier_id, tender_id, bid_id,
-                            item_name, quantity, unit_price, total_amount, delivery_date, order_status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', '+' || ? || ' days'), 'pending')`,
-                        [
-                            orderNumber,
-                            tender.demand_id,
-                            supplierData.supplier_id,
-                            tenderId,
-                            supplierData.bid_id,
-                            supplierData.item_name,
-                            supplierData.item_quantity || supplierData.proposed_quantity,
-                            supplierData.unit_price || (supplierData.total_cost / supplierData.proposed_quantity),
-                            supplierData.item_total_cost || supplierData.total_cost,
-                            supplierData.delivery_days
-                        ],
-                        function(err) {
-                            if (err) reject(err);
-                            else resolve({ id: this.lastID });
-                        }
-                    );
+                // Get bid and item details
+                const bidDetails = await new Promise((resolve, reject) => {
+                    db.get(`
+                        SELECT 
+                            sb.supplier_id, sb.delivery_days,
+                            sbi.item_name, sbi.proposed_quantity, sbi.unit_price, sbi.total_cost,
+                            s.business_email,
+                            sbp.business_name,
+                            di.demand_id
+                        FROM supplier_bids sb
+                        JOIN supplier_bid_items sbi ON sb.id = sbi.bid_id
+                        JOIN suppliers s ON sb.supplier_id = s.id
+                        JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+                        JOIN demand_items di ON sbi.item_id = di.id
+                        WHERE sb.id = ? AND sbi.item_id = ?
+                    `, [bid_id, item_id], (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    });
                 });
 
-                const supplyOrderId = supplyOrderResult.id;
+                if (!bidDetails) {
+                    throw new Error(`Bid details not found for bid_id: ${bid_id}, item_id: ${item_id}`);
+                }
 
-                // Prepare order data for PDF and email
-                const orderData = {
-                    order_id: supplyOrderId,
-                    order_number: orderNumber,
-                    tender_id: tenderId,
-                    demand_id: tender.demand_id,
-                    item_name: supplierData.item_name,
-                    description: tender.description || 'No description',
-                    quantity: supplierData.item_quantity || supplierData.proposed_quantity,
-                    unit_price: supplierData.unit_price || (supplierData.total_cost / supplierData.proposed_quantity),
-                    awarded_bid_amount: supplierData.item_total_cost || supplierData.total_cost,
-                    delivery_time_days: supplierData.delivery_days,
-                    delivery_date: new Date(Date.now() + (supplierData.delivery_days * 24 * 60 * 60 * 1000)).toISOString().split('T')[0],
-                    order_status: 'pending',
-                    urgency: tender.urgency || 'normal',
-                    required_by: tender.required_by,
-                    company_name: supplierData.company_name,
-                    company_email: supplierData.company_email,
-                    bid_comments: '',
-                    order_date: new Date().toISOString()
-                };
+                // Generate order number
+                const orderNumber = `SO-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                
+                // Calculate delivery date
+                const deliveryDate = new Date();
+                deliveryDate.setDate(deliveryDate.getDate() + bidDetails.delivery_days);
 
-                supplyOrders.push({
-                    ...orderData,
-                    supplier_data: supplierData
+                // Insert supply order
+                await new Promise((resolve, reject) => {
+                    db.run(`
+                        INSERT INTO supply_orders 
+                        (order_number, demand_id, supplier_id, tender_id, bid_id, 
+                         item_name, quantity, unit_price, total_amount, delivery_date, order_status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                    `, [
+                        orderNumber,
+                        bidDetails.demand_id,
+                        bidDetails.supplier_id,
+                        tenderId,
+                        bid_id,
+                        bidDetails.item_name,
+                        bidDetails.proposed_quantity,
+                        bidDetails.unit_price,
+                        bidDetails.total_cost,
+                        deliveryDate.toISOString().split('T')[0]
+                    ], function(err) {
+                        if (err) reject(err);
+                        else resolve(this.lastID);
+                    });
                 });
 
-                // Generate PDF and send email notification (run in background)
+                // Send email notification to supplier
                 try {
-                    console.log(`Generating PDF for supply order ${orderNumber}...`);
-                    const pdfBuffer = await pdfService.generateSupplyOrderPDF(orderData);
+                    const orderData = {
+                        orderNumber: orderNumber,
+                        item_name: bidDetails.item_name,
+                        quantity: bidDetails.proposed_quantity,
+                        unit_price: bidDetails.unit_price,
+                        total_cost: bidDetails.total_cost,
+                        delivery_date: deliveryDate.toISOString().split('T')[0],
+                        tender_id: tenderId
+                    };
                     
-                    console.log(`Sending email to ${supplierData.company_email}...`);
                     await emailService.sendSupplyOrderEmail(
-                        supplierData.company_email,
-                        supplierData.company_name,
+                        bidDetails.business_email,
+                        bidDetails.business_name,
                         orderData,
-                        pdfBuffer
+                        null // No PDF buffer for now
                     );
-                    
-                    console.log(`PDF generated and email sent successfully for order ${orderNumber}`);
                 } catch (emailError) {
-                    console.error(`Failed to send PDF/email for order ${orderNumber}:`, emailError);
-                    // Don't fail the entire process if email fails
+                    console.error('Error sending supply order email:', emailError);
+                    // Don't fail the transaction for email errors
                 }
             }
-
-            // Generate Excel report
-            const reportFileName = await generateFinancialOpeningReport(db, tender, itemSupplierCombinations, optimalCombinations);
 
             // Commit transaction
             await new Promise((resolve, reject) => {
@@ -671,47 +610,34 @@ const openFinancialBids = async (req, res) => {
             });
 
             res.json({
-                message: 'Financial bids opened and tender automatically awarded successfully',
-                tender: tender,
-                items_with_suppliers: itemSupplierCombinations,
-                optimal_combinations: optimalCombinations,
-                winning_combination: winningCombination,
-                supply_orders: supplyOrders,
-                report_file: reportFileName,
-                opened_at: pakistanTime.toISOString(),
-                awarded: true
+                message: 'Tender awarded successfully',
+                orders_created: selectedBids.length,
+                awarded_at: new Date().toISOString()
             });
 
         } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
+            // Rollback transaction
+            await new Promise((resolve, reject) => {
+                db.run('ROLLBACK', (err) => {
+                    if (err) console.error('Rollback error:', err);
+                    resolve();
+                });
             });
             throw error;
         }
 
     } catch (error) {
-        console.error('Error opening financial bids:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        console.error('Error awarding tender:', error);
+        res.status(500).json({ error: 'Failed to award tender' });
     }
 };
 
 // Download financial bid document
 const downloadFinancialBid = async (req, res) => {
-    const db = getDatabase();
-    const { bidId } = req.params;
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canDownload = user.role === 'superadmin' || 
-                       (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canDownload) {
-        return res.status(403).json({ message: 'You do not have permission to download financial bid documents' });
-    }
-
     try {
-        // Get bid details
+        const { bidId } = req.params;
+        const db = getDatabase();
+
         const bid = await new Promise((resolve, reject) => {
             db.get(
                 'SELECT financial_bid_document FROM supplier_bids WHERE id = ?',
@@ -724,245 +650,28 @@ const downloadFinancialBid = async (req, res) => {
         });
 
         if (!bid || !bid.financial_bid_document) {
-            return res.status(404).json({ message: 'Financial bid document not found' });
+            return res.status(404).json({ error: 'Financial bid document not found' });
         }
 
-        // Construct file path - check if it's already a full path or just filename
-        let filePath = bid.financial_bid_document;
+        const filePath = path.join(__dirname, '../../uploads', bid.financial_bid_document);
         
-        // If we stored only filename, build absolute path inside uploads directory
-        if (!path.isAbsolute(filePath) && !filePath.includes('uploads')) {
-            filePath = path.join(__dirname, '../../uploads', filePath);
-        }
-
         if (!fs.existsSync(filePath)) {
-            console.error('File not found at path:', filePath);
-            return res.status(404).json({ message: 'Financial bid document file not found on server' });
+            return res.status(404).json({ error: 'File not found on server' });
         }
 
-        // Set headers for download
-        res.setHeader('Content-Disposition', `attachment; filename="financial-bid-${bidId}.pdf"`);
-        res.setHeader('Content-Type', 'application/pdf');
-        
-        // Send file
-        res.sendFile(path.resolve(filePath));
+        res.download(filePath, `financial-bid-${bidId}.pdf`);
     } catch (error) {
         console.error('Error downloading financial bid:', error);
-        res.status(500).json({ message: 'Failed to download financial bid document' });
-    }
-};
-
-// Generate optimal supplier combinations
-const generateOptimalCombinations = (itemSupplierCombinations) => {
-    const combinations = [];
-
-    // Generate all possible combinations (cartesian product)
-    const generateCombinations = (items, currentCombination = [], index = 0) => {
-        if (index === items.length) {
-            const totalCost = currentCombination.reduce((sum, supplier) => {
-                return sum + (supplier.item_total_cost || supplier.total_cost);
-            }, 0);
-            
-            const avgDeliveryTime = currentCombination.reduce((sum, supplier) => {
-                return sum + supplier.delivery_days;
-            }, 0) / currentCombination.length;
-
-            combinations.push({
-                suppliers: [...currentCombination],
-                total_cost: totalCost,
-                average_delivery_time: Math.round(avgDeliveryTime),
-                item_count: currentCombination.length
-            });
-            return;
-        }
-
-        const currentItem = items[index];
-        for (const supplier of currentItem.approved_suppliers) {
-            generateCombinations(items, [...currentCombination, {
-                ...supplier,
-                item_id: currentItem.item.id,
-                item_name: currentItem.item.item_name
-            }], index + 1);
-        }
-    };
-
-    generateCombinations(itemSupplierCombinations);
-
-    // Sort combinations by total cost (ascending) and delivery time (ascending)
-    combinations.sort((a, b) => {
-        if (a.total_cost === b.total_cost) {
-            return a.average_delivery_time - b.average_delivery_time;
-        }
-        return a.total_cost - b.total_cost;
-    });
-
-    // Return top 10 combinations
-    return combinations.slice(0, 10);
-};
-
-// Generate Excel report for financial opening
-const generateFinancialOpeningReport = async (db, tender, itemSupplierCombinations, optimalCombinations) => {
-    try {
-        const workbook = new ExcelJS.Workbook();
-        
-        // Sheet 1: Summary
-        const summarySheet = workbook.addWorksheet('Financial Opening Summary');
-        summarySheet.properties.defaultRowHeight = 20;
-
-        // Title
-        summarySheet.mergeCells('A1:F1');
-        const titleCell = summarySheet.getCell('A1');
-        titleCell.value = `Financial Opening Report - Tender ID: ${tender.id}`;
-        titleCell.font = { bold: true, size: 16 };
-        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
-
-        // Tender info
-        summarySheet.getCell('A3').value = 'Tender Description:';
-        summarySheet.getCell('A3').font = { bold: true };
-        summarySheet.getCell('B3').value = tender.description || tender.item_name;
-
-        summarySheet.getCell('A4').value = 'Financial Opening Date:';
-        summarySheet.getCell('A4').font = { bold: true };
-        summarySheet.getCell('B4').value = new Date().toLocaleDateString();
-
-        // Sheet 2: Item-wise Suppliers
-        const itemSheet = workbook.addWorksheet('Item-wise Suppliers');
-        
-        let currentRow = 1;
-        const headers = ['Item Name', 'Supplier Name', 'Contact', 'Unit Price', 'Total Cost', 'Delivery Days'];
-        headers.forEach((header, index) => {
-            const cell = itemSheet.getCell(currentRow, index + 1);
-            cell.value = header;
-            cell.font = { bold: true };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD0D0D0' } };
-        });
-        currentRow++;
-
-        for (const itemCombo of itemSupplierCombinations) {
-            for (const supplier of itemCombo.approved_suppliers) {
-                itemSheet.getCell(currentRow, 1).value = itemCombo.item.item_name;
-                itemSheet.getCell(currentRow, 2).value = supplier.company_name;
-                itemSheet.getCell(currentRow, 3).value = supplier.company_email;
-                itemSheet.getCell(currentRow, 4).value = supplier.unit_price ? `Rs ${supplier.unit_price.toLocaleString()}` : 'N/A';
-                itemSheet.getCell(currentRow, 5).value = `Rs ${(supplier.item_total_cost || supplier.total_cost).toLocaleString()}`;
-                itemSheet.getCell(currentRow, 6).value = `${supplier.delivery_days} days`;
-                currentRow++;
-            }
-        }
-
-        // Sheet 3: Optimal Combinations
-        const comboSheet = workbook.addWorksheet('Optimal Combinations');
-        
-        currentRow = 1;
-        const comboHeaders = ['Rank', 'Supplier Combination', 'Total Cost', 'Avg Delivery Time'];
-        comboHeaders.forEach((header, index) => {
-            const cell = comboSheet.getCell(currentRow, index + 1);
-            cell.value = header;
-            cell.font = { bold: true };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD0D0D0' } };
-        });
-        currentRow++;
-
-        optimalCombinations.forEach((combo, index) => {
-            const supplierNames = combo.suppliers.map(s => `${s.item_name}: ${s.company_name}`).join('; ');
-            
-            comboSheet.getCell(currentRow, 1).value = index + 1;
-            comboSheet.getCell(currentRow, 2).value = supplierNames;
-            comboSheet.getCell(currentRow, 3).value = `Rs ${combo.total_cost.toLocaleString()}`;
-            comboSheet.getCell(currentRow, 4).value = `${combo.average_delivery_time} days`;
-            
-            // Highlight top 3 combinations
-            if (index < 3) {
-                for (let col = 1; col <= 4; col++) {
-                    comboSheet.getCell(currentRow, col).fill = {
-                        type: 'pattern',
-                        pattern: 'solid',
-                        fgColor: { argb: index === 0 ? 'FFD4FFDD' : index === 1 ? 'FFFFD4D4' : 'FFFFD4FF' }
-                    };
-                }
-            }
-            
-            currentRow++;
-        });
-
-        // Set column widths
-        [summarySheet, itemSheet, comboSheet].forEach(sheet => {
-            sheet.columns.forEach(column => {
-                column.width = 20;
-            });
-        });
-
-        // Save file
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const fileName = `Financial_Opening_Report_${tender.id}_${timestamp}.xlsx`;
-        const filePath = path.join(__dirname, '../../reports', fileName);
-
-        // Ensure reports directory exists
-        const reportsDir = path.join(__dirname, '../../reports');
-        if (!fs.existsSync(reportsDir)) {
-            fs.mkdirSync(reportsDir, { recursive: true });
-        }
-
-        await workbook.xlsx.writeFile(filePath);
-        
-        console.log(`Financial opening report generated: ${fileName}`);
-        return fileName;
-
-    } catch (error) {
-        console.error('Error generating financial opening report:', error);
-        throw error;
-    }
-};
-
-// Download financial opening report
-const downloadFinancialOpeningReport = async (req, res) => {
-    const { fileName } = req.params;
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canDownload = user.role === 'superadmin' || 
-                       (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canDownload) {
-        return res.status(403).json({ message: 'You do not have permission to download financial opening reports' });
-    }
-
-    try {
-        const filePath = path.join(__dirname, '../../reports', fileName);
-        
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ message: 'Report file not found' });
-        }
-
-        // Set headers for download
-        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        
-        // Send file
-        res.sendFile(path.resolve(filePath));
-    } catch (error) {
-        console.error('Error downloading financial opening report:', error);
-        res.status(500).json({ message: 'Failed to download financial opening report' });
+        res.status(500).json({ error: 'Failed to download financial bid' });
     }
 };
 
 // Download bid CDR document
 const downloadBidCdrDocument = async (req, res) => {
-    const db = getDatabase();
-    const { bidId } = req.params;
-    const user = req.user;
-
-    // Check if user is from purchase department
-    const canDownload = user.role === 'superadmin' || 
-                       (user.department_name && user.department_name.toLowerCase() === 'purchase');
-
-    if (!canDownload) {
-        return res.status(403).json({ message: 'You do not have permission to download bid CDR documents' });
-    }
-
     try {
-        // Get bid details
+        const { bidId } = req.params;
+        const db = getDatabase();
+
         const bid = await new Promise((resolve, reject) => {
             db.get(
                 'SELECT bid_cdr_document FROM supplier_bids WHERE id = ?',
@@ -975,54 +684,272 @@ const downloadBidCdrDocument = async (req, res) => {
         });
 
         if (!bid || !bid.bid_cdr_document) {
-            return res.status(404).json({ message: 'Bid CDR document not found' });
+            return res.status(404).json({ error: 'Bid CDR document not found' });
         }
 
-        // Construct file path - check if it's already a full path or just filename
-        let filePath = bid.bid_cdr_document;
+        const filePath = path.join(__dirname, '../../uploads', bid.bid_cdr_document);
         
-        // If we stored only filename, build absolute path inside uploads directory
-        if (!path.isAbsolute(filePath) && !filePath.includes('uploads')) {
-            filePath = path.join(__dirname, '../../uploads', filePath);
-        }
-
         if (!fs.existsSync(filePath)) {
-            console.error('File not found at path:', filePath);
-            return res.status(404).json({ message: 'Bid CDR document file not found on server' });
+            return res.status(404).json({ error: 'File not found on server' });
         }
 
-        // Get file extension to set proper content type
-        const fileExt = path.extname(filePath).toLowerCase();
-        let contentType = 'application/octet-stream';
-        
-        switch (fileExt) {
-            case '.pdf':
-                contentType = 'application/pdf';
-                break;
-            case '.doc':
-                contentType = 'application/msword';
-                break;
-            case '.docx':
-                contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-                break;
-            case '.jpg':
-            case '.jpeg':
-                contentType = 'image/jpeg';
-                break;
-            case '.png':
-                contentType = 'image/png';
-                break;
-        }
-
-        // Set headers for download
-        res.setHeader('Content-Disposition', `attachment; filename="bid-cdr-${bidId}${fileExt}"`);
-        res.setHeader('Content-Type', contentType);
-        
-        // Send file
-        res.sendFile(path.resolve(filePath));
+        res.download(filePath, `bid-cdr-${bidId}.pdf`);
     } catch (error) {
         console.error('Error downloading bid CDR document:', error);
-        res.status(500).json({ message: 'Failed to download bid CDR document' });
+        res.status(500).json({ error: 'Failed to download bid CDR document' });
+    }
+};
+
+// Download financial opening report
+const downloadFinancialOpeningReport = async (req, res) => {
+    try {
+        const { fileName } = req.params;
+        const filePath = path.join(__dirname, '../../financial-reports', fileName);
+        
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'Report file not found' });
+        }
+
+        res.download(filePath, fileName);
+    } catch (error) {
+        console.error('Error downloading financial opening report:', error);
+        res.status(500).json({ error: 'Failed to download report' });
+    }
+};
+
+// Generate enhanced comparative report with multiple tabs
+const generateEnhancedComparativeReport = async (tenderId, itemAnalysis, optimalCombinations) => {
+    try {
+        const workbook = new ExcelJS.Workbook();
+        
+        // === TAB 1: Optimal Combinations ===
+        const optimalSheet = workbook.addWorksheet('Optimal Combinations');
+        
+        // Headers for optimal combinations
+        optimalSheet.columns = [
+            { header: 'Rank', key: 'rank', width: 8 },
+            { header: 'Total Cost (Rs)', key: 'total_cost', width: 15 },
+            { header: 'Avg Delivery (Days)', key: 'avg_delivery', width: 18 },
+            { header: 'Items Count', key: 'items_count', width: 12 },
+            { header: 'Supplier Details', key: 'supplier_details', width: 80 }
+        ];
+        
+        // Style the header
+        optimalSheet.getRow(1).font = { bold: true };
+        optimalSheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFD700' }
+        };
+        
+        // Add optimal combinations data
+        optimalCombinations.forEach((combo, index) => {
+            const supplierDetails = combo.suppliers.map(s => 
+                `${s.item_name}: ${s.company_name} (Rs ${s.total_cost.toLocaleString()}, ${s.delivery_days} days)`
+            ).join(' | ');
+            
+            const row = optimalSheet.addRow({
+                rank: index + 1,
+                total_cost: combo.total_cost,
+                avg_delivery: combo.average_delivery_time,
+                items_count: combo.items_count,
+                supplier_details: supplierDetails
+            });
+            
+            // Highlight the best combination
+            if (index === 0) {
+                row.fill = {
+                    type: 'pattern',
+                    pattern: 'solid',
+                    fgColor: { argb: 'FFFFE4B5' }
+                };
+                row.font = { bold: true };
+            }
+        });
+
+        // === TAB 2: Comparative Analysis ===
+        const comparativeSheet = workbook.addWorksheet('Comparative Analysis');
+
+        // Set up headers for comparative analysis
+        comparativeSheet.columns = [
+            { header: 'Item Name', key: 'item_name', width: 25 },
+            { header: 'Required Quantity', key: 'required_quantity', width: 15 },
+            { header: 'Specifications', key: 'specifications', width: 35 },
+            { header: 'Supplier Name', key: 'supplier_name', width: 25 },
+            { header: 'Contact Person', key: 'contact_person', width: 20 },
+            { header: 'Manufacturer/Brand', key: 'manufacturer_brand', width: 20 },
+            { header: 'Proposed Quantity', key: 'proposed_quantity', width: 15 },
+            { header: 'Unit Price (Rs)', key: 'unit_price', width: 15 },
+            { header: 'Total Cost (Rs)', key: 'total_cost', width: 15 },
+            { header: 'Unit', key: 'unit', width: 10 },
+            { header: 'Delivery Days', key: 'delivery_days', width: 15 },
+            { header: 'Ranking', key: 'ranking', width: 10 }
+        ];
+
+        // Style the header row
+        comparativeSheet.getRow(1).font = { bold: true };
+        comparativeSheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE6F2FF' }
+        };
+
+        // Add comparative analysis data
+        Object.keys(itemAnalysis).forEach(itemName => {
+            const item = itemAnalysis[itemName];
+            
+            item.suppliers.forEach((supplier, index) => {
+                const row = comparativeSheet.addRow({
+                    item_name: item.item_name,
+                    required_quantity: item.required_quantity,
+                    specifications: item.specifications || 'N/A',
+                    supplier_name: supplier.company_name,
+                    contact_person: supplier.contact_person || 'N/A',
+                    manufacturer_brand: supplier.manufacturer_brand || 'N/A',
+                    proposed_quantity: supplier.proposed_quantity,
+                    unit_price: supplier.unit_price,
+                    total_cost: supplier.total_cost,
+                    unit: supplier.unit,
+                    delivery_days: supplier.delivery_days,
+                    ranking: index + 1
+                });
+
+                // Highlight lowest bid for each item
+                if (index === 0) {
+                    row.fill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFE6FFE6' }
+                    };
+                    row.font = { bold: true };
+                }
+            });
+        });
+
+        // === TAB 3: Item-wise Summary ===
+        const summarySheet = workbook.addWorksheet('Item-wise Summary');
+        
+        summarySheet.columns = [
+            { header: 'Item Name', key: 'item_name', width: 30 },
+            { header: 'Required Qty', key: 'required_quantity', width: 12 },
+            { header: 'Specifications', key: 'specifications', width: 40 },
+            { header: 'Total Suppliers', key: 'total_suppliers', width: 15 },
+            { header: 'Lowest Bid Company', key: 'lowest_company', width: 25 },
+            { header: 'Lowest Unit Price', key: 'lowest_unit_price', width: 15 },
+            { header: 'Lowest Total Cost', key: 'lowest_total_cost', width: 15 },
+            { header: 'Highest Bid Company', key: 'highest_company', width: 25 },
+            { header: 'Highest Unit Price', key: 'highest_unit_price', width: 15 },
+            { header: 'Price Difference', key: 'price_difference', width: 15 }
+        ];
+        
+        // Style the header row
+        summarySheet.getRow(1).font = { bold: true };
+        summarySheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFE4E1' }
+        };
+        
+        // Add summary data
+        Object.keys(itemAnalysis).forEach(itemName => {
+            const item = itemAnalysis[itemName];
+            const suppliers = item.suppliers;
+            const lowest = suppliers[0];
+            const highest = suppliers[suppliers.length - 1];
+            
+            summarySheet.addRow({
+                item_name: item.item_name,
+                required_quantity: item.required_quantity,
+                specifications: item.specifications || 'N/A',
+                total_suppliers: suppliers.length,
+                lowest_company: lowest.company_name,
+                lowest_unit_price: lowest.unit_price,
+                lowest_total_cost: lowest.total_cost,
+                highest_company: highest.company_name,
+                highest_unit_price: highest.unit_price,
+                price_difference: highest.unit_price - lowest.unit_price
+            });
+        });
+
+        // === TAB 4: Supplier Details ===
+        const supplierSheet = workbook.addWorksheet('Supplier Details');
+        
+        supplierSheet.columns = [
+            { header: 'Company Name', key: 'company_name', width: 30 },
+            { header: 'Contact Person', key: 'contact_person', width: 20 },
+            { header: 'Email', key: 'email', width: 30 },
+            { header: 'Items Bid', key: 'items_bid', width: 15 },
+            { header: 'Total Bid Value', key: 'total_bid_value', width: 18 },
+            { header: 'Avg Unit Price', key: 'avg_unit_price', width: 15 },
+            { header: 'Avg Delivery Days', key: 'avg_delivery', width: 18 },
+            { header: 'Items List', key: 'items_list', width: 50 }
+        ];
+        
+        // Style the header row
+        supplierSheet.getRow(1).font = { bold: true };
+        supplierSheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFE4B5' }
+        };
+        
+        // Aggregate supplier data
+        const supplierData = {};
+        Object.keys(itemAnalysis).forEach(itemName => {
+            const item = itemAnalysis[itemName];
+            item.suppliers.forEach(supplier => {
+                if (!supplierData[supplier.company_name]) {
+                    supplierData[supplier.company_name] = {
+                        company_name: supplier.company_name,
+                        contact_person: supplier.contact_person,
+                        email: supplier.email,
+                        items: [],
+                        total_value: 0,
+                        total_delivery_days: 0,
+                        unit_prices: []
+                    };
+                }
+                
+                supplierData[supplier.company_name].items.push(itemName);
+                supplierData[supplier.company_name].total_value += supplier.total_cost;
+                supplierData[supplier.company_name].total_delivery_days += supplier.delivery_days;
+                supplierData[supplier.company_name].unit_prices.push(supplier.unit_price);
+            });
+        });
+        
+        // Add supplier summary data
+        Object.values(supplierData).forEach(supplier => {
+            const avgUnitPrice = supplier.unit_prices.reduce((sum, price) => sum + price, 0) / supplier.unit_prices.length;
+            const avgDelivery = supplier.total_delivery_days / supplier.items.length;
+            
+            supplierSheet.addRow({
+                company_name: supplier.company_name,
+                contact_person: supplier.contact_person || 'N/A',
+                email: supplier.email,
+                items_bid: supplier.items.length,
+                total_bid_value: supplier.total_value,
+                avg_unit_price: Math.round(avgUnitPrice),
+                avg_delivery: Math.round(avgDelivery),
+                items_list: supplier.items.join(', ')
+            });
+        });
+
+        // Save the workbook
+        const filename = `financial-opening-report-${tenderId}-${Date.now()}.xlsx`;
+        const filePath = path.join(__dirname, '../../financial-reports', filename);
+        
+        // Ensure directory exists
+        const reportsDir = path.dirname(filePath);
+        if (!fs.existsSync(reportsDir)) {
+            fs.mkdirSync(reportsDir, { recursive: true });
+        }
+
+        await workbook.xlsx.writeFile(filePath);
+        return filePath;
+
+    } catch (error) {
+        console.error('Error generating enhanced comparative report:', error);
+        throw error;
     }
 };
 
@@ -1031,6 +958,7 @@ module.exports = {
     scheduleFinancialOpening,
     getScheduledFinancialOpenings,
     openFinancialBids,
+    awardTenderManually,
     downloadFinancialBid,
     downloadBidCdrDocument,
     downloadFinancialOpeningReport

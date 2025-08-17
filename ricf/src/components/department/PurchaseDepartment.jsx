@@ -4,6 +4,8 @@ import { toast } from 'react-toastify';
 import api, { apiUrl } from '../../config/api';
 import { generateDemandReport } from '../../utils/excelReportGenerator';
 import TenderCreationWizard from '../purchase/TenderCreationWizard';
+import PreBidMeetingManagement from '../purchase/PreBidMeetingManagement';
+import LetterManagement from '../purchase/LetterManagement';
 
 const PurchaseDepartment = () => {
     const navigate = useNavigate();
@@ -887,7 +889,8 @@ const PurchaseDepartment = () => {
                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
                             >
-                                Supply Orders
+                                <i className="fas fa-envelope mr-1"></i>
+                                Letters
                                 {supplyOrders.length > 0 && (
                                     <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                                         {supplyOrders.length}
@@ -935,6 +938,16 @@ const PurchaseDepartment = () => {
                                         {pendingGrievances.length}
                                     </span>
                                 )}
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('pre-bid-meetings')}
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'pre-bid-meetings'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                <i className="fas fa-calendar-alt mr-1"></i>
+                                Pre-Bid Meetings
                             </button>
                         </nav>
                     </div>                    {/* Tab Content */}
@@ -1189,126 +1202,7 @@ const PurchaseDepartment = () => {
                     )}
 
                     {activeTab === 'supply-orders' && (
-                        <div className="bg-white shadow overflow-hidden sm:rounded-md">
-                            <div className="px-4 py-5 sm:p-6">
-                                <h2 className="text-lg font-medium text-gray-900 mb-4">Supply Orders</h2>
-
-                                {supplyOrders.length === 0 ? (
-                                    <div className="text-center py-12">
-                                        <div className="text-gray-500">No supply orders available at this time.</div>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-6">
-                                        {supplyOrders.map((tender) => (
-                                            <div key={tender.tender_id} className="border border-gray-200 rounded-lg p-6">
-                                                <div className="flex justify-between items-start mb-4">
-                                                    <div>
-                                                        <h3 className="text-lg font-semibold text-gray-900">
-                                                            {getTenderDisplayName(tender)}
-                                                        </h3>
-                                                        <p className="text-sm text-gray-600 mt-1">
-                                                            {tender.description || tender.item_name}
-                                                        </p>
-                                                        <div className="mt-1 text-sm text-gray-600">
-                                                            <span>Total Quantity: {tender.total_quantity}</span>
-                                                            <span className="mx-2">•</span>
-                                                            <span>Fulfilled: {tender.total_fulfilled_quantity} ({tender.fulfillment_percentage}%)</span>
-                                                            <span className="mx-2">•</span>
-                                                            <span>Total Cost: Rs {tender.total_cost}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex items-center">
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${tender.fulfillment_percentage === 100
-                                                                ? 'bg-green-100 text-green-800'
-                                                                : 'bg-yellow-100 text-yellow-800'
-                                                            }`}>
-                                                            {tender.fulfillment_percentage === 100 ? 'Fully Fulfilled' : 'Partially Fulfilled'}
-                                                        </span>
-                                                    </div>
-                                                </div>
-
-                                                <div className="overflow-x-auto">
-                                                    <table className="min-w-full divide-y divide-gray-200">
-                                                        <thead className="bg-gray-50">
-                                                            <tr>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Order ID
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Supplier
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Quantity
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Unit Price
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Total Cost
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Delivery Date
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Status
-                                                                </th>
-                                                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                                    Actions
-                                                                </th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="bg-white divide-y divide-gray-200">
-                                                            {tender.orders.map((order) => (
-                                                                <tr key={order.id} className="hover:bg-gray-50">
-                                                                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                                                                        #{order.id}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap">
-                                                                        <div className="text-sm font-medium text-gray-900">
-                                                                            {order.supplier_name}
-                                                                        </div>
-                                                                        <div className="text-sm text-gray-500">
-                                                                            {order.supplier_email}
-                                                                        </div>
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                                                        {order.quantity}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                                                        Rs {order.unit_price}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                                                        Rs {order.total_cost}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                                                        {new Date(order.expected_delivery_date).toLocaleDateString()}
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap">
-                                                                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                                                            {order.status}
-                                                                        </span>
-                                                                    </td>
-                                                                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
-                                                                        <button
-                                                                            onClick={() => downloadSupplyOrderPDF(order.id, tender.item_name, order.supplier_name)}
-                                                                            className="text-indigo-600 hover:text-indigo-900 flex items-center"
-                                                                        >
-                                                                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                                                            </svg>
-                                                                            Download PDF
-                                                                        </button>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>)}
-                            </div>
-                        </div>
+                        <LetterManagement />
                     )}
 
                     {/* Financial Opening Tab */}
@@ -1687,6 +1581,11 @@ const PurchaseDepartment = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Pre-Bid Meetings Tab */}
+            {activeTab === 'pre-bid-meetings' && (
+                <PreBidMeetingManagement />
             )}
 
             {/* Evaluation Modal */}
@@ -2076,7 +1975,7 @@ const PurchaseDepartment = () => {
                         <div className="mb-6">
                             <h4 className="text-lg font-medium text-gray-900 mb-4">
                                 <i className="fas fa-trophy mr-2 text-yellow-500"></i>
-                                Top Optimal Supplier Combinations
+                                Top Optimal Supplier Combinations ({financialOpeningData.optimal_combinations?.length || 0} total)
                             </h4>
                             <div className="space-y-3">
                                 {financialOpeningData.optimal_combinations?.slice(0, 5).map((combo, index) => (
@@ -2102,16 +2001,37 @@ const PurchaseDepartment = () => {
                                                     <span className="ml-4 text-sm text-gray-600">
                                                         Avg Delivery: {combo.average_delivery_time} days
                                                     </span>
+                                                    <span className="ml-4 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                        {combo.items_count || combo.suppliers?.length || 0} items
+                                                    </span>
                                                 </div>
-                                                <div className="text-sm text-gray-700">
-                                                    {combo.suppliers.map(supplier =>
-                                                        `${supplier.item_name}: ${supplier.company_name}`
-                                                    ).join(' | ')}
+                                                <div className="text-sm text-gray-700 mb-2">
+                                                    <strong>Companies in this combination:</strong>
+                                                </div>
+                                                <div className="grid grid-cols-1 gap-2">
+                                                    {combo.suppliers?.map((supplier, supplierIndex) => (
+                                                        <div key={supplierIndex} className="flex justify-between items-center bg-white p-2 rounded border">
+                                                            <div className="flex-1">
+                                                                <span className="font-medium text-gray-900">{supplier.item_name}</span>
+                                                                <span className="mx-2 text-gray-500">→</span>
+                                                                <span className="text-blue-600">{supplier.company_name}</span>
+                                                            </div>
+                                                            <div className="text-right text-sm">
+                                                                <div className="font-medium">Rs {supplier.total_cost?.toLocaleString()}</div>
+                                                                <div className="text-gray-500">{supplier.delivery_days} days</div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 ))}
+                                {financialOpeningData.optimal_combinations?.length > 5 && (
+                                    <div className="text-center text-sm text-gray-500 py-2">
+                                        ... and {financialOpeningData.optimal_combinations.length - 5} more combinations available in Excel report
+                                    </div>
+                                )}
                             </div>
                         </div>
 

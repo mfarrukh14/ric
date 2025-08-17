@@ -95,14 +95,12 @@ const GrievanceCommitteeNew = () => {
 
         if (!hasMeeting) {
             return [
-                { key: 'view', label: 'View Details', icon: Eye, color: 'blue' },
-                { key: 'schedule', label: 'Schedule Meeting', icon: Calendar, color: 'green' }
+                { key: 'view', label: 'View Details', icon: Eye, color: 'blue' }
             ];
         } else if (!meetingPassed) {
             return [
                 { key: 'view', label: 'View Details', icon: Eye, color: 'blue' },
-                { key: 'meeting', label: 'View Meeting Details', icon: Clock, color: 'orange' },
-                { key: 'reschedule', label: 'Reschedule Meeting', icon: Calendar, color: 'blue' }
+                { key: 'meeting', label: 'View Meeting Details', icon: Clock, color: 'orange' }
             ];
         } else {
             // Only show approve/reject if minutes of meeting are uploaded
@@ -241,7 +239,7 @@ const GrievanceCommitteeNew = () => {
             return;
         }
 
-        const pendingGrievances = grievances.filter(g => g.status === 'submitted');
+        const pendingGrievances = grievances.filter(g => g.status === 'pending');
         
         if (pendingGrievances.length === 0) {
             alert('No pending grievances to schedule meetings for');
@@ -433,7 +431,7 @@ const GrievanceCommitteeNew = () => {
                         <p className="mt-2 text-gray-600">Review and manage supplier grievance applications</p>
                     </div>
                     <div>
-                        {grievances.filter(g => g.status === 'submitted').length > 0 && (
+                        {grievances.filter(g => g.status === 'pending').length > 0 && (
                             <button
                                 onClick={() => {
                                     setMeetingForm({ date: '', time: '', location: '', details: '', grievanceLetter: null });
@@ -736,7 +734,7 @@ const GrievanceCommitteeNew = () => {
                         <div className="mb-4 p-3 bg-blue-50 rounded-md">
                             <p className="text-sm text-blue-800">
                                 This will schedule a meeting and send notifications to all suppliers with pending grievances 
-                                ({grievances.filter(g => g.status === 'submitted').length} suppliers).
+                                ({grievances.filter(g => g.status === 'pending').length} suppliers).
                             </p>
                         </div>
                         <div className="space-y-4">

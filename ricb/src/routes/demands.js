@@ -44,7 +44,8 @@ const {
     getTendersPendingOpening,
     getTenderOpeningDetails,
     generateTenderOpeningReport,
-    openTender
+    openTender,
+    getPublishedTenders
 } = require('../controllers/tenderController');
 
 // Create tender documents directory if it doesn't exist
@@ -314,6 +315,9 @@ router.get('/:demandId/tender/exists', auth, async (req, res) => {
 
 // Get tender with evaluation criteria (for suppliers)
 router.get('/tenders/:tenderId/details', auth, getTenderWithCriteria);
+
+// Get published tenders for pre-bid meeting scheduling
+router.get('/tenders/published', auth, getPublishedTenders);
 
 // Acknowledge evaluation criteria (for suppliers)
 router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);

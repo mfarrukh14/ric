@@ -393,23 +393,108 @@ const updateGrievanceStatus = async (req, res) => {
     }
 
     try {
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE grievance_applications SET 
-                 status = ?,
-                 resolution = ?,
-                 reviewed_by = ?,
-                 reviewed_at = CURRENT_TIMESTAMP
-                 WHERE id = ?`,
-                [status, resolution || '', user.id, grievanceId],
-                (err) => {
+        // Get grievance details first
+        const grievance = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM grievance_applications WHERE id = ?',
+                [grievanceId],
+                (err, row) => {
                     if (err) reject(err);
-                    else resolve();
+                    else resolve(row);
                 }
             );
         });
 
-        res.json({ message: 'Grievance status updated successfully' });
+        if (!grievance) {
+            return res.status(404).json({ message: 'Grievance not found' });
+        }
+
+        // Begin transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Update grievance status
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `UPDATE grievance_applications SET 
+                     status = ?,
+                     resolution = ?,
+                     reviewed_by = ?,
+                     reviewed_at = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
+                    [status, resolution || '', user.id, grievanceId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // If grievance is resolved as approved, update corresponding technical evaluation
+            if (status === 'resolved' && resolution && 
+                (resolution.toLowerCase().includes('approved') || 
+                 resolution.toLowerCase().includes('favor') ||
+                 resolution.toLowerCase().includes('accepted'))) {
+                
+                console.log(`Grievance ${grievanceId} approved - updating technical evaluation for supplier ${grievance.supplier_id}, tender ${grievance.tender_id}, item ${grievance.item_id}`);
+                
+                // Update the specific technical evaluation related to this grievance
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE technical_evaluations SET 
+                         status = 'approved',
+                         evaluation_status = 'approved'
+                         WHERE id = ?`,
+                        [grievance.technical_evaluation_id],
+                        function(err) {
+                            if (err) {
+                                console.error('Error updating technical evaluation:', err);
+                                reject(err);
+                            } else {
+                                console.log(`Technical evaluation ${grievance.technical_evaluation_id} updated to approved (${this.changes} rows affected)`);
+                                resolve();
+                            }
+                        }
+                    );
+                });
+
+                console.log(`Technical evaluation updated to approved for grievance ${grievanceId}`);
+            } else if (status === 'resolved' && resolution && 
+                      (resolution.toLowerCase().includes('rejected') || 
+                       resolution.toLowerCase().includes('denied') ||
+                       resolution.toLowerCase().includes('dismissed'))) {
+                
+                console.log(`Grievance ${grievanceId} rejected - keeping technical evaluation as rejected`);
+            }
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            res.json({ 
+                message: 'Grievance status updated successfully',
+                technicalEvaluationUpdated: status === 'resolved' && resolution && 
+                    (resolution.toLowerCase().includes('approved') || 
+                     resolution.toLowerCase().includes('favor') ||
+                     resolution.toLowerCase().includes('accepted'))
+            });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve) => {
+                db.run('ROLLBACK', () => resolve());
+            });
+            throw error;
+        }
 
     } catch (error) {
         console.error('Error updating grievance status:', error);
@@ -746,9 +831,11 @@ const scheduleBulkGrievanceMeeting = async (req, res) => {
     const { meetingDate, meetingTime, meetingLocation, meetingDetails } = req.body;
 
     // Check if user is from grievance committee
+    console.log('User role:', user.role, 'Committee:', user.committee_name);
     const canSchedule = user.role === 'superadmin' || 
                        (user.committee_name && user.committee_name.toLowerCase().includes('grievance'));
 
+    console.log('Can schedule meetings:', canSchedule);
     if (!canSchedule) {
         return res.status(403).json({ message: 'Only Grievance Committee members can schedule meetings' });
     }
@@ -759,6 +846,7 @@ const scheduleBulkGrievanceMeeting = async (req, res) => {
 
     try {
         // Get all pending grievances with supplier info
+        console.log('Fetching pending grievances...');
         const pendingGrievances = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT ga.*, sbp.business_name as company_name, s.business_email as company_email, 
@@ -769,16 +857,22 @@ const scheduleBulkGrievanceMeeting = async (req, res) => {
                  LEFT JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
                  JOIN demand_items di ON ga.item_id = di.id
                  JOIN technical_evaluations te ON ga.technical_evaluation_id = te.id
-                 WHERE ga.status = 'submitted'
+                 WHERE ga.status = 'pending'
                  ORDER BY ga.submitted_at ASC`,
                 [],
                 (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
+                    if (err) {
+                        console.error('Database query error:', err);
+                        reject(err);
+                    } else {
+                        console.log('Query returned rows:', rows.length);
+                        resolve(rows);
+                    }
                 }
             );
         });
 
+        console.log('Pending grievances found:', pendingGrievances.length);
         if (pendingGrievances.length === 0) {
             return res.status(400).json({ message: 'No pending grievances found to schedule meetings for' });
         }

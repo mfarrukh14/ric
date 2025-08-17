@@ -1214,6 +1214,52 @@ const openTender = async (req, res) => {
     }
 };
 
+// Get published tenders that can have pre-bid meetings scheduled
+const getPublishedTenders = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to view published tenders' });
+    }
+
+    try {
+        const publishedTenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
+                        u.name as created_by_name, dept.name as creator_department,
+                        pbm.id as meeting_id, pbm.status as meeting_status,
+                        pbm.meeting_date, pbm.meeting_time
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 LEFT JOIN users u ON d.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 LEFT JOIN pre_bid_meetings pbm ON dt.id = pbm.tender_id
+                 WHERE dt.tender_status = 'active'
+                 ORDER BY dt.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json({
+            message: 'Published tenders retrieved successfully',
+            tenders: publishedTenders
+        });
+
+    } catch (error) {
+        console.error('Error fetching published tenders:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
 module.exports = {
     processExpiredTenders,
     getAwardedTenders,
@@ -1227,5 +1273,6 @@ module.exports = {
     createTenderWithCriteria,
     getTenderWithCriteria,
     acknowledgeCriteria,
-    addTenderCriteria
+    addTenderCriteria,
+    getPublishedTenders
 };

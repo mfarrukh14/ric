@@ -2313,6 +2313,384 @@ class EmailService {
 </html>
         `;
     }
+
+    // Pre-bid meeting notification email
+    async sendPreBidMeetingNotification(supplierEmail, companyName, contactPerson, meetingDetails) {
+        const htmlContent = this.generatePreBidMeetingHTML(companyName, contactPerson, meetingDetails);
+
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `Pre-Bid Meeting Scheduled - Tender ${meetingDetails.tender_number}`,
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Pre-bid meeting notification sent successfully to:', supplierEmail);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending pre-bid meeting notification:', error);
+            throw error;
+        }
+    }
+
+    generatePreBidMeetingHTML(companyName, contactPerson, meetingDetails) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const meetingDate = new Date(meetingDetails.meeting_date).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pre-Bid Meeting Notification</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
+        .content { padding: 20px; }
+        .meeting-details { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .detail-item { margin: 10px 0; }
+        .detail-label { font-weight: bold; color: #495057; }
+        .important-note { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .footer { background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 10px 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Pre-Bid Meeting Notification</h1>
+            <p>RIC E-Tender System</p>
+        </div>
+        
+        <div class="content">
+            <p><strong>Dear ${contactPerson || companyName},</strong></p>
+            
+            <p>We are pleased to inform you that a <strong>Pre-Bid Meeting</strong> has been scheduled for the following tender:</p>
+            
+            <div class="meeting-details">
+                <h3 style="color: #495057; margin-top: 0;">Tender Details</h3>
+                <div class="detail-item">
+                    <span class="detail-label">Tender Number:</span> ${meetingDetails.tender_number}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Tender Title:</span> ${meetingDetails.tender_title}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Description:</span> ${meetingDetails.tender_description || 'N/A'}
+                </div>
+            </div>
+
+            <div class="meeting-details">
+                <h3 style="color: #495057; margin-top: 0;">Meeting Details</h3>
+                <div class="detail-item">
+                    <span class="detail-label">Date:</span> ${meetingDate}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Time:</span> ${meetingDetails.meeting_time}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Location:</span> ${meetingDetails.location}
+                </div>
+                ${meetingDetails.venue ? `<div class="detail-item"><span class="detail-label">Venue:</span> ${meetingDetails.venue}</div>` : ''}
+                ${meetingDetails.agenda ? `<div class="detail-item"><span class="detail-label">Agenda:</span> ${meetingDetails.agenda}</div>` : ''}
+            </div>
+
+            ${meetingDetails.additional_notes ? `
+            <div class="important-note">
+                <h4 style="margin-top: 0; color: #856404;">Additional Notes:</h4>
+                <p style="margin-bottom: 0;">${meetingDetails.additional_notes}</p>
+            </div>
+            ` : ''}
+
+            <div class="important-note">
+                <h4 style="margin-top: 0; color: #856404;">Important Information:</h4>
+                <ul style="margin-bottom: 0;">
+                    <li>This meeting is mandatory for all interested bidders</li>
+                    <li>Please bring authorized representative with decision-making authority</li>
+                    <li>Bring necessary documents and questions related to the tender</li>
+                    <li>Meeting minutes will be shared with all participants after the meeting</li>
+                </ul>
+            </div>
+
+            <p>We look forward to your participation in this important pre-bid meeting. Should you have any questions, please contact our office.</p>
+            
+            <p>
+                <strong>Best regards,</strong><br>
+                RIC Purchase Department<br>
+                E-Tender System
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
+            <p>Date: ${currentDate}</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+        `;
+    }
+
+    // Send meeting minutes to suppliers
+    async sendMeetingMinutes(supplierEmail, companyName, contactPerson, meetingDetails, minutesBuffer, fileName) {
+        const htmlContent = this.generateMeetingMinutesHTML(companyName, contactPerson, meetingDetails);
+
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `Meeting Minutes - Pre-Bid Meeting for Tender ${meetingDetails.tender_number}`,
+            html: htmlContent,
+            attachments: [
+                {
+                    filename: fileName,
+                    content: minutesBuffer
+                }
+            ]
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Meeting minutes sent successfully to:', supplierEmail);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending meeting minutes:', error);
+            throw error;
+        }
+    }
+
+    generateMeetingMinutesHTML(companyName, contactPerson, meetingDetails) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const meetingDate = new Date(meetingDetails.meeting_date).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pre-Bid Meeting Minutes</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
+        .content { padding: 20px; }
+        .meeting-details { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .detail-item { margin: 10px 0; }
+        .detail-label { font-weight: bold; color: #495057; }
+        .attachment-info { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .footer { background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 10px 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Pre-Bid Meeting Minutes</h1>
+            <p>RIC E-Tender System</p>
+        </div>
+        
+        <div class="content">
+            <p><strong>Dear ${contactPerson || companyName},</strong></p>
+            
+            <p>Please find attached the minutes from the pre-bid meeting held for the following tender:</p>
+            
+            <div class="meeting-details">
+                <h3 style="color: #495057; margin-top: 0;">Meeting Details</h3>
+                <div class="detail-item">
+                    <span class="detail-label">Tender Number:</span> ${meetingDetails.tender_number}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Tender Title:</span> ${meetingDetails.tender_title}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Meeting Date:</span> ${meetingDate}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Meeting Time:</span> ${meetingDetails.meeting_time}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Location:</span> ${meetingDetails.location}
+                </div>
+            </div>
+
+            <div class="attachment-info">
+                <h4 style="margin-top: 0; color: #0c5460;">📎 Attachment Information</h4>
+                <p style="margin-bottom: 0;">The meeting minutes document is attached to this email. Please review it carefully as it contains important information discussed during the meeting.</p>
+            </div>
+
+            <p><strong>Important:</strong> Please ensure that you review the attached meeting minutes thoroughly. Any clarifications, addendums, or changes to the tender requirements discussed during the meeting are documented in these minutes.</p>
+
+            <p>If you have any questions regarding the meeting minutes or require any clarifications, please contact our office immediately.</p>
+            
+            <p>
+                <strong>Best regards,</strong><br>
+                RIC Purchase Department<br>
+                E-Tender System
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
+            <p>Date: ${currentDate}</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+        `;
+    }
+
+    // Send meeting cancellation notification
+    async sendMeetingCancellation(supplierEmail, companyName, contactPerson, meetingDetails) {
+        const htmlContent = this.generateMeetingCancellationHTML(companyName, contactPerson, meetingDetails);
+
+        const mailOptions = {
+            from: {
+                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
+                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
+            },
+            to: supplierEmail,
+            subject: `CANCELLED: Pre-Bid Meeting for Tender ${meetingDetails.tender_number}`,
+            html: htmlContent
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log('Meeting cancellation notification sent successfully to:', supplierEmail);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            console.error('Error sending meeting cancellation notification:', error);
+            throw error;
+        }
+    }
+
+    generateMeetingCancellationHTML(companyName, contactPerson, meetingDetails) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const meetingDate = new Date(meetingDetails.meeting_date).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pre-Bid Meeting Cancelled</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
+        .content { padding: 20px; }
+        .meeting-details { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .detail-item { margin: 10px 0; }
+        .detail-label { font-weight: bold; color: #495057; }
+        .cancellation-notice { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .footer { background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 10px 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚫 Meeting Cancelled</h1>
+            <p>Pre-Bid Meeting Cancellation Notice</p>
+        </div>
+        
+        <div class="content">
+            <p><strong>Dear ${contactPerson || companyName},</strong></p>
+            
+            <div class="cancellation-notice">
+                <h3 style="color: #721c24; margin-top: 0;">IMPORTANT: Meeting Cancelled</h3>
+                <p style="margin-bottom: 0;">We regret to inform you that the pre-bid meeting scheduled for the following tender has been <strong>CANCELLED</strong>.</p>
+            </div>
+            
+            <div class="meeting-details">
+                <h3 style="color: #495057; margin-top: 0;">Cancelled Meeting Details</h3>
+                <div class="detail-item">
+                    <span class="detail-label">Tender Number:</span> ${meetingDetails.tender_number}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Tender Title:</span> ${meetingDetails.tender_title}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Originally Scheduled Date:</span> ${meetingDate}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Originally Scheduled Time:</span> ${meetingDetails.meeting_time}
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Location:</span> ${meetingDetails.location}
+                </div>
+            </div>
+
+            ${meetingDetails.cancellation_reason ? `
+            <div class="meeting-details">
+                <h3 style="color: #495057; margin-top: 0;">Reason for Cancellation</h3>
+                <p>${meetingDetails.cancellation_reason}</p>
+            </div>
+            ` : ''}
+
+            <p><strong>What's Next:</strong></p>
+            <ul>
+                <li>You will be notified if a new meeting is rescheduled</li>
+                <li>The tender process will continue as per the original timeline</li>
+                <li>Any questions can be submitted through the regular inquiry process</li>
+                <li>Please monitor your email for further updates</li>
+            </ul>
+
+            <p>We apologize for any inconvenience caused by this cancellation. If you have any urgent questions regarding this tender, please contact our office.</p>
+            
+            <p>
+                <strong>Best regards,</strong><br>
+                RIC Purchase Department<br>
+                E-Tender System
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
+            <p>Date: ${currentDate}</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+        `;
+    }
 }
 
 // Create instance and export common functions

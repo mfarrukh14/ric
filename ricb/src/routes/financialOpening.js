@@ -5,6 +5,7 @@ const {
     scheduleFinancialOpening,
     getScheduledFinancialOpenings,
     openFinancialBids,
+    awardTenderManually,
     downloadFinancialBid,
     downloadBidCdrDocument,
     downloadFinancialOpeningReport
@@ -20,8 +21,11 @@ router.post('/schedule/:tenderId', authenticateToken, scheduleFinancialOpening);
 // Get scheduled financial openings
 router.get('/scheduled', authenticateToken, getScheduledFinancialOpenings);
 
-// Open financial bids and generate rankings
+// Open financial bids and display comparative analysis (no automatic award)
 router.post('/open/:tenderId', authenticateToken, openFinancialBids);
+
+// Manually award tender after reviewing comparative analysis
+router.post('/award/:tenderId', authenticateToken, awardTenderManually);
 
 // Download financial bid document
 router.get('/bids/:bidId/financial-document', authenticateToken, downloadFinancialBid);

@@ -590,6 +590,109 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create pre_bid_meetings table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS pre_bid_meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                meeting_date DATE NOT NULL,
+                meeting_time TIME NOT NULL,
+                location TEXT NOT NULL,
+                agenda TEXT,
+                description TEXT,
+                scheduled_by INTEGER NOT NULL,
+                scheduled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+                minutes_file_path TEXT,
+                minutes_original_name TEXT,
+                completed_by INTEGER,
+                completed_at DATETIME,
+                cancellation_reason TEXT,
+                cancelled_by INTEGER,
+                cancelled_at DATETIME,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (scheduled_by) REFERENCES users(id),
+                FOREIGN KEY (completed_by) REFERENCES users(id),
+                FOREIGN KEY (cancelled_by) REFERENCES users(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_letters table for letter of intent and letter of award
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_letters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                letter_type TEXT NOT NULL CHECK (letter_type IN ('intent', 'award')),
+                letter_title TEXT NOT NULL,
+                letter_content TEXT,
+                letter_file_path TEXT,
+                letter_original_name TEXT,
+                sent_to TEXT NOT NULL, -- 'all' or 'selected'
+                sent_by INTEGER NOT NULL,
+                sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                total_recipients INTEGER DEFAULT 0,
+                successful_sends INTEGER DEFAULT 0,
+                failed_sends INTEGER DEFAULT 0,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (sent_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create letter_recipients table to track which suppliers received which letters
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS letter_recipients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                letter_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                supplier_email TEXT NOT NULL,
+                supplier_name TEXT NOT NULL,
+                email_status TEXT DEFAULT 'pending' CHECK (email_status IN ('pending', 'sent', 'failed', 'bounced')),
+                sent_at DATETIME,
+                error_message TEXT,
+                opened_at DATETIME,
+                downloaded_at DATETIME,
+                FOREIGN KEY (letter_id) REFERENCES tender_letters(id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                UNIQUE(letter_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_awards table to track awarded bids for supplier dashboard
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_awards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                award_letter_id INTEGER,
+                award_amount DECIMAL(10,2),
+                awarded_items TEXT, -- JSON string of awarded items
+                award_status TEXT DEFAULT 'awarded' CHECK (award_status IN ('awarded', 'contract_signed', 'completed', 'cancelled')),
+                awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                contract_signed_at DATETIME,
+                completion_date DATE,
+                notes TEXT,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                FOREIGN KEY (award_letter_id) REFERENCES tender_letters(id),
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Create system_configurations table for admin settings
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS system_configurations (
@@ -1273,6 +1376,55 @@ const runMigrations = async () => {
                     });
                 } else {
                     console.log('grievance_deadlines table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 5a: Create pre_bid_meetings table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='pre_bid_meetings'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating pre_bid_meetings table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS pre_bid_meetings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        meeting_date DATE NOT NULL,
+                        meeting_time TIME NOT NULL,
+                        location TEXT NOT NULL,
+                        agenda TEXT,
+                        description TEXT,
+                        scheduled_by INTEGER NOT NULL,
+                        scheduled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+                        minutes_file_path TEXT,
+                        minutes_original_name TEXT,
+                        completed_by INTEGER,
+                        completed_at DATETIME,
+                        cancellation_reason TEXT,
+                        cancelled_by INTEGER,
+                        cancelled_at DATETIME,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (scheduled_by) REFERENCES users(id),
+                        FOREIGN KEY (completed_by) REFERENCES users(id),
+                        FOREIGN KEY (cancelled_by) REFERENCES users(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating pre_bid_meetings table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created pre_bid_meetings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('pre_bid_meetings table already exists');
                     resolve();
                 }
             });
@@ -2364,6 +2516,190 @@ const runMigrations = async () => {
                     reject(err);
                 } else {
                     console.log('Successfully created purchase_department_grievances table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 13: Add venue column to pre_bid_meetings table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(pre_bid_meetings)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasVenueColumn = columnNames.includes('venue');
+                
+                if (!hasVenueColumn) {
+                    console.log('Adding venue column to pre_bid_meetings table...');
+                    db.run("ALTER TABLE pre_bid_meetings ADD COLUMN venue TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding venue column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added venue column to pre_bid_meetings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('venue column already exists in pre_bid_meetings table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 14: Add additional_notes column to pre_bid_meetings table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(pre_bid_meetings)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasAdditionalNotesColumn = columnNames.includes('additional_notes');
+                
+                if (!hasAdditionalNotesColumn) {
+                    console.log('Adding additional_notes column to pre_bid_meetings table...');
+                    db.run("ALTER TABLE pre_bid_meetings ADD COLUMN additional_notes TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding additional_notes column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added additional_notes column to pre_bid_meetings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('additional_notes column already exists in pre_bid_meetings table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 15: Create tender_letters table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='tender_letters'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating tender_letters table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS tender_letters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        letter_type TEXT NOT NULL CHECK (letter_type IN ('intent', 'award')),
+                        letter_title TEXT NOT NULL,
+                        letter_content TEXT,
+                        letter_file_path TEXT,
+                        letter_original_name TEXT,
+                        sent_to TEXT NOT NULL,
+                        sent_by INTEGER NOT NULL,
+                        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        total_recipients INTEGER DEFAULT 0,
+                        successful_sends INTEGER DEFAULT 0,
+                        failed_sends INTEGER DEFAULT 0,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (sent_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating tender_letters table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created tender_letters table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('tender_letters table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 16: Create letter_recipients table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='letter_recipients'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating letter_recipients table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS letter_recipients (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        letter_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        supplier_email TEXT NOT NULL,
+                        supplier_name TEXT NOT NULL,
+                        email_status TEXT DEFAULT 'pending' CHECK (email_status IN ('pending', 'sent', 'failed', 'bounced')),
+                        sent_at DATETIME,
+                        error_message TEXT,
+                        opened_at DATETIME,
+                        downloaded_at DATETIME,
+                        FOREIGN KEY (letter_id) REFERENCES tender_letters(id) ON DELETE CASCADE,
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                        UNIQUE(letter_id, supplier_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating letter_recipients table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created letter_recipients table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('letter_recipients table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 17: Create supplier_awards table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_awards'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating supplier_awards table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_awards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        bid_id INTEGER NOT NULL,
+                        award_letter_id INTEGER,
+                        award_amount DECIMAL(10,2),
+                        awarded_items TEXT,
+                        award_status TEXT DEFAULT 'awarded' CHECK (award_status IN ('awarded', 'contract_signed', 'completed', 'cancelled')),
+                        awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        contract_signed_at DATETIME,
+                        completion_date DATE,
+                        notes TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                        FOREIGN KEY (award_letter_id) REFERENCES tender_letters(id),
+                        UNIQUE(tender_id, supplier_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating supplier_awards table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created supplier_awards table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('supplier_awards table already exists');
                     resolve();
                 }
             });
