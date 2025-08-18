@@ -577,6 +577,30 @@ const approveGrievance = async (req, res) => {
             );
         });
 
+        // Update the corresponding technical evaluation to approved
+        console.log(`Grievance ${grievanceId} approved - updating technical evaluation for supplier ${grievance.supplier_id}, tender ${grievance.tender_id}, item ${grievance.item_id}`);
+        
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE technical_evaluations SET 
+                 status = 'approved',
+                 evaluation_status = 'approved'
+                 WHERE id = ?`,
+                [grievance.technical_evaluation_id],
+                function(err) {
+                    if (err) {
+                        console.error('Error updating technical evaluation:', err);
+                        reject(err);
+                    } else {
+                        console.log(`Technical evaluation ${grievance.technical_evaluation_id} updated to approved (${this.changes} rows affected)`);
+                        resolve();
+                    }
+                }
+            );
+        });
+
+        console.log(`Technical evaluation updated to approved for grievance ${grievanceId}`);
+
         // Add company to temporary approval pool
         await new Promise((resolve, reject) => {
             db.run(`

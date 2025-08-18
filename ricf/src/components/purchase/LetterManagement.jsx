@@ -709,23 +709,6 @@ const LetterManagement = () => {
                                         </>
                                     )}
                                 </button>
-                                <button
-                                    type="submit"
-                                    disabled={loading}
-                                    className="px-4 py-2 bg-blue-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                    {loading ? (
-                                        <>
-                                            <i className="fas fa-spinner fa-spin mr-2"></i>
-                                            Sending...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <i className="fas fa-paper-plane mr-2"></i>
-                                            Send Letter of Intent
-                                        </>
-                                    )}
-                                </button>
                             </div>
                         </form>
                     </div>
