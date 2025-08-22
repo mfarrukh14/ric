@@ -25,6 +25,7 @@ const technicalReportsRoutes = require('./src/routes/technicalReports');
 const testEmailRoutes = require('./src/routes/testEmail');
 const debugRoutes = require('./src/routes/debugRoutes');
 const vettingRoutes = require('./src/routes/vetting');
+const demandMergeRoutes = require('./src/routes/demandMerge');
 
 const app = express();
 const PORT = 5000;
@@ -57,6 +58,7 @@ app.use('/api/technical-reports', technicalReportsRoutes);
 app.use('/api/test-email', testEmailRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/vetting', vettingRoutes);
+app.use('/api/demand-merge', demandMergeRoutes);
 
 // Test route
 app.get('/', (req, res) => {

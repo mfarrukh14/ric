@@ -2747,6 +2747,51 @@ const runMigrations = async () => {
             });
         });
         
+        // Migration 10: Add merged demands table for tracking demand merging
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='merged_demands'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating merged_demands table...');
+                    db.run(`CREATE TABLE merged_demands (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        new_demand_id INTEGER NOT NULL,
+                        original_demand_id INTEGER NOT NULL,
+                        merged_by INTEGER NOT NULL,
+                        merged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (new_demand_id) REFERENCES demands(id) ON DELETE CASCADE,
+                        FOREIGN KEY (original_demand_id) REFERENCES demands(id) ON DELETE CASCADE,
+                        FOREIGN KEY (merged_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating merged_demands table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created merged_demands table');
+                            
+                            // Add is_merged column to demands table
+                            db.run(`ALTER TABLE demands ADD COLUMN is_merged INTEGER DEFAULT 0`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    console.error('Error adding is_merged column:', err);
+                                    reject(err);
+                                } else {
+                                    console.log('Successfully added is_merged column to demands table');
+                                    resolve();
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    console.log('merged_demands table already exists');
+                    resolve();
+                }
+            });
+        });
+        
         console.log('Database migrations completed successfully');
     } catch (error) {
         console.error('Error running database migrations:', error);

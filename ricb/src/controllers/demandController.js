@@ -491,6 +491,7 @@ const getAllDemandsWithItems = async (req, res) => {
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN users sr ON d.store_response_by = sr.id
                  WHERE d.status IN ('pending', 'store_pending', 'available', 'not_available', 'vetting_pending', 'vetting_approved', 'purchase_pending')
+                 AND (d.is_merged IS NULL OR d.is_merged = 0)
                  ORDER BY d.created_at DESC`,
                 [],
                 (err, rows) => {

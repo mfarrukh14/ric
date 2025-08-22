@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import { apiUrl } from '../../config/api';
 
 const DemandManagement = () => {
@@ -7,6 +8,15 @@ const DemandManagement = () => {
     const [demands, setDemands] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [showMergeModal, setShowMergeModal] = useState(false);
+    const [selectedDemands, setSelectedDemands] = useState([]);
+    const [mergeMode, setMergeMode] = useState(false);
+    const [validationResult, setValidationResult] = useState(null);
+    const [mergeForm, setMergeForm] = useState({
+        description: '',
+        urgency: 'normal',
+        requiredBy: ''
+    });
 
     useEffect(() => {
         fetchDemands();
@@ -97,6 +107,118 @@ const DemandManagement = () => {
         return demand.status === 'pending' || demand.status === 'store_pending';
     };
 
+    const handleMergeDemandsClick = () => {
+        setMergeMode(true);
+        setSelectedDemands([]);
+        toast.info('Select multiple demands with the same item category to merge them together');
+    };
+
+    const handleDemandSelection = (demandId, checked) => {
+        if (checked) {
+            setSelectedDemands(prev => [...prev, demandId]);
+        } else {
+            setSelectedDemands(prev => prev.filter(id => id !== demandId));
+        }
+    };
+
+    const handleCancelMerge = () => {
+        setMergeMode(false);
+        setSelectedDemands([]);
+        setValidationResult(null);
+    };
+
+    const handleProceedToMerge = async () => {
+        if (selectedDemands.length < 2) {
+            toast.error('Please select at least 2 demands to merge');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demand-merge/validate`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ demandIds: selectedDemands })
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                toast.error(result.message);
+                return;
+            }
+
+            if (result.valid) {
+                setValidationResult(result);
+                setShowMergeModal(true);
+                setMergeMode(false);
+                
+                // Set default required date to latest of selected demands
+                const selectedDemandsData = demands.filter(d => selectedDemands.includes(d.id));
+                const latestRequiredDate = selectedDemandsData.reduce((latest, demand) => {
+                    const demandDate = new Date(demand.required_by);
+                    return demandDate > latest ? demandDate : latest;
+                }, new Date(selectedDemandsData[0]?.required_by || new Date()));
+                
+                setMergeForm(prev => ({
+                    ...prev,
+                    requiredBy: latestRequiredDate.toISOString().split('T')[0]
+                }));
+            } else {
+                toast.error(result.message);
+            }
+        } catch (error) {
+            console.error('Error validating merge:', error);
+            toast.error('Failed to validate demand merging');
+        }
+    };
+
+    const handleMergeSubmit = async (e) => {
+        e.preventDefault();
+        
+        if (!mergeForm.description || !mergeForm.requiredBy) {
+            toast.error('Please fill in all required fields');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demand-merge/merge`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    demandIds: selectedDemands,
+                    mergedDescription: mergeForm.description,
+                    urgency: mergeForm.urgency,
+                    requiredBy: mergeForm.requiredBy
+                })
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                toast.error(result.message);
+                return;
+            }
+
+            toast.success(`Successfully merged ${selectedDemands.length} demands into a new demand (ID: ${result.newDemandId})`);
+            setShowMergeModal(false);
+            setSelectedDemands([]);
+            setValidationResult(null);
+            setMergeForm({ description: '', urgency: 'normal', requiredBy: '' });
+            fetchDemands(); // Refresh the list
+        } catch (error) {
+            console.error('Error merging demands:', error);
+            toast.error('Failed to merge demands');
+        }
+    };
+
     const getItemStatusSummary = (items) => {
         if (!items || items.length === 0) return null;
         
@@ -134,7 +256,42 @@ const DemandManagement = () => {
 
                     <div className="bg-white shadow overflow-hidden sm:rounded-md">
                         <div className="px-4 py-5 sm:p-6">
-                            <h2 className="text-lg font-medium text-gray-900 mb-4">Pending Demands</h2>
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-lg font-medium text-gray-900">Pending Demands</h2>
+                                
+                                {/* Merge Controls */}
+                                <div className="flex space-x-2">
+                                    {!mergeMode ? (
+                                        <button
+                                            onClick={handleMergeDemandsClick}
+                                            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <i className="fas fa-code-merge mr-2"></i>
+                                            Merge Demands
+                                        </button>
+                                    ) : (
+                                        <>
+                                            <span className="text-sm text-gray-600 flex items-center">
+                                                <i className="fas fa-info-circle mr-1"></i>
+                                                Select demands with same category ({selectedDemands.length} selected)
+                                            </span>
+                                            <button
+                                                onClick={handleProceedToMerge}
+                                                disabled={selectedDemands.length < 2}
+                                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                Proceed to Merge
+                                            </button>
+                                            <button
+                                                onClick={handleCancelMerge}
+                                                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
                             
                             {demands.length === 0 ? (
                                 <div className="text-center py-12">
@@ -143,16 +300,35 @@ const DemandManagement = () => {
                             ) : (
                                 <div className="space-y-6">
                                     {demands.map((demand) => (
-                                        <div key={demand.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                                        <div key={demand.id} className={`border rounded-lg p-6 transition-shadow ${
+                                            mergeMode 
+                                                ? selectedDemands.includes(demand.id) 
+                                                    ? 'border-indigo-300 bg-indigo-50 shadow-md' 
+                                                    : 'border-gray-200 hover:border-indigo-200' 
+                                                : 'border-gray-200 hover:shadow-md'
+                                        }`}>
                                             <div className="flex justify-between items-start mb-4">
-                                                <div>
-                                                    <h3 className="text-xl font-semibold text-gray-900">
-                                                        Demand #{demand.id}
-                                                    </h3>
-                                                    <p className="text-sm text-gray-600">
-                                                        Created by: {demand.created_by_name}
-                                                        {demand.creator_department && ` (${demand.creator_department})`}
-                                                    </p>
+                                                <div className="flex items-start space-x-3">
+                                                    {/* Merge Mode Checkbox */}
+                                                    {mergeMode && (
+                                                        <div className="flex items-center mt-1">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedDemands.includes(demand.id)}
+                                                                onChange={(e) => handleDemandSelection(demand.id, e.target.checked)}
+                                                                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <h3 className="text-xl font-semibold text-gray-900">
+                                                            Demand #{demand.id}
+                                                        </h3>
+                                                        <p className="text-sm text-gray-600">
+                                                            Created by: {demand.created_by_name}
+                                                            {demand.creator_department && ` (${demand.creator_department})`}
+                                                        </p>
+                                                    </div>
                                                 </div>
                                                 <div className="flex space-x-2">
                                                     {getStatusBadge(demand.status)}
@@ -303,6 +479,110 @@ const DemandManagement = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Merge Demands Modal */}
+            {showMergeModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg max-w-2xl w-full max-h-full overflow-y-auto">
+                        <div className="p-6">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-2xl font-bold text-gray-900">Merge Demands</h2>
+                                <button
+                                    onClick={() => setShowMergeModal(false)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    <i className="fas fa-times text-xl"></i>
+                                </button>
+                            </div>
+
+                            {/* Validation Results */}
+                            {validationResult && (
+                                <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                    <div className="flex items-center">
+                                        <i className="fas fa-check-circle text-green-500 mr-2"></i>
+                                        <div>
+                                            <h3 className="text-sm font-medium text-green-800">Validation Successful</h3>
+                                            <p className="text-sm text-green-700 mt-1">{validationResult.message}</p>
+                                            <div className="text-xs text-green-600 mt-2">
+                                                <span className="font-medium">Category:</span> {validationResult.category} | 
+                                                <span className="font-medium ml-2">Total Items:</span> {validationResult.itemCount} | 
+                                                <span className="font-medium ml-2">Demands:</span> {validationResult.demandCount}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Merge Form */}
+                            <form onSubmit={handleMergeSubmit}>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Merged Demand Description *
+                                        </label>
+                                        <textarea
+                                            value={mergeForm.description}
+                                            onChange={(e) => setMergeForm(prev => ({ ...prev, description: e.target.value }))}
+                                            placeholder={`Enter description for merged ${validationResult?.category || 'demand'} items`}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            rows="3"
+                                            required
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Urgency *
+                                            </label>
+                                            <select
+                                                value={mergeForm.urgency}
+                                                onChange={(e) => setMergeForm(prev => ({ ...prev, urgency: e.target.value }))}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                required
+                                            >
+                                                <option value="normal">Normal</option>
+                                                <option value="urgent">Urgent</option>
+                                                <option value="emergency">Emergency</option>
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Required By *
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={mergeForm.requiredBy}
+                                                onChange={(e) => setMergeForm(prev => ({ ...prev, requiredBy: e.target.value }))}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-end space-x-3 mt-6">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowMergeModal(false)}
+                                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    >
+                                        <i className="fas fa-code-merge mr-2"></i>
+                                        Merge Demands
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
