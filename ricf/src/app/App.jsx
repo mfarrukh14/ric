@@ -12,6 +12,7 @@ import TechnicalEvaluationDashboard from '../components/committee/TechnicalEvalu
 import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
 import TenderOpeningDetails from '../components/purchase/TenderOpeningDetails';
 import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
+import VettingDashboard from '../components/vetting/VettingDashboard';
 import CreateDemandForm from '../components/demand/CreateDemandForm';
 import FulfillmentPage from '../components/store/FulfillmentPage';
 import Header from '../components/layout/header/Header';
@@ -169,6 +170,16 @@ function App() {
             }
           />
           <Route
+            path="/committee/vetting"
+            element={
+              <ProtectedRoute currentUser={user}>
+                <TwoFactorEnforcementWrapper>
+                  <VettingDashboard />
+                </TwoFactorEnforcementWrapper>
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/supplier-dashboard"
             element={
               <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
@@ -226,6 +237,12 @@ function App() {
                   <Navigate to="/admin" replace />
                 ) : user.role === 'supplier' ? (
                   <Navigate to="/supplier-dashboard" replace />
+                ) : user.committee_name === 'Vetting Committee' ? (
+                  <Navigate to="/committee/vetting" replace />
+                ) : user.committee_name === 'Technical Evaluation Committee' ? (
+                  <Navigate to="/committee/technical-evaluation" replace />
+                ) : user.committee_name === 'Grievance Committee' ? (
+                  <Navigate to="/committee/grievance" replace />
                 ) : (
                   <Navigate to="/dashboard" replace />
                 )

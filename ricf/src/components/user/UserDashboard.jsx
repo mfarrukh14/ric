@@ -5,6 +5,7 @@ import SupplierEvaluation from '../admin/SupplierEvaluation';
 import TechnicalEvaluationDashboard from '../committee/TechnicalEvaluationDashboard';
 import PurchaseDepartment from '../department/PurchaseDepartment';
 import GrievanceCommitteeNew from '../committee/GrievanceCommitteeNew';
+import VettingDashboard from '../vetting/VettingDashboard';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
 import { apiUrl } from '../../config/api';
 
@@ -30,6 +31,9 @@ export default function UserDashboard() {
   
   // Check if user is Grievance Committee member
   const isGrievanceCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('grievance');
+  
+  // Check if user is Vetting Committee member
+  const isVettingCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('vetting');
 
   // Initialize user from localStorage once
   useEffect(() => {
@@ -100,7 +104,8 @@ export default function UserDashboard() {
           {isStoreDepartmentUser ? 'Store Department Dashboard' : 
            isEvaluationCommittee ? 'Supplier Evaluation Committee Dashboard' :
            isPurchaseDepartment ? 'Purchase Department Dashboard' :
-           isGrievanceCommittee ? 'Grievance Committee Dashboard' : 'User Dashboard'}
+           isGrievanceCommittee ? 'Grievance Committee Dashboard' :
+           isVettingCommittee ? 'Vetting Committee Dashboard' : 'User Dashboard'}
         </h1>
         <div className="flex space-x-3">
           {user?.eligibleForDemandCreation && (
@@ -260,7 +265,37 @@ export default function UserDashboard() {
             </nav>
           </div>
         </div>
-      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isPurchaseDepartment && !isTechnicalEvaluationCommittee && !isGrievanceCommittee) || (activeTab === 'my-demands')) && (
+      )}
+
+      {/* Tab Navigation for Vetting Committee Users */}
+      {isVettingCommittee && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('vetting-evaluation')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'vetting-evaluation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Tender Vetting
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}      {((!isStoreDepartmentUser && !isEvaluationCommittee && !isPurchaseDepartment && !isTechnicalEvaluationCommittee && !isGrievanceCommittee && !isVettingCommittee) || (activeTab === 'my-demands')) && (
         <div>
           <div className="mb-8">
             <p className="text-gray-600">Welcome back, {user?.name || 'User'}!</p>
@@ -301,6 +336,13 @@ export default function UserDashboard() {
               <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-red-800">
                   As a Grievance Committee member, you can review and address grievances raised by users. Use the tabs above to switch between your personal demands and grievance evaluation.
+                </p>
+              </div>
+            )}
+            {isVettingCommittee && (
+              <div className="mt-4 p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                <p className="text-indigo-800">
+                  As a Vetting Committee member, you can review and approve/reject tenders submitted by the Purchase Department before they are published. Use the tabs above to switch between your personal demands and tender vetting.
                 </p>
               </div>
             )}
@@ -472,6 +514,10 @@ export default function UserDashboard() {
 
       {isGrievanceCommittee && activeTab === 'grievance-evaluation' && (
         <GrievanceCommitteeNew />
+      )}
+
+      {isVettingCommittee && activeTab === 'vetting-evaluation' && (
+        <VettingDashboard />
       )}
 
       {/* 2FA Setup Modal */}

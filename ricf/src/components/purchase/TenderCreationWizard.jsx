@@ -41,7 +41,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
     { number: 1, title: 'Review Items', description: 'Review demand items and make approval decision' },
     { number: 2, title: 'Tender Setup', description: 'Configure bidding details and upload documents' },
     { number: 3, title: 'Evaluation Criteria', description: 'Add knockout clauses and evaluation criteria' },
-    { number: 4, title: 'Review & Publish', description: 'Final review and publish tender' }
+    { number: 4, title: 'Submit for Vetting', description: 'Final review and submit for vetting committee approval' }
   ];
 
   useEffect(() => {
@@ -334,7 +334,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         }
       });
 
-      toast.success('Tender created successfully!');
+      toast.success('Tender submitted for vetting committee approval!');
       onTenderCreated(response.data.tender);
       onClose();
     } catch (error) {
@@ -957,7 +957,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
   const renderStep4 = () => (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-gray-900">Review & Publish Tender</h3>
+      <h3 className="text-lg font-semibold text-gray-900">Submit for Vetting Committee Approval</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-gray-50 rounded-lg p-4">
@@ -980,13 +980,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         </div>
       </div>
 
-      <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
         <div className="flex">
-          <i className="fas fa-exclamation-triangle h-5 w-5 text-yellow-400"></i>
+          <i className="fas fa-info-circle h-5 w-5 text-blue-400"></i>
           <div className="ml-3">
-            <h3 className="text-sm font-medium text-yellow-800">Final Confirmation</h3>
-            <p className="text-sm text-yellow-700 mt-1">
-              Once published, this tender will be visible to all registered suppliers. Ensure all details are correct before proceeding.
+            <h3 className="text-sm font-medium text-blue-800">Vetting Committee Review</h3>
+            <p className="text-sm text-blue-700 mt-1">
+              This tender will be submitted to the vetting committee for approval. All committee members must approve before the tender can be published. You will be notified of the decision and can proceed to publish if approved.
             </p>
           </div>
         </div>
@@ -1003,15 +1003,15 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         <button
           onClick={createTender}
           disabled={loading}
-          className="inline-flex items-center px-6 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+          className="inline-flex items-center px-6 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
         >
           {loading ? (
             <>
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-              Publishing...
+              Submitting...
             </>
           ) : (
-            'Publish Tender'
+            'Proceed for Vetting Evaluation'
           )}
         </button>
       </div>

@@ -29,7 +29,9 @@ const {
     evaluateDemandPurchase,
     approveDemand,
     setExpiryForTender,
-    getSupplyOrders
+    getSupplyOrders,
+    getTendersWithVettingStatus,
+    publishApprovedTender
 } = require('../controllers/purchaseController');
 
 const {
@@ -324,6 +326,10 @@ router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
 
 // Append criteria (including scoring) to an existing tender
 router.post('/tenders/:tenderId/add-criteria', auth, addTenderCriteria);
+
+// Purchase department routes for vetting workflow
+router.get('/purchase/tenders-vetting-status', auth, getTendersWithVettingStatus);
+router.post('/purchase/tenders/:tenderId/publish', auth, publishApprovedTender);
 
 // Error handling middleware for multer errors
 router.use((error, req, res, next) => {

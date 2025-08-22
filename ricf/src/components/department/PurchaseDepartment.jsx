@@ -6,6 +6,7 @@ import { generateDemandReport } from '../../utils/excelReportGenerator';
 import TenderCreationWizard from '../purchase/TenderCreationWizard';
 import PreBidMeetingManagement from '../purchase/PreBidMeetingManagement';
 import LetterManagement from '../purchase/LetterManagement';
+import TenderVettingManagement from '../purchase/TenderVettingManagement';
 
 const PurchaseDepartment = () => {
     const navigate = useNavigate();
@@ -949,6 +950,16 @@ const PurchaseDepartment = () => {
                                 <i className="fas fa-calendar-alt mr-1"></i>
                                 Pre-Bid Meetings
                             </button>
+                            <button
+                                onClick={() => setActiveTab('vetting-management')}
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'vetting-management'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                <i className="fas fa-clipboard-check mr-1"></i>
+                                Vetting Management
+                            </button>
                         </nav>
                     </div>                    {/* Tab Content */}
                     {activeTab === 'demands' && (
@@ -1586,6 +1597,11 @@ const PurchaseDepartment = () => {
             {/* Pre-Bid Meetings Tab */}
             {activeTab === 'pre-bid-meetings' && (
                 <PreBidMeetingManagement />
+            )}
+
+            {/* Vetting Management Tab */}
+            {activeTab === 'vetting-management' && (
+                <TenderVettingManagement />
             )}
 
             {/* Evaluation Modal */}

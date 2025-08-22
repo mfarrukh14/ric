@@ -819,6 +819,24 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create tender_vetting_evaluations table to track vetting committee approval
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_vetting_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                committee_member_id INTEGER NOT NULL,
+                decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject')),
+                comments TEXT,
+                evaluated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (committee_member_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(tender_id, committee_member_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Create item_categories table for dropdown categories
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS item_categories (
@@ -1156,6 +1174,30 @@ const initializeDatabase = async () => {
                         if (err) reject(err);
                         else {
                             console.log('Technical Evaluation Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Vetting Committee exists
+        const vettingCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Vetting Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!vettingCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Vetting Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Vetting Committee created successfully');
                             resolve();
                         }
                     }

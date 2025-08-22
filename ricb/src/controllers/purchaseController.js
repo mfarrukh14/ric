@@ -374,10 +374,114 @@ const getSupplyOrders = async (req, res) => {
     }
 };
 
+// Get tenders with vetting status for purchase department
+const getTendersWithVettingStatus = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        return res.status(403).json({ message: 'You do not have permission to view tenders' });
+    }
+
+    try {
+        const tenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description as demand_description, d.estimated_cost,
+                        u.name as created_by_name, dept.name as created_by_department
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 JOIN users u ON dt.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 WHERE dt.tender_status IN ('pending_vetting', 'vetting_approved', 'vetting_rejected')
+                 ORDER BY dt.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json(tenders);
+    } catch (error) {
+        console.error('Error fetching tenders with vetting status:', error);
+        res.status(500).json({ message: 'Failed to fetch tenders', error: error.message });
+    }
+};
+
+// Publish approved tender (only for purchase department)
+const publishApprovedTender = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canPublish = user.role === 'superadmin' || 
+                      (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canPublish) {
+        return res.status(403).json({ message: 'Only purchase department can publish tenders' });
+    }
+    
+    try {
+        // Check if tender is approved by vetting committee
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id, tender_status FROM demand_tenders WHERE id = ? AND tender_status = ?',
+                [tenderId, 'vetting_approved'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not approved by vetting committee' });
+        }
+
+        // Update tender status to active
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE demand_tenders SET tender_status = ? WHERE id = ?',
+                ['active', tenderId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Add status history
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO tender_status_history (tender_id, status, comments, changed_by)
+                 VALUES (?, ?, ?, ?)`,
+                [tenderId, 'published', 'Tender published by purchase department after vetting approval', user.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ message: 'Tender published successfully' });
+    } catch (error) {
+        console.error('Error publishing tender:', error);
+        res.status(500).json({ message: 'Failed to publish tender', error: error.message });
+    }
+};
+
 module.exports = {
     getPurchaseDemands,
     evaluateDemandPurchase,
     approveDemand,
     setExpiryForTender,
-    getSupplyOrders
+    getSupplyOrders,
+    getTendersWithVettingStatus,
+    publishApprovedTender
 };

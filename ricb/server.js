@@ -24,6 +24,7 @@ const auditRoutes = require('./src/routes/audit');
 const technicalReportsRoutes = require('./src/routes/technicalReports');
 const testEmailRoutes = require('./src/routes/testEmail');
 const debugRoutes = require('./src/routes/debugRoutes');
+const vettingRoutes = require('./src/routes/vetting');
 
 const app = express();
 const PORT = 5000;
@@ -55,6 +56,7 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/technical-reports', technicalReportsRoutes);
 app.use('/api/test-email', testEmailRoutes);
 app.use('/api/debug', debugRoutes);
+app.use('/api/vetting', vettingRoutes);
 
 // Test route
 app.get('/', (req, res) => {

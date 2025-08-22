@@ -527,7 +527,7 @@ const createTenderWithCriteria = async (req, res) => {
                         tenderDocumentPath,
                         itemsListPath,
                         createdBy,
-                        'active',
+                        'pending_vetting',
                         tenderNumber
                     ],
                     function(err) {
@@ -588,7 +588,7 @@ const createTenderWithCriteria = async (req, res) => {
                     `INSERT INTO tender_status_history (
                         tender_id, status, comments, changed_by
                     ) VALUES (?, ?, ?, ?)`,
-                    [tenderId, 'published', 'Tender created and published', createdBy],
+                    [tenderId, 'pending_vetting', 'Tender created and submitted for vetting committee approval', createdBy],
                     (err) => {
                         if (err) reject(err);
                         else resolve();
