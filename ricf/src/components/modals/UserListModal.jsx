@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { EyeIcon, EyeOffIcon as EyeSlashIcon, ClipboardIcon, ClipboardCheckIcon } from 'lucide-react';
 
 
-const UserListModal = ({ show, onClose, title, users, onDelete, searchTerm, onSearchChange }) => {
+const UserListModal = ({ show, onClose, title, users, onDelete, onToggleHod, searchTerm, onSearchChange }) => {
     const [showPasswords, setShowPasswords] = useState({});
     const [copiedStates, setCopiedStates] = useState({});
 
@@ -51,6 +51,7 @@ const UserListModal = ({ show, onClose, title, users, onDelete, searchTerm, onSe
                             <tr className="border-b border-gray-200">
                                 <th className="px-4 py-2 text-left">Name</th>
                                 <th className="px-4 py-2 text-left">Designation</th>
+                                <th className="px-4 py-2 text-left">Role</th>
                                 <th className="px-4 py-2 text-left">Credentials</th>
                                 <th className="px-4 py-2 text-center">Actions</th>
                             </tr>
@@ -58,15 +59,25 @@ const UserListModal = ({ show, onClose, title, users, onDelete, searchTerm, onSe
                         <tbody>
                             {users.length === 0 ? (
                                 <tr>
-                                    <td colSpan="4" className="px-4 py-3 text-center">
+                                    <td colSpan="5" className="px-4 py-3 text-center">
                                         No matching users found.
                                     </td>
                                 </tr>
                             ) : (
                                 users.map(user => (
                                     <tr key={user.id} className="hover:bg-gray-50">
-                                        <td className="px-4 py-2">{user.name}</td>
+                                        <td className="px-4 py-2">
+                                            {user.name}
+                                            {user.is_hod ? (
+                                                <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                    HOD
+                                                </span>
+                                            ) : null}
+                                        </td>
                                         <td className="px-4 py-2">{user.designation}</td>
+                                        <td className="px-4 py-2">
+                                            {user.is_hod ? 'Head of Department' : 'User'}
+                                        </td>
                                         <td className="px-4 py-2">
                                             <div className="space-y-2">
                                                 <div className="flex items-center space-x-2">
@@ -115,12 +126,27 @@ const UserListModal = ({ show, onClose, title, users, onDelete, searchTerm, onSe
                                             </div>
                                         </td>
                                         <td className="px-4 py-2 text-center">
-                                            <button
-                                                onClick={() => onDelete('user', user.id)}
-                                                className="text-red-600 hover:text-red-800 text-sm hover:bg-red-50 px-2 py-1 rounded"
-                                            >
-                                                Remove
-                                            </button>
+                                            <div className="flex space-x-2 justify-center">
+                                                {user.department_id && (
+                                                    <button
+                                                        onClick={() => onToggleHod && onToggleHod(user.id, !user.is_hod)}
+                                                        className={`text-xs px-2 py-1 rounded ${
+                                                            user.is_hod 
+                                                                ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200' 
+                                                                : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                                                        }`}
+                                                        title={user.is_hod ? 'Remove HOD status' : 'Make HOD'}
+                                                    >
+                                                        {user.is_hod ? 'Remove HOD' : 'Make HOD'}
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => onDelete('user', user.id)}
+                                                    className="text-red-600 hover:text-red-800 text-sm hover:bg-red-50 px-2 py-1 rounded"
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))

@@ -207,6 +207,18 @@ export const deleteUser = async (id) => {
     return response.data;
 };
 
+export const updateHodStatus = async (userId, isHod) => {
+    try {
+        const response = await api.put('/admin/users/hod-status', {
+            userId,
+            isHod
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to update HOD status' };
+    }
+};
+
 // Demand Management
 export const createDemand = async (demandData) => {
     const response = await api.post('/demands', demandData);

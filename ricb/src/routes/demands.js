@@ -15,7 +15,9 @@ const {
     getAllDemandsWithItems,
     rejectDemand,
     getDemandItemsPaginated,
-    generateDemandExcelReport
+    generateDemandExcelReport,
+    getHodPendingDemands,
+    approveRejectDemandByHod
 } = require('../controllers/demandController');
 
 const {
@@ -108,6 +110,10 @@ router.post('/', auth, createDemand);
 
 // Get current user's demands
 router.get('/user', auth, getUserDemands);
+
+// HOD approval routes
+router.get('/hod/pending', auth, getHodPendingDemands);
+router.put('/hod/approve-reject', auth, approveRejectDemandByHod);
 
 // Get all demands (for superadmin and store department)
 router.get('/all', auth, getAllDemands);

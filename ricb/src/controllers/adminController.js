@@ -122,21 +122,46 @@ exports.deleteCommittee = (req, res) => {
 
 // User Controllers
 exports.createUser = async (req, res) => {
-    const { name, designation, departmentId, committeeId, eligibleForDemandCreation } = req.body;
+    const { name, designation, departmentId, committeeId, eligibleForDemandCreation, isHod } = req.body;
     const db = getDatabase();
     
     if (!name || !designation || (!departmentId && !committeeId)) {
         return res.status(400).json({ error: 'Name, designation, and either department or committee are required' });
     }
 
+    // Validate HOD designation
+    if (isHod && !departmentId) {
+        return res.status(400).json({ error: 'HOD can only be assigned to departments, not committees' });
+    }
+
     try {
+        // Check if department already has an HOD
+        if (isHod && departmentId) {
+            const existingHod = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT id, name FROM users WHERE department_id = ? AND is_hod = 1',
+                    [departmentId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            if (existingHod) {
+                return res.status(400).json({ 
+                    error: `Department already has an HOD: ${existingHod.name}. Please remove the existing HOD first or assign this user to a different department.` 
+                });
+            }
+        }
+
         // Generate credentials based on user's name
         const { username, password } = await generateUserBasedCredentials(name);
         const hashedPassword = await bcrypt.hash(password, 10);
         await new Promise((resolve, reject) => {
             db.run(
-                'INSERT INTO users (name, username, password, plain_password, designation, department_id, committee_id, role, eligible_for_demand_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [name, username, hashedPassword, password, designation, departmentId || null, committeeId || null, 'user', eligibleForDemandCreation ? 1 : 0],
+                'INSERT INTO users (name, username, password, plain_password, designation, department_id, committee_id, role, eligible_for_demand_creation, is_hod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [name, username, hashedPassword, password, designation, departmentId || null, committeeId || null, 'user', eligibleForDemandCreation ? 1 : 0, isHod ? 1 : 0],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -151,7 +176,7 @@ exports.createUser = async (req, res) => {
             req.user.name,
             'USER_CREATED',
             name,
-            `Username: ${username} | Designation: ${designation} | Department ID: ${departmentId || 'None'} | Committee ID: ${committeeId || 'None'}`,
+            `Username: ${username} | Designation: ${designation} | Department ID: ${departmentId || 'None'} | Committee ID: ${committeeId || 'None'} | HOD: ${isHod ? 'Yes' : 'No'}`,
             req
         );
 
@@ -173,7 +198,7 @@ exports.listUsers = async (req, res) => {
         const db = getDatabase();
         const query = `
             SELECT u.id, u.name, u.username, u.plain_password as password, u.designation, 
-                   u.department_id, u.committee_id, u.role, u.created_at,
+                   u.department_id, u.committee_id, u.role, u.created_at, u.is_hod,
                    d.name as department_name, c.name as committee_name, u.eligible_for_demand_creation as eligibleForDemandCreation 
             FROM users u 
             LEFT JOIN departments d ON u.department_id = d.id 
@@ -533,6 +558,86 @@ const updateGrievanceDeadlineConfig = async (req, res) => {
     }
 };
 
+// HOD Management
+exports.updateHodStatus = async (req, res) => {
+    const { userId, isHod } = req.body;
+    const db = getDatabase();
+    
+    if (!userId) {
+        return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    try {
+        // Get user details
+        const user = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id, name, department_id, committee_id FROM users WHERE id = ?',
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        if (isHod && !user.department_id) {
+            return res.status(400).json({ error: 'HOD can only be assigned to departments, not committees' });
+        }
+
+        // If setting as HOD, check if department already has an HOD
+        if (isHod && user.department_id) {
+            const existingHod = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT id, name FROM users WHERE department_id = ? AND is_hod = 1 AND id != ?',
+                    [user.department_id, userId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            if (existingHod) {
+                return res.status(400).json({ 
+                    error: `Department already has an HOD: ${existingHod.name}. Please remove the existing HOD first.` 
+                });
+            }
+        }
+
+        // Update HOD status
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE users SET is_hod = ? WHERE id = ?',
+                [isHod ? 1 : 0, userId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Log the change
+        await auditLogger.logUserManagement(
+            req.user.id,
+            req.user.role,
+            req.user.name,
+            'HOD_STATUS_UPDATED',
+            user.name,
+            `HOD status changed to: ${isHod ? 'Yes' : 'No'}`,
+            req
+        );
+
+        res.json({ message: 'HOD status updated successfully' });
+    } catch (err) {
+        console.error('Error updating HOD status:', err);
+        res.status(500).json({ error: 'Error updating HOD status' });
+    }
+};
+
 module.exports = {
     createDepartment: exports.createDepartment,
     listDepartments: exports.listDepartments,
@@ -547,5 +652,6 @@ module.exports = {
     updateSystemConfiguration: exports.updateSystemConfiguration,
     getGrievanceDeadlines: exports.getGrievanceDeadlines,
     getGrievanceDeadlineConfig,
-    updateGrievanceDeadlineConfig
+    updateGrievanceDeadlineConfig,
+    updateHodStatus: exports.updateHodStatus
 };

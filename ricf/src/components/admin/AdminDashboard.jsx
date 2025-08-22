@@ -9,6 +9,7 @@ import {
     deleteDepartment,
     deleteCommittee,
     deleteUser,
+    updateHodStatus,
     getItemCategories,
     getAllItemNames,
     createItemCategory,
@@ -54,7 +55,7 @@ const AdminDashboard = () => {
 
     const [newName, setNewName] = useState('');
     const [newUser, setNewUser] = useState({
-        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false
+        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false
     });
     const [newCategory, setNewCategory] = useState({ name: '', description: '' });
     const [newItemName, setNewItemName] = useState({ categoryId: '', name: '', description: '' });
@@ -120,10 +121,19 @@ const AdminDashboard = () => {
             const { credentials } = await createUser(newUser);
             setCreatedCredentials(credentials);
             setShowUserModal(false);
-            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false });
+            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false });
             fetchAll();
         } catch {
             setError('Error creating user');
+        }
+    };
+
+    const handleToggleHod = async (userId, isHod) => {
+        try {
+            await updateHodStatus(userId, isHod);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Error updating HOD status');
         }
     };
 
@@ -248,6 +258,12 @@ const AdminDashboard = () => {
 
     const getUsersFor = (id, type) =>
         users.filter(u => type === 'department' ? u.department_id === id : u.committee_id === id);
+
+    // Check if a department already has an HOD
+    const departmentHasHod = (departmentId) => {
+        if (!departmentId) return false;
+        return users.some(u => u.department_id === parseInt(departmentId) && u.is_hod === 1);
+    };
 
     // Users filtered by selected group and search term
     const filteredUsers = selectedGroup.id
@@ -461,6 +477,7 @@ const AdminDashboard = () => {
                 title={getUserListTitle()}
                 users={filteredUsers}
                 onDelete={handleDelete}
+                onToggleHod={handleToggleHod}
                 searchTerm={searchTerm}
                 onSearchChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -512,7 +529,16 @@ const AdminDashboard = () => {
                     />
                     <select
                         value={newUser.departmentId}
-                        onChange={e => setNewUser(u => ({ ...u, departmentId: e.target.value, committeeId: '' }))}
+                        onChange={e => {
+                            const departmentId = e.target.value;
+                            const hasHod = departmentHasHod(departmentId);
+                            setNewUser(u => ({ 
+                                ...u, 
+                                departmentId, 
+                                committeeId: '', 
+                                isHod: hasHod ? false : u.isHod // Reset isHod if department already has one
+                            }));
+                        }}
                         className="w-full p-2 mb-3 border rounded"
                     >
                         <option value="">Select Department</option>
@@ -523,7 +549,7 @@ const AdminDashboard = () => {
                     <div className="text-center my-2 text-gray-600">OR</div>
                     <select
                         value={newUser.committeeId}
-                        onChange={e => setNewUser(u => ({ ...u, committeeId: e.target.value, departmentId: '' }))}
+                        onChange={e => setNewUser(u => ({ ...u, committeeId: e.target.value, departmentId: '', isHod: false }))}
                         className="w-full p-2 mb-3 border rounded"
                     >
                         <option value="">Select Committee</option>
@@ -544,6 +570,29 @@ const AdminDashboard = () => {
                         />
                         <span>Eligible for demand creation</span>
                     </label>
+                    {newUser.departmentId && !departmentHasHod(newUser.departmentId) && (
+                        <label className="flex items-center space-x-2 mb-4">
+                            <input
+                                type="checkbox"
+                                checked={newUser.isHod}
+                                onChange={e =>
+                                    setNewUser(u => ({
+                                        ...u,
+                                        isHod: e.target.checked
+                                    }))
+                                } className="form-checkbox h-5 w-5 text-indigo-600"
+                            />
+                            <span>Head of Department (HOD)</span>
+                        </label>
+                    )}
+                    {newUser.departmentId && departmentHasHod(newUser.departmentId) && (
+                        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                            <p className="text-sm text-yellow-800">
+                                <strong>Note:</strong> This department already has a Head of Department (HOD). 
+                                Only one HOD is allowed per department.
+                            </p>
+                        </div>
+                    )}
                     <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Add User</button>
                 </form>
             </Modal>

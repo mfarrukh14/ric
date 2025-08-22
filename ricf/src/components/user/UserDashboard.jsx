@@ -6,6 +6,7 @@ import TechnicalEvaluationDashboard from '../committee/TechnicalEvaluationDashbo
 import PurchaseDepartment from '../department/PurchaseDepartment';
 import GrievanceCommitteeNew from '../committee/GrievanceCommitteeNew';
 import VettingDashboard from '../vetting/VettingDashboard';
+import HodDashboard from '../hod/HodDashboard';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
 import { apiUrl } from '../../config/api';
 
@@ -34,6 +35,9 @@ export default function UserDashboard() {
   
   // Check if user is Vetting Committee member
   const isVettingCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('vetting');
+  
+  // Check if user is HOD
+  const isHod = user?.isHod === 1 || user?.isHod === true;
 
   // Initialize user from localStorage once
   useEffect(() => {
@@ -83,9 +87,22 @@ export default function UserDashboard() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
+      case 'pending_hod_approval': return 'bg-orange-100 text-orange-800';
+      case 'hod_rejected': return 'bg-red-100 text-red-800';
       case 'available': return 'bg-green-100 text-green-800';
       case 'not_available': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'pending': return 'PENDING STORE REVIEW';
+      case 'pending_hod_approval': return 'PENDING HOD APPROVAL';
+      case 'hod_rejected': return 'REJECTED BY HOD';
+      case 'available': return 'AVAILABLE';
+      case 'not_available': return 'NOT AVAILABLE';
+      default: return status?.replace('_', ' ').toUpperCase() || 'UNKNOWN';
     }
   };
 
@@ -105,7 +122,8 @@ export default function UserDashboard() {
            isEvaluationCommittee ? 'Supplier Evaluation Committee Dashboard' :
            isPurchaseDepartment ? 'Purchase Department Dashboard' :
            isGrievanceCommittee ? 'Grievance Committee Dashboard' :
-           isVettingCommittee ? 'Vetting Committee Dashboard' : 'User Dashboard'}
+           isVettingCommittee ? 'Vetting Committee Dashboard' :
+           isHod ? 'Head of Department Dashboard' : 'User Dashboard'}
         </h1>
         <div className="flex space-x-3">
           {user?.eligibleForDemandCreation && (
@@ -231,6 +249,36 @@ export default function UserDashboard() {
                 }`}
               >
                 Purchase Review
+              </button>
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Navigation for HOD Users */}
+      {isHod && (
+        <div className="mb-6">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('my-demands')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'my-demands'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('hod-approval')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'hod-approval'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Department Approval
               </button>
             </nav>
           </div>
@@ -375,7 +423,7 @@ export default function UserDashboard() {
                           </div>
                           <div className="flex space-x-2">
                             <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(demand.status)}`}>
-                              {demand.status.replace('_', ' ').toUpperCase()}
+                              {getStatusText(demand.status)}
                             </span>
                             <span className={`px-3 py-1 rounded-full text-xs font-medium ${getUrgencyColor(demand.urgency)}`}>
                               {demand.urgency.toUpperCase()}
@@ -404,6 +452,44 @@ export default function UserDashboard() {
                             <p className="text-gray-600 mt-1">{demand.description}</p>
                           </div>
                         </div>
+
+                        {/* HOD Response Details */}
+                        {demand.hod_status && (
+                          <div className={`rounded-lg p-4 mb-4 ${
+                            demand.hod_status === 'approved' ? 'bg-green-50 border border-green-200' : 
+                            demand.hod_status === 'rejected' ? 'bg-red-50 border border-red-200' : 'bg-gray-50'
+                          }`}>
+                            <h4 className="font-medium text-gray-900 mb-2">HOD Response</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="font-medium text-gray-700">Status:</span>
+                                <span className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
+                                  demand.hod_status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                }`}>
+                                  {demand.hod_status.toUpperCase()}
+                                </span>
+                              </div>
+                              {demand.hod_response_by_name && (
+                                <div>
+                                  <span className="font-medium text-gray-700">Reviewed By:</span>
+                                  <span className="ml-2">{demand.hod_response_by_name}</span>
+                                </div>
+                              )}
+                              {demand.hod_response_at && (
+                                <div>
+                                  <span className="font-medium text-gray-700">Response Date:</span>
+                                  <span className="ml-2">{new Date(demand.hod_response_at).toLocaleDateString()}</span>
+                                </div>
+                              )}
+                            </div>
+                            {demand.hod_rejection_reason && (
+                              <div className="mt-3">
+                                <span className="font-medium text-gray-700">Rejection Reason:</span>
+                                <p className="text-gray-600 mt-1 bg-white p-3 rounded border">{demand.hod_rejection_reason}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Items Display */}
                         {demand.items && demand.items.length > 0 ? (
@@ -510,6 +596,10 @@ export default function UserDashboard() {
 
       {isPurchaseDepartment && activeTab === 'purchase-review' && (
         <PurchaseDepartment />
+      )}
+
+      {isHod && activeTab === 'hod-approval' && (
+        <HodDashboard />
       )}
 
       {isGrievanceCommittee && activeTab === 'grievance-evaluation' && (

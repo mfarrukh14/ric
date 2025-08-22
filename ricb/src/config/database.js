@@ -2791,6 +2791,80 @@ const runMigrations = async () => {
                 }
             });
         });
+
+        // Migration 17: Add is_hod column to users table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(users)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasHodColumn = columnNames.includes('is_hod');
+                
+                if (!hasHodColumn) {
+                    console.log('Adding is_hod column to users table...');
+                    db.run(`ALTER TABLE users ADD COLUMN is_hod INTEGER DEFAULT 0`, (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            console.error('Error adding is_hod column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added is_hod column to users table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('users table already has is_hod column');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 18: Add HOD approval fields to demands table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demands)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasHodFields = columnNames.includes('hod_status') && columnNames.includes('hod_response_by') && columnNames.includes('hod_response_at') && columnNames.includes('hod_rejection_reason');
+                
+                if (!hasHodFields) {
+                    console.log('Adding HOD approval fields to demands table...');
+                    
+                    const addColumn = (columnDef) => {
+                        return new Promise((resolveCol, rejectCol) => {
+                            db.run(`ALTER TABLE demands ADD COLUMN ${columnDef}`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    rejectCol(err);
+                                } else {
+                                    resolveCol();
+                                }
+                            });
+                        });
+                    };
+                    
+                    Promise.all([
+                        addColumn('hod_status TEXT DEFAULT NULL'), // NULL = pending_hod_approval, 'approved', 'rejected'
+                        addColumn('hod_response_by INTEGER DEFAULT NULL'),
+                        addColumn('hod_response_at DATETIME DEFAULT NULL'),
+                        addColumn('hod_rejection_reason TEXT DEFAULT NULL')
+                    ]).then(() => {
+                        console.log('Successfully added HOD approval fields to demands table');
+                        resolve();
+                    }).catch((err) => {
+                        console.error('Error adding HOD approval fields to demands table:', err);
+                        reject(err);
+                    });
+                } else {
+                    console.log('demands table already has HOD approval fields');
+                    resolve();
+                }
+            });
+        });
         
         console.log('Database migrations completed successfully');
     } catch (error) {

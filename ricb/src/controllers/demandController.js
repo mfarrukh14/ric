@@ -135,12 +135,47 @@ const createDemand = async (req, res) => {
             return res.status(400).json({ message: 'Invalid item name selected for first item' });
         }
 
+        // Check if user's department has an HOD to determine initial status
+        const userInfo = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT department_id FROM users WHERE id = ?',
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        let initialStatus = 'pending'; // Default: goes directly to store
+        let hodStatus = null;
+
+        // If user has a department, check if department has an HOD
+        if (userInfo && userInfo.department_id) {
+            const departmentHod = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT id FROM users WHERE department_id = ? AND is_hod = 1',
+                    [userInfo.department_id],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            // If department has an HOD, demand needs HOD approval first
+            if (departmentHod) {
+                initialStatus = 'pending_hod_approval';
+                hodStatus = null; // NULL means waiting for HOD approval
+            }
+        }
+
         // Create main demand record (using first item as primary for backward compatibility)
         const demandResult = await new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO demands (item_name, quantity, estimated_cost, description, urgency, required_by, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [itemNameData.name, firstItem.quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId],
+                `INSERT INTO demands (item_name, quantity, estimated_cost, description, urgency, required_by, created_by, status, hod_status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [itemNameData.name, firstItem.quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId, initialStatus, hodStatus],
                 function(err) {
                     if (err) reject(err);
                     else resolve({ id: this.lastID });
@@ -276,11 +311,12 @@ const getUserDemands = async (req, res) => {
     try {
         const demands = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT d.*, u.name as created_by_name, sr.name as store_response_by_name
+                `SELECT d.*, u.name as created_by_name, sr.name as store_response_by_name, hr.name as hod_response_by_name
                  FROM demands d
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN users sr ON d.store_response_by = sr.id
-                 WHERE d.created_by = ?
+                 LEFT JOIN users hr ON d.hod_response_by = hr.id
+                 WHERE d.created_by = ? AND (d.is_merged IS NULL OR d.is_merged = 0)
                  ORDER BY d.created_at DESC`,
                 [userId],
                 (err, rows) => {
@@ -329,11 +365,13 @@ const getAllDemands = async (req, res) => {
         const demands = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department,
-                        sr.name as store_response_by_name
+                        sr.name as store_response_by_name, hr.name as hod_response_by_name
                  FROM demands d
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
                  LEFT JOIN users sr ON d.store_response_by = sr.id
+                 LEFT JOIN users hr ON d.hod_response_by = hr.id
+                 WHERE d.status != 'pending_hod_approval' AND d.is_merged != 1
                  ORDER BY d.created_at DESC`,
                 [],
                 (err, rows) => {
@@ -859,6 +897,146 @@ const generateDemandExcelReport = async (req, res) => {
     }
 };
 
+// HOD Approval Functions
+const getHodPendingDemands = async (req, res) => {
+    const db = getDatabase();
+    const hodUserId = req.user.id;
+    
+    try {
+        // Get HOD's department
+        const hodInfo = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT department_id FROM users WHERE id = ? AND is_hod = 1',
+                [hodUserId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!hodInfo) {
+            return res.status(403).json({ error: 'You are not authorized as an HOD' });
+        }
+
+        // Get all pending demands from HOD's department
+        const demands = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT d.*, u.name as creator_name, dept.name as department_name
+                 FROM demands d
+                 JOIN users u ON d.created_by = u.id
+                 JOIN departments dept ON u.department_id = dept.id
+                 WHERE u.department_id = ? AND d.status = 'pending_hod_approval' AND d.hod_status IS NULL AND d.is_merged != 1
+                 ORDER BY d.created_at DESC`,
+                [hodInfo.department_id],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        res.json(demands);
+    } catch (error) {
+        console.error('Error fetching HOD pending demands:', error);
+        res.status(500).json({ error: 'Error fetching pending demands' });
+    }
+};
+
+const approveRejectDemandByHod = async (req, res) => {
+    const { demandId, action, rejectionReason } = req.body;
+    const hodUserId = req.user.id;
+    const db = getDatabase();
+    
+    if (!demandId || !action || !['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ error: 'Demand ID and valid action (approve/reject) are required' });
+    }
+
+    if (action === 'reject' && !rejectionReason) {
+        return res.status(400).json({ error: 'Rejection reason is required when rejecting a demand' });
+    }
+
+    try {
+        // Verify HOD has authority over this demand
+        const demandInfo = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT d.*, u.department_id, u.name as creator_name
+                 FROM demands d
+                 JOIN users u ON d.created_by = u.id
+                 WHERE d.id = ? AND d.status = 'pending_hod_approval' AND d.hod_status IS NULL`,
+                [demandId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!demandInfo) {
+            return res.status(404).json({ error: 'Demand not found or not pending HOD approval' });
+        }
+
+        // Verify user is HOD of the department
+        const hodInfo = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT department_id FROM users WHERE id = ? AND is_hod = 1 AND department_id = ?',
+                [hodUserId, demandInfo.department_id],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!hodInfo) {
+            return res.status(403).json({ error: 'You are not authorized to approve/reject this demand' });
+        }
+
+        // Update demand status
+        const newStatus = action === 'approve' ? 'pending' : 'hod_rejected';
+        const hodStatus = action === 'approve' ? 'approved' : 'rejected';
+
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE demands SET 
+                 status = ?, 
+                 hod_status = ?, 
+                 hod_response_by = ?, 
+                 hod_response_at = CURRENT_TIMESTAMP,
+                 hod_rejection_reason = ?
+                 WHERE id = ?`,
+                [newStatus, hodStatus, hodUserId, action === 'reject' ? rejectionReason : null, demandId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Log the action
+        await auditLogger.logDemandManagement(
+            hodUserId,
+            req.user.role,
+            req.user.name,
+            action === 'approve' ? 'HOD_DEMAND_APPROVED' : 'HOD_DEMAND_REJECTED',
+            {
+                id: demandId,
+                status: newStatus,
+                department: demandInfo.department_id,
+                title: demandInfo.item_name,
+                creator: demandInfo.creator_name,
+                rejectionReason: action === 'reject' ? rejectionReason : null
+            },
+            req
+        );
+
+        res.json({ message: `Demand ${action}d successfully` });
+    } catch (error) {
+        console.error(`Error ${action}ing demand:`, error);
+        res.status(500).json({ error: `Error ${action}ing demand` });
+    }
+};
+
 module.exports = {
     createDemand,
     getUserDemands,
@@ -868,5 +1046,7 @@ module.exports = {
     getAllDemandsWithItems,
     rejectDemand,
     getDemandItemsPaginated,
-    generateDemandExcelReport
+    generateDemandExcelReport,
+    getHodPendingDemands,
+    approveRejectDemandByHod
 };

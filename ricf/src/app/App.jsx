@@ -17,6 +17,7 @@ import CreateDemandForm from '../components/demand/CreateDemandForm';
 import FulfillmentPage from '../components/store/FulfillmentPage';
 import Header from '../components/layout/header/Header';
 import TwoFactorEnforcementWrapper from '../components/auth/TwoFactorEnforcementWrapper';
+import HodDashboard from '../components/hod/HodDashboard';
 
 const ProtectedRoute = ({ children, allowedRoles, currentUser }) => {
   if (!currentUser) {
@@ -200,6 +201,16 @@ function App() {
             }
           />
           <Route
+            path="/hod"
+            element={
+              <ProtectedRoute currentUser={user}>
+                <TwoFactorEnforcementWrapper>
+                  <HodDashboard />
+                </TwoFactorEnforcementWrapper>
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/create-demand"
             element={
               <ProtectedRoute currentUser={user}>
@@ -237,6 +248,8 @@ function App() {
                   <Navigate to="/admin" replace />
                 ) : user.role === 'supplier' ? (
                   <Navigate to="/supplier-dashboard" replace />
+                ) : user.is_hod ? (
+                  <Navigate to="/hod" replace />
                 ) : user.committee_name === 'Vetting Committee' ? (
                   <Navigate to="/committee/vetting" replace />
                 ) : user.committee_name === 'Technical Evaluation Committee' ? (

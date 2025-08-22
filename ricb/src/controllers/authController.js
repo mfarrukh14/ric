@@ -25,7 +25,7 @@ exports.login = async (req, res) => {
     try {        const user = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, u.password, u.eligible_for_demand_creation,
-                        u.two_factor_enabled, d.name as department_name, c.name as committee_name
+                        u.two_factor_enabled, u.is_hod, d.name as department_name, c.name as committee_name
                  FROM users u 
                  LEFT JOIN departments d ON u.department_id = d.id
                  LEFT JOIN committees c ON u.committee_id = c.id
@@ -123,7 +123,8 @@ exports.login = async (req, res) => {
                 departmentName: user.department_name,
                 committeeName: user.committee_name,
                 eligibleForDemandCreation: !!user.eligible_for_demand_creation,
-                twoFactorEnabled: !!user.two_factor_enabled
+                twoFactorEnabled: !!user.two_factor_enabled,
+                isHod: !!user.is_hod
             }
         });
     } catch (err) {
@@ -191,7 +192,7 @@ exports.complete2FALogin = async (req, res) => {
         const user = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, 
-                        u.eligible_for_demand_creation, u.two_factor_enabled,
+                        u.eligible_for_demand_creation, u.two_factor_enabled, u.is_hod,
                         d.name as department_name, c.name as committee_name
                  FROM users u 
                  LEFT JOIN departments d ON u.department_id = d.id
@@ -255,7 +256,8 @@ exports.complete2FALogin = async (req, res) => {
                 departmentName: user.department_name,
                 committeeName: user.committee_name,
                 eligibleForDemandCreation: !!user.eligible_for_demand_creation,
-                twoFactorEnabled: !!user.two_factor_enabled
+                twoFactorEnabled: !!user.two_factor_enabled,
+                isHod: !!user.is_hod
             }
         });
 
@@ -282,7 +284,7 @@ exports.getProfile = async (req, res) => {
         const user = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, 
-                        u.eligible_for_demand_creation, u.two_factor_enabled,
+                        u.eligible_for_demand_creation, u.two_factor_enabled, u.is_hod,
                         d.name as department_name, c.name as committee_name
                  FROM users u 
                  LEFT JOIN departments d ON u.department_id = d.id
@@ -310,7 +312,8 @@ exports.getProfile = async (req, res) => {
             departmentName: user.department_name,
             committeeName: user.committee_name,
             eligibleForDemandCreation: !!user.eligible_for_demand_creation,
-            two_factor_enabled: !!user.two_factor_enabled
+            two_factor_enabled: !!user.two_factor_enabled,
+            isHod: !!user.is_hod
         });
 
     } catch (err) {
