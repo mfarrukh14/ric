@@ -48,6 +48,8 @@ const {
     getTendersPendingOpening,
     getTenderOpeningDetails,
     generateTenderOpeningReport,
+    getKnockoutClauseDocuments,
+    downloadKnockoutClauseDocument,
     openTender,
     getPublishedTenders
 } = require('../controllers/tenderController');
@@ -104,6 +106,35 @@ const uploadTenderFiles = upload.fields([
     { name: 'tenderDocument', maxCount: 1 },
     { name: 'itemsList', maxCount: 1 }
 ]);
+
+// Configure multer for knockout clause documents upload
+const knockoutStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/knockout-documents';
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'knockout-doc-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const uploadKnockoutDocuments = multer({
+    storage: knockoutStorage,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB limit per file
+    },
+    fileFilter: function (req, file, cb) {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed for knockout clause documents'));
+        }
+    }
+});
 
 // Create a new demand
 router.post('/', auth, createDemand);
@@ -166,6 +197,12 @@ router.get('/tenders/:tenderId/opening-report', auth, generateTenderOpeningRepor
 
 // Open tender and forward to technical evaluation (for purchase department)
 router.post('/tenders/:tenderId/open', auth, openTender);
+
+// Get knockout clause documents for technical evaluation
+router.get('/tenders/:tenderId/knockout-documents/:supplierId', auth, getKnockoutClauseDocuments);
+
+// Download knockout clause document for technical evaluation
+router.get('/knockout-documents/:documentId/download', auth, downloadKnockoutClauseDocument);
 
 // Generate supply order PDF
 router.post('/:id/supply-order', auth, generateSupplyOrderPDF);
@@ -328,7 +365,7 @@ router.get('/tenders/:tenderId/details', auth, getTenderWithCriteria);
 router.get('/tenders/published', auth, getPublishedTenders);
 
 // Acknowledge evaluation criteria (for suppliers)
-router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
+router.post('/tenders/:tenderId/acknowledge', auth, uploadKnockoutDocuments.any(), acknowledgeCriteria);
 
 // Append criteria (including scoring) to an existing tender
 router.post('/tenders/:tenderId/add-criteria', auth, addTenderCriteria);

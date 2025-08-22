@@ -15,6 +15,7 @@ const ItemWiseEvaluation = () => {
     const [scoreErrors, setScoreErrors] = useState({}); // bidId -> error msg
     const [showRejectionInput, setShowRejectionInput] = useState({}); // Changed to object with bid IDs as keys
     const [rejectionReasons, setRejectionReasons] = useState({}); // Changed to object with bid IDs as keys
+    const [knockoutDocuments, setKnockoutDocuments] = useState({}); // supplierId -> { clauseId: documentData }
     
     const { tenderId } = useParams();
     const navigate = useNavigate();
@@ -75,10 +76,49 @@ const ItemWiseEvaluation = () => {
                 (data.scoringCriteria || []).forEach(c => { scoreInit[b.id].breakdown[c.id] = 0; });
             });
             setScoring(scoreInit);
+            
+            // Fetch knockout documents for all suppliers
+            await fetchKnockoutDocumentsForAllSuppliers(data.bids || []);
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchKnockoutDocumentsForAllSuppliers = async (bids) => {
+        try {
+            const token = localStorage.getItem('token');
+            const docsData = {};
+            
+            for (const bid of bids) {
+                try {
+                    const response = await fetch(`${apiUrl}/suppliers/tenders/${tenderId}/knockout-documents/${bid.supplier_id}`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const documents = data.documents || [];
+                        
+                        // Organize documents by clause_id for easy lookup
+                        const docsPerClause = {};
+                        documents.forEach(doc => {
+                            docsPerClause[doc.clause_id] = doc;
+                        });
+                        
+                        docsData[bid.supplier_id] = docsPerClause;
+                    }
+                } catch (error) {
+                    console.error(`Error fetching knockout documents for supplier ${bid.supplier_id}:`, error);
+                }
+            }
+            
+            setKnockoutDocuments(docsData);
+        } catch (error) {
+            console.error('Error fetching knockout documents:', error);
         }
     };
 
@@ -107,6 +147,33 @@ const ItemWiseEvaluation = () => {
             document.body.removeChild(a);
         } catch (err) {
             setError(err.message);
+        }
+    };
+
+    const downloadKnockoutClauseDocument = async (documentId, originalFilename) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/suppliers/knockout-documents/${documentId}/download`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download document');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = originalFilename || `knockout-doc-${documentId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            setError(`Failed to download document: ${err.message}`);
         }
     };
 
@@ -528,21 +595,42 @@ const ItemWiseEvaluation = () => {
                                                             <span className="mr-2">Knockout Clauses</span>
                                                             <span className="text-xs font-normal text-red-500">(Check if clause is satisfied)</span>
                                                         </h6>
-                                                        <div className="grid md:grid-cols-2 gap-2">
-                                                            {tender.knockoutClauses.map(clause => (
-                                                                <label key={clause.id} className="flex items-start space-x-2 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-900">
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        className="mt-0.5 h-4 w-4 text-red-600"
-                                                                        checked={koMap[clause.id] === true}
-                                                                        onChange={(e) => setKnockoutChecks(prev => ({
-                                                                            ...prev,
-                                                                            [bid.id]: { ...prev[bid.id], [clause.id]: e.target.checked }
-                                                                        }))}
-                                                                    />
-                                                                    <span><span className="font-medium">{clause.criteria_title}:</span> {clause.criteria_description}</span>
-                                                                </label>
-                                                            ))}
+                                                        <div className="grid md:grid-cols-1 gap-2">
+                                                            {tender.knockoutClauses.map(clause => {
+                                                                const supplierDoc = knockoutDocuments[bid.supplier_id]?.[clause.id];
+                                                                return (
+                                                                    <div key={clause.id} className="bg-red-50 border border-red-200 rounded p-3">
+                                                                        <div className="flex items-start justify-between">
+                                                                            <label className="flex items-start space-x-2 text-xs text-red-900 flex-1">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    className="mt-0.5 h-4 w-4 text-red-600"
+                                                                                    checked={koMap[clause.id] === true}
+                                                                                    onChange={(e) => setKnockoutChecks(prev => ({
+                                                                                        ...prev,
+                                                                                        [bid.id]: { ...prev[bid.id], [clause.id]: e.target.checked }
+                                                                                    }))}
+                                                                                />
+                                                                                <span><span className="font-medium">{clause.criteria_title}:</span> {clause.criteria_description}</span>
+                                                                            </label>
+                                                                            
+                                                                            {supplierDoc ? (
+                                                                                <button
+                                                                                    onClick={() => downloadKnockoutClauseDocument(supplierDoc.id, supplierDoc.original_filename)}
+                                                                                    className="ml-2 px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 flex-shrink-0"
+                                                                                    title={`Download: ${supplierDoc.original_filename}`}
+                                                                                >
+                                                                                    📄 Download
+                                                                                </button>
+                                                                            ) : (
+                                                                                <span className="ml-2 px-2 py-1 bg-gray-200 text-gray-600 text-xs rounded flex-shrink-0">
+                                                                                    No Document
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
                                                         </div>
                                                         
                                                         {/* Status indicator */}

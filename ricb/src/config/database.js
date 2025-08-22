@@ -2865,6 +2865,43 @@ const runMigrations = async () => {
                 }
             });
         });
+
+        // Migration 19: Create knockout clause documents table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='knockout_clause_documents'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating knockout_clause_documents table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS knockout_clause_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        clause_id INTEGER NOT NULL,
+                        document_filename TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                        UNIQUE(tender_id, supplier_id, clause_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating knockout_clause_documents table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created knockout_clause_documents table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('knockout_clause_documents table already exists');
+                    resolve();
+                }
+            });
+        });
         
         console.log('Database migrations completed successfully');
     } catch (error) {

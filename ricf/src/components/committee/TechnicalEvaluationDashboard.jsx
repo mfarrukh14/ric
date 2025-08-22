@@ -188,8 +188,6 @@ const TechnicalEvaluationDashboard = () => {
                                         <div className="evaluation-details">
                                             <p><strong>Item:</strong> {tender.item_name || 'N/A'}</p>
                                             <p><strong>Description:</strong> {tender.description || 'N/A'}</p>
-                                            <p><strong>Quantity:</strong> {tender.quantity || 'N/A'}</p>
-                                            <p><strong>Est. Cost:</strong> ${tender.estimated_cost || 'N/A'}</p>
                                             <p><strong>Bidding End:</strong> {tender.bidding_end_time ? formatDate(tender.bidding_end_time) : 'N/A'}</p>
                                             {tender.suppliers_count && (
                                                 <p><strong>Suppliers Applied:</strong> {tender.suppliers_count}</p>

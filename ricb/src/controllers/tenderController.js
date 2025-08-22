@@ -1,6 +1,8 @@
 const { getDatabase } = require('../config/database');
 const pdfService = require('../utils/pdfService');
 const EmailService = require('../utils/emailService');
+const path = require('path');
+const fs = require('fs');
 
 // Initialize email service
 const emailService = new EmailService();
@@ -846,7 +848,29 @@ const acknowledgeCriteria = async (req, res) => {
     const supplierId = req.user?.id; // Get from auth middleware
 
     try {
-        const { knockoutChecklist } = req.body || {};
+        // Handle file uploads and extract knockout document data
+        const knockoutDocuments = [];
+        
+        // Process uploaded files - each file has a field name like 'knockoutDoc_0', 'knockoutDoc_1', etc.
+        if (req.files && Array.isArray(req.files)) {
+            req.files.forEach(file => {
+                if (file.fieldname && file.fieldname.startsWith('knockoutDoc_')) {
+                    const clauseIndex = parseInt(file.fieldname.split('_')[1]);
+                    
+                    knockoutDocuments.push({
+                        clauseIndex: clauseIndex,
+                        originalName: file.originalname,
+                        fileName: file.filename,
+                        filePath: file.path,
+                        fileSize: file.size,
+                        mimeType: file.mimetype
+                    });
+                }
+            });
+        }
+
+        console.log(`Processing knockout documents for tender ${tenderId}, supplier ${supplierId}:`, knockoutDocuments.length, 'files');
+
         // Update legacy acknowledgement flag
         await new Promise((resolve, reject) => {
             db.run(
@@ -858,9 +882,27 @@ const acknowledgeCriteria = async (req, res) => {
             );
         });
 
-        // Store detailed knockout clause acknowledgment
-        if (Array.isArray(knockoutChecklist) && knockoutChecklist.length > 0) {
-            const allChecked = knockoutChecklist.every(c => c.checked === true);
+        // Store knockout clause documents in database
+        if (knockoutDocuments.length > 0) {
+            for (const doc of knockoutDocuments) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO knockout_clause_documents 
+                         (tender_id, supplier_id, clause_id, document_filename, original_filename, uploaded_at)
+                         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                        [
+                            tenderId, 
+                            supplierId, 
+                            doc.clauseIndex, 
+                            doc.fileName, 
+                            doc.originalName
+                        ],
+                        (err) => { if (err) reject(err); else resolve(); }
+                    );
+                });
+            }
+
+            // Update supplier_knockout_acknowledgments with document submission status
             await new Promise((resolve, reject) => {
                 db.run(
                     `INSERT INTO supplier_knockout_acknowledgments (tender_id, supplier_id, all_clauses_checked, checklist)
@@ -869,18 +911,21 @@ const acknowledgeCriteria = async (req, res) => {
                         all_clauses_checked=excluded.all_clauses_checked,
                         checklist=excluded.checklist,
                         acknowledged_at=CURRENT_TIMESTAMP`,
-                    [tenderId, supplierId, allChecked ? 1 : 0, JSON.stringify(knockoutChecklist)],
-                    (err)=>{ if (err) reject(err); else resolve(); }
+                    [tenderId, supplierId, 1, JSON.stringify({ documentsUploaded: knockoutDocuments.length })],
+                    (err) => { if (err) reject(err); else resolve(); }
                 );
             });
         }
 
-        res.json({ message: 'Evaluation criteria / knockout clauses acknowledged successfully' });
+        res.json({ 
+            message: 'Evaluation criteria acknowledged and knockout clause documents uploaded successfully',
+            documentsUploaded: knockoutDocuments.length
+        });
 
     } catch (error) {
         console.error('Error acknowledging criteria:', error);
         res.status(500).json({ 
-            message: 'Failed to acknowledge criteria', 
+            message: 'Failed to acknowledge criteria and upload documents', 
             error: error.message 
         });
     }
@@ -1260,6 +1305,83 @@ const getPublishedTenders = async (req, res) => {
     }
 };
 
+// Get knockout clause documents for a specific supplier's bid
+const getKnockoutClauseDocuments = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId, supplierId } = req.params;
+    
+    try {
+        const documents = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT id, clause_id, original_filename, document_filename, uploaded_at
+                 FROM knockout_clause_documents 
+                 WHERE tender_id = ? AND supplier_id = ?
+                 ORDER BY clause_id ASC`,
+                [tenderId, supplierId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json({
+            message: 'Knockout clause documents retrieved successfully',
+            documents: documents
+        });
+
+    } catch (error) {
+        console.error('Error fetching knockout clause documents:', error);
+        res.status(500).json({ 
+            message: 'Failed to fetch knockout clause documents', 
+            error: error.message 
+        });
+    }
+};
+
+// Download knockout clause document
+const downloadKnockoutClauseDocument = async (req, res) => {
+    const db = getDatabase();
+    const { documentId } = req.params;
+    
+    try {
+        const document = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT original_filename, document_filename 
+                 FROM knockout_clause_documents 
+                 WHERE id = ?`,
+                [documentId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!document) {
+            return res.status(404).json({ message: 'Document not found' });
+        }
+
+        const filePath = path.join(__dirname, '../../uploads/knockout-documents', document.document_filename);
+        
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ message: 'File not found on server' });
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="${document.original_filename}"`);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.sendFile(path.resolve(filePath));
+
+    } catch (error) {
+        console.error('Error downloading knockout clause document:', error);
+        res.status(500).json({ 
+            message: 'Failed to download document', 
+            error: error.message 
+        });
+    }
+};
+
 module.exports = {
     processExpiredTenders,
     getAwardedTenders,
@@ -1274,5 +1396,7 @@ module.exports = {
     getTenderWithCriteria,
     acknowledgeCriteria,
     addTenderCriteria,
-    getPublishedTenders
+    getPublishedTenders,
+    getKnockoutClauseDocuments,
+    downloadKnockoutClauseDocument
 };

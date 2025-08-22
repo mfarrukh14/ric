@@ -8,7 +8,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const [loading, setLoading] = useState(false);
     const [tender, setTender] = useState(propTender || null);
     const [fetchingTender, setFetchingTender] = useState(!propTender);
-    const [knockoutChecklist, setKnockoutChecklist] = useState([]);
+    const [knockoutDocuments, setKnockoutDocuments] = useState({});
     const [acknowledging, setAcknowledging] = useState(false);
     const navigate = useNavigate();
     const { tenderId } = useParams();
@@ -95,13 +95,20 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                     const detailedTender = { ...tender, ...data.tender };
                     setTender(detailedTender);
                     if (data.tender.knockoutClauses) {
-                        if (data.tender.supplier_knockout_ack?.checklist) {
-                            setKnockoutChecklist(data.tender.knockoutClauses.map(c => {
-                                const found = data.tender.supplier_knockout_ack.checklist.find(p => p.id === c.id);
-                                return { id: c.id, checked: found ? !!found.checked : false, title: c.criteria_title };
-                            }));
+                        if (data.tender.supplier_knockout_ack?.documents) {
+                            // Initialize with existing documents
+                            const docs = {};
+                            data.tender.supplier_knockout_ack.documents.forEach(doc => {
+                                docs[doc.clause_id] = { 
+                                    file: null, 
+                                    uploaded: true, 
+                                    filename: doc.original_filename 
+                                };
+                            });
+                            setKnockoutDocuments(docs);
                         } else {
-                            setKnockoutChecklist(data.tender.knockoutClauses.map(c => ({ id: c.id, checked: false, title: c.criteria_title })));
+                            // Initialize empty documents object
+                            setKnockoutDocuments({});
                         }
                     }
                 }
@@ -784,25 +791,38 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         </div>
     );
 
-    const allKnockoutChecked = knockoutChecklist.length > 0 && knockoutChecklist.every(c => c.checked);
+    const allKnockoutDocumentsUploaded = tender?.knockoutClauses ? 
+        tender.knockoutClauses.every(clause => knockoutDocuments[clause.id]?.file || knockoutDocuments[clause.id]?.uploaded) : 
+        true;
 
     const handleAcknowledge = async () => {
         try {
             setAcknowledging(true);
             setError('');
-            if (!allKnockoutChecked) {
-                setError('All knockout clauses must be checked.');
+            if (!allKnockoutDocumentsUploaded) {
+                setError('All knockout clause documents must be uploaded.');
                 return;
             }
+            
             const token = localStorage.getItem('supplierToken');
-            const resp = await fetch(`${apiUrl}/demands/tenders/${tender.id}/acknowledge`, {
+            const formData = new FormData();
+            
+            // Add all knockout clause documents to form data
+            tender.knockoutClauses.forEach(clause => {
+                const docData = knockoutDocuments[clause.id];
+                if (docData?.file) {
+                    formData.append(`knockoutDoc_${clause.id}`, docData.file);
+                }
+            });
+            
+            const resp = await fetch(`${apiUrl}/suppliers/tenders/${tender.id}/acknowledge`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ knockoutChecklist: knockoutChecklist.map(k => ({ id: k.id, checked: k.checked })) })
+                body: formData
             });
+            
             if (!resp.ok) {
                 const er = await resp.json().catch(()=>({message:'Failed'}));
                 throw new Error(er.message || 'Failed to acknowledge');
@@ -841,13 +861,40 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                         </div>
                                     )}
                                     {!tender.criteria_acknowledged && (
-                                        <label className="mt-3 inline-flex items-start space-x-2 cursor-pointer">
-                                            <input type="checkbox" className="h-4 w-4 text-red-600 border-gray-300 rounded"
-                                                checked={knockoutChecklist.find(c=>c.id===clause.id)?.checked || false}
-                                                onChange={(e)=> setKnockoutChecklist(prev => prev.map(c => c.id===clause.id ? { ...c, checked: e.target.checked } : c))}
+                                        <div className="mt-3">
+                                            <label className="block text-sm font-medium text-red-900 mb-2">
+                                                Upload compliance document for this clause (PDF only) *
+                                            </label>
+                                            <input
+                                                type="file"
+                                                accept=".pdf"
+                                                onChange={(e) => {
+                                                    const file = e.target.files[0];
+                                                    if (file) {
+                                                        if (file.type !== 'application/pdf') {
+                                                            setError('Only PDF files are allowed for knockout clause documents');
+                                                            e.target.value = '';
+                                                            return;
+                                                        }
+                                                        setKnockoutDocuments(prev => ({
+                                                            ...prev,
+                                                            [clause.id]: { file, uploaded: false, filename: file.name }
+                                                        }));
+                                                        setError('');
+                                                    }
+                                                }}
+                                                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"
                                             />
-                                            <span className="text-xs text-red-900">I confirm compliance with this clause.</span>
-                                        </label>
+                                            {knockoutDocuments[clause.id] && (
+                                                <div className="mt-2 flex items-center text-sm">
+                                                    <span className="text-green-600 mr-2">✓</span>
+                                                    <span className="text-gray-700">{knockoutDocuments[clause.id].filename}</span>
+                                                    {knockoutDocuments[clause.id].uploaded && (
+                                                        <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Previously uploaded</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                                 <span className="ml-3 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-600 text-white">KNOCKOUT</span>
@@ -859,15 +906,15 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             {!tender?.criteria_acknowledged && (
                 <button
                     onClick={handleAcknowledge}
-                    disabled={!allKnockoutChecked || acknowledging}
+                    disabled={!allKnockoutDocumentsUploaded || acknowledging}
                     className="px-4 py-2 text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50"
                 >
-                    {acknowledging ? 'Acknowledging...' : 'Acknowledge All Clauses'}
+                    {acknowledging ? 'Uploading Documents...' : 'Upload Documents & Acknowledge'}
                 </button>
             )}
             {tender?.criteria_acknowledged && (
                 <div className="flex items-center text-green-600 text-sm font-medium">
-                    <span className="mr-2">✓</span> Knockout clauses acknowledged.
+                    <span className="mr-2">✓</span> Knockout clause documents uploaded and acknowledged.
                 </div>
             )}
         </div>

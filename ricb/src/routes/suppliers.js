@@ -3,7 +3,48 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const auth = require('../middleware/auth');
-const { acknowledgeCriteria } = require('../controllers/tenderController');
+const { acknowledgeCriteria, getKnockoutClauseDocuments, downloadKnockoutClauseDocument } = require('../controllers/tenderController');
+
+// Configure multer for knockout clause documents upload
+const knockoutStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/knockout-documents';
+        try {
+            if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+                console.log(`Created knockout documents directory: ${uploadDir}`);
+            }
+            cb(null, uploadDir);
+        } catch (error) {
+            console.error('Error creating knockout documents directory:', error);
+            cb(error, null);
+        }
+    },
+    filename: function (req, file, cb) {
+        try {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const filename = 'knockout-doc-' + uniqueSuffix + path.extname(file.originalname);
+            cb(null, filename);
+        } catch (error) {
+            console.error('Error generating filename for knockout document:', error);
+            cb(error, null);
+        }
+    }
+});
+
+const uploadKnockoutDocuments = multer({
+    storage: knockoutStorage,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB limit per file
+    },
+    fileFilter: function (req, file, cb) {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only PDF files are allowed for knockout clause documents'));
+        }
+    }
+}).any(); // Use .any() to handle dynamic field names
 const {
     registerSupplier,
     loginSupplier,
@@ -136,8 +177,14 @@ router.get('/:supplierId/document/:documentType', auth, downloadDocument);
 // Submit bid for a tender
 router.post('/tenders/:tenderId/bid', auth, uploadBidFields, submitBid);
 
-// Acknowledge knockout clauses / evaluation criteria prior to bid
-router.post('/tenders/:tenderId/acknowledge', auth, acknowledgeCriteria);
+// Acknowledge knockout clauses / evaluation criteria prior to bid (with document uploads)
+router.post('/tenders/:tenderId/acknowledge', auth, uploadKnockoutDocuments, acknowledgeCriteria);
+
+// Get knockout clause documents for a supplier's bid (for technical evaluation)
+router.get('/tenders/:tenderId/knockout-documents/:supplierId', auth, getKnockoutClauseDocuments);
+
+// Download knockout clause document
+router.get('/knockout-documents/:documentId/download', auth, downloadKnockoutClauseDocument);
 
 // Get supplier's own bids
 router.get('/bids/my-bids', auth, getSupplierBids);

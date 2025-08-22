@@ -80,6 +80,28 @@ console.log('Automatic tender expiry processing started (checks every minute)');
 // Connect DB and start server
 connectDatabase()
   .then(() => {
+    // Ensure required upload directories exist
+    const fs = require('fs');
+    const path = require('path');
+    
+    const uploadDirs = [
+      'uploads',
+      'uploads/knockout-documents',
+      'uploads/grievance-minutes',
+      'tender-documents',
+      'reports',
+      'reports/technical',
+      'grievance-letters',
+      'audit_logs'
+    ];
+    
+    uploadDirs.forEach(dir => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        console.log(`Created directory: ${dir}`);
+      }
+    });
+    
     // Initialize audit cleanup service with 365 days retention
     auditCleanupService.initialize(365);
     
