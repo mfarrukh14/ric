@@ -28,6 +28,7 @@ const getDatabase = () => {
     return db;
 };
 
+
 const generateCredentials = () => {
     // Generate random username (6 characters)
     const username = crypto.randomBytes(3).toString('hex');
