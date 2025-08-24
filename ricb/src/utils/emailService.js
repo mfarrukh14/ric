@@ -2691,6 +2691,266 @@ class EmailService {
 </html>
         `;
     }
+
+    async sendFinancialGrievanceEmail(supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath = null, emailType = 'grievance') {
+        try {
+            let mailOptions = {};
+            
+            if (emailType === 'meeting_minutes') {
+                // Meeting minutes distribution email
+                mailOptions = {
+                    from: process.env.EMAIL_USER,
+                    to: supplierEmail,
+                    subject: `Financial Grievance Meeting Minutes - Tender ${tenderNo}`,
+                    html: this.getMeetingMinutesEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime),
+                };
+
+                // Attach meeting minutes file if provided
+                if (reportPath && fs.existsSync(reportPath)) {
+                    mailOptions.attachments = [{
+                        filename: `Meeting_Minutes_${tenderNo}.pdf`,
+                        path: reportPath
+                    }];
+                }
+            } else {
+                // Regular grievance period email
+                mailOptions = {
+                    from: process.env.EMAIL_USER,
+                    to: supplierEmail,
+                    subject: `Financial Grievance Period - Tender ${tenderNo}`,
+                    html: this.getFinancialGrievanceEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime),
+                };
+
+                // Attach financial opening report if provided
+                if (reportPath && fs.existsSync(reportPath)) {
+                    mailOptions.attachments = [{
+                        filename: `Financial_Opening_Report_${tenderNo}.xlsx`,
+                        path: reportPath
+                    }];
+                }
+            }
+
+            const result = await this.transporter.sendMail(mailOptions);
+            console.log(`${emailType} email sent successfully:`, result.messageId);
+            return { success: true, messageId: result.messageId };
+        } catch (error) {
+            console.error(`Error sending ${emailType} email:`, error);
+            throw error;
+        }
+    }
+
+    getFinancialGrievanceEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const grievanceEndDate = new Date();
+        grievanceEndDate.setDate(grievanceEndDate.getDate() + 10);
+        const formattedGrievanceEndDate = grievanceEndDate.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const formattedMeetingDateTime = new Date(meetingDateTime).toLocaleString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Grievance Period - RIC E-Tender</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 300; }
+        .content { padding: 30px; }
+        .tender-info { background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .grievance-period { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; margin: 20px 0; border-radius: 5px; text-align: center; }
+        .meeting-info { background-color: #e8f4fd; border: 1px solid #bee5eb; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .important { color: #e74c3c; font-weight: bold; }
+        .footer { background-color: #f8f9fa; color: #6c757d; text-align: center; padding: 20px; font-size: 12px; }
+        ul { padding-left: 20px; }
+        li { margin-bottom: 8px; }
+        .highlight { background-color: #fff3cd; padding: 2px 5px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Financial Grievance Period</h1>
+            <p>Rawalpindi Institute of Cardiology</p>
+        </div>
+        
+        <div class="content">
+            <p>Dear <strong>${companyName}</strong>,</p>
+            
+            <p>We hope this email finds you well. We are writing to inform you about the commencement of the <strong>Financial Grievance Period</strong> for the following tender:</p>
+            
+            <div class="tender-info">
+                <h3>Tender Information</h3>
+                <p><strong>Tender Title:</strong> ${tenderTitle}</p>
+                <p><strong>Tender Number:</strong> ${tenderNo}</p>
+                <p><strong>Financial Opening:</strong> Completed</p>
+            </div>
+
+            <div class="grievance-period">
+                <h3 class="important">⏰ Financial Grievance Period: 10 Days</h3>
+                <p><strong>Period Start:</strong> ${currentDate}</p>
+                <p><strong>Period End:</strong> ${formattedGrievanceEndDate}</p>
+                <p class="important">All grievances must be submitted before the deadline</p>
+            </div>
+
+            <div class="meeting-info">
+                <h3>📅 Grievance Meeting Details</h3>
+                <p><strong>Date & Time:</strong> ${formattedMeetingDateTime}</p>
+                <p><strong>Venue:</strong> RIC Purchase Department</p>
+                <p><strong>Purpose:</strong> Financial Grievance Discussion</p>
+            </div>
+
+            <h3>Financial Opening Report</h3>
+            <p>Please find attached the financial opening report containing the bid evaluation results. You are encouraged to review this report carefully.</p>
+
+            <h3>Grievance Submission Guidelines</h3>
+            <ul>
+                <li>Grievances must be submitted in writing within the 10-day period</li>
+                <li>All submissions should be addressed to the Purchase Department</li>
+                <li>Please provide detailed justification for any grievances raised</li>
+                <li>Supporting documentation should be attached where applicable</li>
+                <li>Late submissions will not be entertained</li>
+            </ul>
+
+            <h3>Important Notes</h3>
+            <ul>
+                <li>This is a <span class="highlight">mandatory grievance period</span> as per procurement rules</li>
+                <li>The grievance meeting will be conducted by the Purchase Department</li>
+                <li>Meeting minutes will be shared with all approved suppliers after the meeting</li>
+                <li>The tender process will proceed as per schedule after the grievance period</li>
+                <li>For urgent queries, please contact the Purchase Department office</li>
+            </ul>
+
+            <p>We encourage all approved suppliers to actively participate in this process to ensure transparency and fairness in the procurement procedure.</p>
+            
+            <p>
+                <strong>Best regards,</strong><br>
+                RIC Purchase Department<br>
+                Rawalpindi Institute of Cardiology<br>
+                E-Tender System
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
+            <p>Date: ${currentDate}</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+        `;
+    }
+
+    getMeetingMinutesEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        const formattedMeetingDateTime = new Date(meetingDateTime).toLocaleString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Grievance Meeting Minutes - RIC E-Tender</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 300; }
+        .content { padding: 30px; }
+        .tender-info { background-color: #f8f9fa; border-left: 4px solid #27ae60; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .meeting-info { background-color: #e8f4fd; border: 1px solid #bee5eb; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .completion-notice { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 20px; margin: 20px 0; border-radius: 5px; text-align: center; color: #155724; }
+        .footer { background-color: #f8f9fa; color: #6c757d; text-align: center; padding: 20px; font-size: 12px; }
+        .highlight { background-color: #d4edda; padding: 2px 5px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 Meeting Minutes Distribution</h1>
+            <p style="margin: 0; font-size: 16px; opacity: 0.9;">Financial Grievance Process Completed</p>
+        </div>
+        
+        <div class="content">
+            <p>Dear <strong>${companyName}</strong>,</p>
+            
+            <p>The Financial Grievance Meeting has been completed for the following tender. Please find the meeting minutes attached to this email.</p>
+            
+            <div class="tender-info">
+                <h3 style="color: #27ae60; margin-top: 0;">📄 Tender Information</h3>
+                <p><strong>Tender Number:</strong> ${tenderNo}</p>
+                <p><strong>Tender Title:</strong> ${tenderTitle}</p>
+                <p><strong>Meeting Date & Time:</strong> ${formattedMeetingDateTime}</p>
+            </div>
+            
+            <div class="completion-notice">
+                <h3 style="margin-top: 0;">✅ Financial Grievance Process Completed</h3>
+                <p>The financial grievance process for this tender has been officially completed. Please review the attached meeting minutes for details of any discussions or decisions made during the meeting.</p>
+            </div>
+            
+            <div class="meeting-info">
+                <h3 style="color: #17a2b8; margin-top: 0;">📎 Attached Documents</h3>
+                <p>• Meeting Minutes (PDF)</p>
+                <p><strong>Note:</strong> Please save these minutes for your records.</p>
+            </div>
+            
+            <p>If you have any questions regarding the meeting minutes or the grievance process, please contact our procurement office during business hours.</p>
+            
+            <p>Thank you for your participation in the tender process.</p>
+            
+            <p style="margin-top: 30px;">Best regards,<br>
+                <strong>Procurement Department</strong><br>
+                Rawalpindi Institute of Cardiology<br>
+                E-Tender System
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
+            <p>Date: ${currentDate}</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+        `;
+    }
 }
 
 // Create instance and export common functions
@@ -2700,5 +2960,10 @@ const sendOTPEmail = async (email, otp, companyName = '') => {
     return await emailService.sendOTPEmail(email, otp, companyName);
 };
 
+const sendFinancialGrievanceEmail = async (supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath = null, emailType = 'grievance') => {
+    return await emailService.sendFinancialGrievanceEmail(supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath, emailType);
+};
+
 module.exports = EmailService;
 module.exports.sendOTPEmail = sendOTPEmail;
+module.exports.sendFinancialGrievanceEmail = sendFinancialGrievanceEmail;

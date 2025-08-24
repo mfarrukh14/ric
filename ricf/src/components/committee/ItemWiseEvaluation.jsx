@@ -543,33 +543,6 @@ const ItemWiseEvaluation = () => {
                                                     </div>
                                                 </div>
 
-                                                {/* Pricing Information */}
-                                                {(() => {
-                                                    if (bid.bidItems && bid.bidItems.length > 0) {
-                                                        const itemBid = bid.bidItems.find(item => item.item_id === currentItem.id);
-                                                        if (itemBid) {
-                                                            // Calculate price per unit: total_cost / required_quantity
-                                                            const totalCost = parseFloat(itemBid.total_cost || 0);
-                                                            const requiredQty = parseInt(itemBid.required_quantity || 1);
-                                                            const pricePerUnit = requiredQty > 0 ? (totalCost / requiredQty) : 0;
-                                                            
-                                                            return (
-                                                                <div className="grid grid-cols-2 gap-4 text-sm mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
-                                                                    <div>
-                                                                        <span className="font-medium text-green-800">Total Cost:</span>
-                                                                        <div className="text-green-900 font-semibold">Rs {totalCost.toLocaleString()}</div>
-                                                                    </div>
-                                                                    <div>
-                                                                        <span className="font-medium text-green-800">Price per Unit:</span>
-                                                                        <div className="text-green-900 font-semibold">Rs {pricePerUnit.toLocaleString()}</div>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        }
-                                                    }
-                                                    return null;
-                                                })()}
-
                                                 <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                                                     <div>
                                                         <span className="font-medium">Delivery Time:</span>

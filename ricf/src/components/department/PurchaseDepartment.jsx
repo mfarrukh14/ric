@@ -45,6 +45,27 @@ const PurchaseDepartment = () => {
     const [scheduleForm, setScheduleForm] = useState({
         openingDateTime: ''
     });
+    const [financialGrievanceForm, setFinancialGrievanceForm] = useState({
+        meetingDateTime: '',
+        meetingLocation: 'Conference Room - Rawalpindi Institute of Cardiology',
+        customMessage: ''
+    });
+    const [showFinancialGrievanceModal, setShowFinancialGrievanceModal] = useState(false);
+    const [showUploadMinutesModal, setShowUploadMinutesModal] = useState(false);
+    const [minutesForm, setMinutesForm] = useState({
+        minutesFile: null,
+        distributionMessage: ''
+    });
+
+    // Market Survey states
+    const [marketSurveyTenders, setMarketSurveyTenders] = useState([]);
+    const [completedSurveys, setCompletedSurveys] = useState([]);
+    const [showMarketSurveyModal, setShowMarketSurveyModal] = useState(false);
+    const [selectedMarketSurveyTender, setSelectedMarketSurveyTender] = useState(null);
+    const [marketSurveyForm, setMarketSurveyForm] = useState({
+        notes: '',
+        documents: []
+    });
 
     // Helper function to get tender display name
     const getTenderDisplayName = (tender) => {
@@ -52,6 +73,37 @@ const PurchaseDepartment = () => {
             return `Tender ${tender.tender_number}`;
         }
         return `Tender #${tender.id}`;
+    };
+
+    // Helper function to check if financial grievance meeting has passed
+    const hasFinancialGrievanceMeetingPassed = (tender) => {
+        if (!tender.financial_grievance_details?.meeting_datetime) {
+            return false;
+        }
+        const meetingTime = new Date(tender.financial_grievance_details.meeting_datetime);
+        const now = new Date();
+        return meetingTime <= now;
+    };
+
+    // Helper function to get financial grievance status
+    const getFinancialGrievanceStatus = (tender) => {
+        if (!tender.is_financially_opened) {
+            return 'not_opened'; // Financial opening hasn't happened yet
+        }
+        
+        if (!tender.financial_grievance_details) {
+            return 'ready_for_grievance'; // Financial opening done, ready to initiate grievance
+        }
+        
+        if (tender.financial_grievance_details.status === 'completed') {
+            return 'completed'; // Meeting completed and minutes distributed
+        }
+        
+        if (hasFinancialGrievanceMeetingPassed(tender)) {
+            return 'meeting_passed'; // Meeting time has passed, ready to upload minutes
+        }
+        
+        return 'grievance_initiated'; // Grievance initiated, waiting for meeting time
     }; useEffect(() => {
         fetchPurchaseDemands();
         fetchSupplyOrders();
@@ -74,6 +126,14 @@ const PurchaseDepartment = () => {
             return () => clearTimeout(timer);
         }
     }, [showSuccessModal]);
+
+    // Fetch market survey tenders when market survey tab is active
+    useEffect(() => {
+        if (activeTab === 'market-survey') {
+            fetchMarketSurveyTenders();
+            fetchCompletedSurveys();
+        }
+    }, [activeTab]);
 
     const fetchPurchaseDemands = async () => {
         try {
@@ -505,6 +565,27 @@ const PurchaseDepartment = () => {
         setShowFinancialScheduleModal(true);
     };
 
+    // Financial Grievance Handler
+    const handleInitiateFinancialGrievance = (tender) => {
+        setSelectedTender(tender);
+        setFinancialGrievanceForm({
+            meetingDateTime: '',
+            meetingLocation: 'Conference Room - Rawalpindi Institute of Cardiology',
+            customMessage: ''
+        });
+        setShowFinancialGrievanceModal(true);
+    };
+
+    // Upload Minutes Handler
+    const handleUploadMinutes = (tender) => {
+        setSelectedTender(tender);
+        setMinutesForm({
+            minutesFile: null,
+            distributionMessage: ''
+        });
+        setShowUploadMinutesModal(true);
+    };
+
     const handleScheduleSubmit = async (e) => {
         e.preventDefault();
         setError('');
@@ -549,6 +630,94 @@ const PurchaseDepartment = () => {
 
             // Show success message
             alert('Financial opening scheduled successfully!');
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const handleFinancialGrievanceSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        if (!financialGrievanceForm.meetingDateTime) {
+            setError('Meeting date and time is required');
+            return;
+        }
+
+        // Validate that meeting time is in future
+        const now = new Date();
+        const meetingTime = new Date(financialGrievanceForm.meetingDateTime);
+
+        if (meetingTime <= now) {
+            setError('Meeting time must be in the future');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/financial-grievance/initiate/${selectedTender.id}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    meetingDateTime: financialGrievanceForm.meetingDateTime,
+                    meetingLocation: financialGrievanceForm.meetingLocation,
+                    customMessage: financialGrievanceForm.customMessage
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to initiate financial grievance');
+            }
+
+            const data = await response.json();
+            setShowFinancialGrievanceModal(false);
+            fetchReadyTenders(); // Refresh to show grievance status
+
+            // Show success message
+            toast.success(`Financial grievance initiated successfully! Emails sent to ${data.emails_sent} approved suppliers.`);
+        } catch (err) {
+            setError(err.message);
+        }
+    };
+
+    const handleUploadMinutesSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+
+        if (!minutesForm.minutesFile) {
+            setError('Meeting minutes file is required');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            const formData = new FormData();
+            formData.append('minutesFile', minutesForm.minutesFile);
+            formData.append('distributionMessage', minutesForm.distributionMessage);
+
+            const response = await fetch(`${apiUrl}/financial-grievance/upload-minutes/${selectedTender.id}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to upload minutes');
+            }
+
+            const data = await response.json();
+            setShowUploadMinutesModal(false);
+            fetchReadyTenders(); // Refresh to show completion status
+
+            // Show success message
+            toast.success(`Meeting minutes uploaded and distributed successfully! Emails sent to ${data.emails_sent} suppliers.`);
         } catch (err) {
             setError(err.message);
         }
@@ -835,6 +1004,136 @@ const PurchaseDepartment = () => {
         return items.reduce((total, item) => total + parseInt(item.quantity || 0), 0);
     };
 
+    // Market Survey Functions
+    const fetchMarketSurveyTenders = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/market-survey/active-tenders`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to fetch market survey tenders');
+            }
+            
+            const data = await response.json();
+            setMarketSurveyTenders(data.data || []);
+        } catch (err) {
+            console.error('Error fetching market survey tenders:', err);
+            setError('Failed to load market survey tenders');
+        }
+    };
+
+    const fetchCompletedSurveys = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/market-survey/completed-surveys`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to fetch completed surveys');
+            }
+            
+            const data = await response.json();
+            setCompletedSurveys(data.data || []);
+        } catch (err) {
+            console.error('Error fetching completed surveys:', err);
+            setError('Failed to load completed surveys');
+        }
+    };
+
+    const handleSendForMarketSurvey = (tender) => {
+        setSelectedMarketSurveyTender(tender);
+        setShowMarketSurveyModal(true);
+    };
+
+    const handleMarketSurveySubmit = async (e) => {
+        e.preventDefault();
+        
+        if (!selectedMarketSurveyTender) {
+            toast.error('No tender selected');
+            return;
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('notes', marketSurveyForm.notes);
+            
+            // Add multiple documents
+            if (marketSurveyForm.documents && marketSurveyForm.documents.length > 0) {
+                for (let i = 0; i < marketSurveyForm.documents.length; i++) {
+                    formData.append('documents', marketSurveyForm.documents[i]);
+                }
+            }
+
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/market-survey/send/${selectedMarketSurveyTender.id}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to send tender for market survey');
+            }
+
+            const data = await response.json();
+            toast.success('Tender sent for market survey successfully');
+            
+            // Reset form and close modal
+            setMarketSurveyForm({ notes: '', documents: [] });
+            setShowMarketSurveyModal(false);
+            setSelectedMarketSurveyTender(null);
+            
+            // Refresh the tenders list
+            fetchMarketSurveyTenders();
+
+        } catch (err) {
+            console.error('Error sending tender for market survey:', err);
+            toast.error(err.message || 'Failed to send tender for market survey');
+        }
+    };
+
+    const handleMarketSurveyDocumentChange = (e) => {
+        const files = Array.from(e.target.files);
+        setMarketSurveyForm(prev => ({
+            ...prev,
+            documents: files
+        }));
+    };
+
+    const downloadMarketSurveyDocument = async (documentId, originalFilename) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/market-survey/download/${documentId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to download document');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = originalFilename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            toast.success('Document downloaded successfully');
+        } catch (err) {
+            console.error('Error downloading document:', err);
+            toast.error('Failed to download document');
+        }
+    };
+
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -959,6 +1258,17 @@ const PurchaseDepartment = () => {
                             >
                                 <i className="fas fa-clipboard-check mr-1"></i>
                                 Vetting Management
+                            </button>
+                            
+                            <button
+                                onClick={() => setActiveTab('market-survey')}
+                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'market-survey'
+                                        ? 'border-indigo-500 text-indigo-600'
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                <i className="fas fa-chart-line mr-1"></i>
+                                Market Survey
                             </button>
                         </nav>
                     </div>                    {/* Tab Content */}
@@ -1219,7 +1529,7 @@ const PurchaseDepartment = () => {
                     {/* Financial Opening Tab */}
                     {activeTab === 'financial-opening' && (
                         <div className="space-y-6">
-                            {/* Ready for Financial Opening */}
+                            {/* Ready for Financial Opening or Financial Grievance */}
                             {readyTenders.length > 0 && (
                                 <div className="bg-white shadow overflow-hidden sm:rounded-md">
                                     <div className="px-4 py-5 sm:p-6">
@@ -1230,11 +1540,16 @@ const PurchaseDepartment = () => {
 
                                         <div className="space-y-4">
                                             {readyTenders.map((tender) => (
-                                                <div key={tender.id} className="border border-green-200 rounded-lg p-4 bg-green-50">
+                                                <div key={tender.id} className={`border rounded-lg p-4 ${
+                                                    tender.is_financially_opened ? 'border-purple-200 bg-purple-50' : 'border-green-200 bg-green-50'
+                                                }`}>
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
-                                                                All suppliers for {getTenderDisplayName(tender)} finalized
+                                                                {tender.is_financially_opened 
+                                                                    ? `Financial opening completed for ${getTenderDisplayName(tender)}`
+                                                                    : `All suppliers for ${getTenderDisplayName(tender)} finalized`
+                                                                }
                                                             </h3>
                                                             <p className="text-sm text-gray-600 mt-1">
                                                                 {tender.description || tender.item_name}
@@ -1258,22 +1573,112 @@ const PurchaseDepartment = () => {
                                                                 </div>
                                                             </div>
                                                             {tender.financial_opening && (
-                                                                <div className="mt-2 p-2 bg-blue-50 rounded border border-blue-200">
-                                                                    <p className="text-sm text-blue-800">
-                                                                        <i className="fas fa-clock mr-1"></i>
-                                                                        Financial opening scheduled for: {new Date(tender.financial_opening.scheduled_opening_time).toLocaleString('en-PK')}
+                                                                <div className={`mt-2 p-2 rounded border ${
+                                                                    tender.is_financially_opened 
+                                                                        ? 'bg-green-50 border-green-200' 
+                                                                        : 'bg-blue-50 border-blue-200'
+                                                                }`}>
+                                                                    <p className={`text-sm ${
+                                                                        tender.is_financially_opened 
+                                                                            ? 'text-green-800' 
+                                                                            : 'text-blue-800'
+                                                                    }`}>
+                                                                        <i className={`fas ${
+                                                                            tender.is_financially_opened 
+                                                                                ? 'fa-check-circle' 
+                                                                                : 'fa-clock'
+                                                                        } mr-1`}></i>
+                                                                        {tender.is_financially_opened 
+                                                                            ? `Financial opening completed: ${new Date(tender.financial_opening.opened_at).toLocaleString('en-PK')}`
+                                                                            : `Financial opening scheduled for: ${new Date(tender.financial_opening.scheduled_opening_time).toLocaleString('en-PK')}`
+                                                                        }
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                            {tender.financial_grievance_details && (
+                                                                <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
+                                                                    <p className="text-sm text-yellow-800">
+                                                                        <i className="fas fa-exclamation-triangle mr-1"></i>
+                                                                        Financial grievance meeting scheduled: {new Date(tender.financial_grievance_details.meeting_datetime).toLocaleString('en-PK')}
+                                                                    </p>
+                                                                    <p className="text-xs text-yellow-700 mt-1">
+                                                                        Grievance period: 10 days from {new Date(tender.financial_grievance_details.sent_at).toLocaleDateString('en-PK')}
                                                                     </p>
                                                                 </div>
                                                             )}
                                                         </div>
                                                         <div className="ml-4">
-                                                            <button
-                                                                onClick={() => handleScheduleFinancialOpening(tender)}
-                                                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
-                                                            >
-                                                                <i className="fas fa-calendar-plus mr-2"></i>
-                                                                {tender.financial_opening ? 'Reschedule' : 'Schedule'} Financial Opening
-                                                            </button>
+                                                            {(() => {
+                                                                const grievanceStatus = getFinancialGrievanceStatus(tender);
+                                                                
+                                                                switch (grievanceStatus) {
+                                                                    case 'not_opened':
+                                                                        return (
+                                                                            <button
+                                                                                onClick={() => handleScheduleFinancialOpening(tender)}
+                                                                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                            >
+                                                                                <i className="fas fa-calendar-plus mr-2"></i>
+                                                                                {tender.financial_opening ? 'Reschedule' : 'Schedule'} Financial Opening
+                                                                            </button>
+                                                                        );
+                                                                    
+                                                                    case 'ready_for_grievance':
+                                                                        return (
+                                                                            <button
+                                                                                onClick={() => handleInitiateFinancialGrievance(tender)}
+                                                                                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                                            >
+                                                                                <i className="fas fa-gavel mr-2"></i>
+                                                                                Initiate Financial Grievance
+                                                                            </button>
+                                                                        );
+                                                                    
+                                                                    case 'meeting_passed':
+                                                                        return (
+                                                                            <button
+                                                                                onClick={() => handleUploadMinutes(tender)}
+                                                                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                                            >
+                                                                                <i className="fas fa-upload mr-2"></i>
+                                                                                Upload Minutes & Distribute
+                                                                            </button>
+                                                                        );
+                                                                    
+                                                                    case 'grievance_initiated':
+                                                                        return (
+                                                                            <button
+                                                                                disabled
+                                                                                className="px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed"
+                                                                            >
+                                                                                <i className="fas fa-clock mr-2"></i>
+                                                                                Awaiting Meeting Time
+                                                                            </button>
+                                                                        );
+                                                                    
+                                                                    case 'completed':
+                                                                        return (
+                                                                            <button
+                                                                                disabled
+                                                                                className="px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed"
+                                                                            >
+                                                                                <i className="fas fa-check-circle mr-2"></i>
+                                                                                Financial Complete
+                                                                            </button>
+                                                                        );
+                                                                    
+                                                                    default:
+                                                                        return (
+                                                                            <button
+                                                                                onClick={() => handleScheduleFinancialOpening(tender)}
+                                                                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                            >
+                                                                                <i className="fas fa-calendar-plus mr-2"></i>
+                                                                                Schedule Financial Opening
+                                                                            </button>
+                                                                        );
+                                                                }
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1604,6 +2009,248 @@ const PurchaseDepartment = () => {
                 <TenderVettingManagement />
             )}
 
+            {/* Market Survey Tab */}
+            {activeTab === 'market-survey' && (
+                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                    <div className="px-4 py-5 sm:p-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-lg font-medium text-gray-900">
+                                <i className="fas fa-chart-line mr-2"></i>
+                                Market Survey Management
+                            </h3>
+                            <button
+                                onClick={() => {
+                                    fetchMarketSurveyTenders();
+                                    fetchCompletedSurveys();
+                                }}
+                                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                            >
+                                <i className="fas fa-sync-alt mr-2"></i>
+                                Refresh
+                            </button>
+                        </div>
+
+                        {marketSurveyTenders.length === 0 ? (
+                            <div className="text-center py-12">
+                                <i className="fas fa-chart-line text-gray-400 text-4xl mb-4"></i>
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">No Active Tenders</h3>
+                                <p className="text-gray-500">There are no active tenders available for market survey.</p>
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Tender Details
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Item Information
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Deadline
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Survey Status
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {marketSurveyTenders.map((tender) => (
+                                            <tr key={tender.id} className="hover:bg-gray-50">
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <div className="text-sm font-medium text-gray-900">
+                                                        Tender #{tender.id}
+                                                    </div>
+                                                    <div className="text-sm text-gray-500">
+                                                        Status: {tender.status}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="text-sm font-medium text-gray-900">
+                                                        {tender.item_name}
+                                                    </div>
+                                                    <div className="text-sm text-gray-500">
+                                                        Qty: {tender.quantity}
+                                                    </div>
+                                                    <div className="text-sm text-gray-500 max-w-xs truncate">
+                                                        {tender.description}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    {new Date(tender.bidding_end_time).toLocaleDateString()}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    {tender.survey_status ? (
+                                                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                                            tender.survey_status === 'completed' 
+                                                                ? 'bg-green-100 text-green-800'
+                                                                : tender.survey_status === 'pending'
+                                                                ? 'bg-yellow-100 text-yellow-800'
+                                                                : 'bg-gray-100 text-gray-800'
+                                                        }`}>
+                                                            {tender.survey_status === 'completed' ? 'Completed' : 
+                                                             tender.survey_status === 'pending' ? 'Pending' : 'Unknown'}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800">
+                                                            Not Sent
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                    {!tender.survey_status ? (
+                                                        <button
+                                                            onClick={() => handleSendForMarketSurvey(tender)}
+                                                            className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                                        >
+                                                            <i className="fas fa-paper-plane mr-1"></i>
+                                                            Send for Market Survey
+                                                        </button>
+                                                    ) : tender.survey_status === 'completed' ? (
+                                                        <span className="text-green-600 font-medium">
+                                                            <i className="fas fa-check-circle mr-1"></i>
+                                                            Survey Completed
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-yellow-600 font-medium">
+                                                            <i className="fas fa-clock mr-1"></i>
+                                                            Survey Pending
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {/* Completed Surveys Section */}
+                        <div className="mt-8">
+                            <h4 className="text-lg font-medium text-gray-900 mb-4">
+                                <i className="fas fa-check-circle mr-2"></i>
+                                Completed Market Surveys
+                            </h4>
+                            
+                            {completedSurveys.length === 0 ? (
+                                <div className="text-center py-8 bg-gray-50 rounded-lg">
+                                    <i className="fas fa-clipboard-check text-gray-400 text-3xl mb-3"></i>
+                                    <p className="text-gray-500">No completed market surveys yet.</p>
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Tender Details
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Item Information
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Survey Details
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    Evaluation Documents
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {completedSurveys.map((survey) => (
+                                                <tr key={survey.survey_id} className="hover:bg-gray-50">
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div className="text-sm font-medium text-gray-900">
+                                                            Tender #{survey.tender_id}
+                                                        </div>
+                                                        <div className="text-sm text-gray-500">
+                                                            Sent: {new Date(survey.sent_at).toLocaleDateString()}
+                                                        </div>
+                                                        <div className="text-sm text-gray-500">
+                                                            Completed: {new Date(survey.completed_at).toLocaleDateString()}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="text-sm font-medium text-gray-900">
+                                                            {survey.item_name}
+                                                        </div>
+                                                        <div className="text-sm text-gray-500">
+                                                            Qty: {survey.quantity}
+                                                        </div>
+                                                        <div className="text-sm text-gray-500 max-w-xs truncate">
+                                                            {survey.description}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="text-sm text-gray-900">
+                                                            <strong>Sent by:</strong> {survey.sent_by_name}
+                                                        </div>
+                                                        {survey.completed_by_name && (
+                                                            <div className="text-sm text-gray-900">
+                                                                <strong>Completed by:</strong> {survey.completed_by_name}
+                                                            </div>
+                                                        )}
+                                                        {survey.notes && (
+                                                            <div className="text-sm text-gray-600 mt-1 max-w-xs">
+                                                                <strong>Notes:</strong> {survey.notes}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        {survey.documents && survey.documents.length > 0 ? (
+                                                            <div className="space-y-2">
+                                                                {survey.documents
+                                                                    .filter(doc => doc.document_type === 'evaluation')
+                                                                    .map((doc) => (
+                                                                    <div key={doc.id} className="flex items-center">
+                                                                        <button
+                                                                            onClick={() => downloadMarketSurveyDocument(doc.id, doc.original_filename)}
+                                                                            className="text-sm text-indigo-600 hover:text-indigo-800 flex items-center"
+                                                                        >
+                                                                            <i className="fas fa-download mr-1"></i>
+                                                                            {doc.original_filename}
+                                                                        </button>
+                                                                        <span className="ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                                                                            Evaluation
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                                {survey.documents
+                                                                    .filter(doc => doc.document_type === 'supporting')
+                                                                    .map((doc) => (
+                                                                    <div key={doc.id} className="flex items-center">
+                                                                        <button
+                                                                            onClick={() => downloadMarketSurveyDocument(doc.id, doc.original_filename)}
+                                                                            className="text-sm text-gray-600 hover:text-gray-800 flex items-center"
+                                                                        >
+                                                                            <i className="fas fa-paperclip mr-1"></i>
+                                                                            {doc.original_filename}
+                                                                        </button>
+                                                                        <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                                                                            Supporting
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-sm text-gray-400">No documents</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Evaluation Modal */}
             {showEvaluationModal && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
@@ -1926,6 +2573,467 @@ const PurchaseDepartment = () => {
                                 >
                                     <i className="fas fa-calendar-plus mr-2"></i>
                                     Schedule Opening
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Financial Grievance Modal */}
+            {showFinancialGrievanceModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                Initiate Financial Grievance - {getTenderDisplayName(selectedTender)}
+                            </h3>
+                            <button
+                                onClick={() => setShowFinancialGrievanceModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {selectedTender && (
+                            <div className="mb-6 p-4 bg-purple-50 rounded-lg">
+                                <h4 className="font-medium text-purple-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm text-purple-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                                <div className="grid grid-cols-2 gap-4 text-sm text-purple-800">
+                                    <div>
+                                        <span className="font-medium">Financial Opening:</span> Completed
+                                    </div>
+                                    <div>
+                                        <span className="font-medium">Approved Suppliers:</span> {selectedTender.approved_suppliers_count || 'Multiple'}
+                                    </div>
+                                </div>
+                                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                                    <p className="text-sm text-yellow-800">
+                                        <i className="fas fa-info-circle mr-1"></i>
+                                        This will send financial grievance notifications to all approved suppliers with the financial opening report.
+                                        The grievance period will be 10 days from the notification date.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleFinancialGrievanceSubmit}>
+                            {error && (
+                                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    {error}
+                                </div>
+                            )}
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Grievance Meeting Date & Time (Pakistan Time UTC+5) *
+                                </label>
+                                <input
+                                    type="datetime-local"
+                                    value={financialGrievanceForm.meetingDateTime}
+                                    onChange={(e) => setFinancialGrievanceForm({ 
+                                        ...financialGrievanceForm, 
+                                        meetingDateTime: e.target.value 
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    required
+                                />
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Select when the grievance meeting should be held. This will be included in the email to suppliers.
+                                </p>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Meeting Location
+                                </label>
+                                <input
+                                    type="text"
+                                    value={financialGrievanceForm.meetingLocation}
+                                    onChange={(e) => setFinancialGrievanceForm({ 
+                                        ...financialGrievanceForm, 
+                                        meetingLocation: e.target.value 
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    placeholder="Conference Room - Rawalpindi Institute of Cardiology"
+                                />
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Additional Message (Optional)
+                                </label>
+                                <textarea
+                                    value={financialGrievanceForm.customMessage}
+                                    onChange={(e) => setFinancialGrievanceForm({ 
+                                        ...financialGrievanceForm, 
+                                        customMessage: e.target.value 
+                                    })}
+                                    rows={4}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    placeholder="Any additional instructions or information for suppliers regarding the financial grievance..."
+                                />
+                            </div>
+
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                                <h5 className="font-medium text-blue-900 mb-2">Email Content Preview:</h5>
+                                <div className="text-sm text-blue-800">
+                                    <p className="mb-2">
+                                        <strong>Subject:</strong> Financial Grievance Period - {getTenderDisplayName(selectedTender)} - Rawalpindi Institute of Cardiology
+                                    </p>
+                                    <div className="bg-white p-3 rounded border text-gray-700">
+                                        <p>Dear Supplier,</p>
+                                        <p className="mt-2">
+                                            This is to inform you that the financial opening for {getTenderDisplayName(selectedTender)} has been completed.
+                                            The financial opening report is attached for your review.
+                                        </p>
+                                        <p className="mt-2">
+                                            <strong>Financial Grievance Period:</strong> 10 days from the date of this email<br/>
+                                            <strong>Meeting Date:</strong> {financialGrievanceForm.meetingDateTime ? new Date(financialGrievanceForm.meetingDateTime).toLocaleString('en-PK') : '[To be scheduled]'}<br/>
+                                            <strong>Location:</strong> {financialGrievanceForm.meetingLocation || 'Conference Room - Rawalpindi Institute of Cardiology'}
+                                        </p>
+                                        {financialGrievanceForm.customMessage && (
+                                            <p className="mt-2">
+                                                <strong>Additional Information:</strong><br/>
+                                                {financialGrievanceForm.customMessage}
+                                            </p>
+                                        )}
+                                        <p className="mt-2">
+                                            If you have any grievances regarding the financial evaluation, please submit them within the grievance period.
+                                            After the meeting, minutes will be distributed to all suppliers.
+                                        </p>
+                                        <p className="mt-2">
+                                            Best regards,<br/>
+                                            Purchase Department<br/>
+                                            Rawalpindi Institute of Cardiology
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFinancialGrievanceModal(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+                                >
+                                    <i className="fas fa-paper-plane mr-2"></i>
+                                    Send Financial Grievances
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Financial Grievance Modal */}
+            {showFinancialGrievanceModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                Initiate Financial Grievance - {getTenderDisplayName(selectedTender)}
+                            </h3>
+                            <button
+                                onClick={() => setShowFinancialGrievanceModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {selectedTender && (
+                            <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                                <h4 className="font-medium text-purple-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm text-purple-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                                <div className="text-sm text-purple-700">
+                                    <p className="mb-2">
+                                        <i className="fas fa-info-circle mr-2"></i>
+                                        This will send financial grievance notifications to all approved suppliers
+                                    </p>
+                                    <p className="text-xs">
+                                        Suppliers will have 10 days from the notification date to submit grievances before the scheduled meeting.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleFinancialGrievanceSubmit}>
+                            {error && (
+                                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    {error}
+                                </div>
+                            )}
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Grievance Meeting Date & Time *
+                                </label>
+                                <input
+                                    type="datetime-local"
+                                    value={financialGrievanceForm.meetingDateTime}
+                                    onChange={(e) => setFinancialGrievanceForm({ 
+                                        ...financialGrievanceForm, 
+                                        meetingDateTime: e.target.value 
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    required
+                                />
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Select when the grievance meeting should be held (must be at least 10 days from now)
+                                </p>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Meeting Location *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={financialGrievanceForm.meetingLocation}
+                                    onChange={(e) => setFinancialGrievanceForm({ 
+                                        ...financialGrievanceForm, 
+                                        meetingLocation: e.target.value 
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    placeholder="Conference Room - Rawalpindi Institute of Cardiology"
+                                    required
+                                />
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Additional Message (Optional)
+                                </label>
+                                <textarea
+                                    value={financialGrievanceForm.customMessage}
+                                    onChange={(e) => setFinancialGrievanceForm({ 
+                                        ...financialGrievanceForm, 
+                                        customMessage: e.target.value 
+                                    })}
+                                    rows={3}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    placeholder="Any additional instructions or information for suppliers..."
+                                />
+                                <p className="mt-1 text-sm text-gray-500">
+                                    This message will be included in the email sent to suppliers along with the financial opening report
+                                </p>
+                            </div>
+
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFinancialGrievanceModal(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+                                >
+                                    <i className="fas fa-gavel mr-2"></i>
+                                    Send Financial Grievances
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Upload Minutes Modal */}
+            {showUploadMinutesModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                Upload Meeting Minutes - {getTenderDisplayName(selectedTender)}
+                            </h3>
+                            <button
+                                onClick={() => setShowUploadMinutesModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {selectedTender && (
+                            <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
+                                <h4 className="font-medium text-green-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm text-green-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                                {selectedTender.financial_grievance_details && (
+                                    <div className="text-sm text-green-700">
+                                        <p className="mb-1">
+                                            <i className="fas fa-calendar-check mr-2"></i>
+                                            Meeting was scheduled for: {new Date(selectedTender.financial_grievance_details.meeting_datetime).toLocaleString('en-PK')}
+                                        </p>
+                                        <p className="mb-2">
+                                            <i className="fas fa-map-marker-alt mr-2"></i>
+                                            Location: {selectedTender.financial_grievance_details.meeting_location}
+                                        </p>
+                                        <p className="text-xs">
+                                            Meeting time has passed. Please upload the meeting minutes and distribute to all suppliers.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleUploadMinutesSubmit}>
+                            {error && (
+                                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    {error}
+                                </div>
+                            )}
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Meeting Minutes File *
+                                </label>
+                                <input
+                                    type="file"
+                                    accept=".pdf,.doc,.docx"
+                                    onChange={(e) => setMinutesForm({ 
+                                        ...minutesForm, 
+                                        minutesFile: e.target.files[0] 
+                                    })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                    required
+                                />
+                                <p className="mt-1 text-sm text-gray-500">
+                                    Upload the meeting minutes document (PDF, DOC, or DOCX format)
+                                </p>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Distribution Message (Optional)
+                                </label>
+                                <textarea
+                                    value={minutesForm.distributionMessage}
+                                    onChange={(e) => setMinutesForm({ 
+                                        ...minutesForm, 
+                                        distributionMessage: e.target.value 
+                                    })}
+                                    rows={3}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                    placeholder="Any additional message to include with the meeting minutes distribution..."
+                                />
+                                <p className="mt-1 text-sm text-gray-500">
+                                    This message will be included in the email sent to all suppliers along with the meeting minutes
+                                </p>
+                            </div>
+
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowUploadMinutesModal(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
+                                >
+                                    <i className="fas fa-upload mr-2"></i>
+                                    Upload & Distribute Minutes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Market Survey Modal */}
+            {showMarketSurveyModal && selectedMarketSurveyTender && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-medium text-gray-900">
+                                <i className="fas fa-chart-line mr-2"></i>
+                                Send for Market Survey
+                            </h3>
+                            <button
+                                onClick={() => setShowMarketSurveyModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <div className="mb-4 p-3 bg-gray-50 rounded">
+                            <p className="text-sm font-medium text-gray-900">
+                                Tender #{selectedMarketSurveyTender.id}
+                            </p>
+                            <p className="text-sm text-gray-600">{selectedMarketSurveyTender.item_name}</p>
+                            <p className="text-xs text-gray-500">Quantity: {selectedMarketSurveyTender.quantity}</p>
+                        </div>
+
+                        <form onSubmit={handleMarketSurveySubmit}>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Notes <span className="text-gray-500">(Optional)</span>
+                                </label>
+                                <textarea
+                                    value={marketSurveyForm.notes}
+                                    onChange={(e) => setMarketSurveyForm(prev => ({ ...prev, notes: e.target.value }))}
+                                    rows={3}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Add any specific instructions or requirements for the market survey..."
+                                />
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Supporting Documents <span className="text-gray-500">(Optional)</span>
+                                </label>
+                                <input
+                                    type="file"
+                                    multiple
+                                    accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                                    onChange={handleMarketSurveyDocumentChange}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                                <p className="mt-1 text-xs text-gray-500">
+                                    You can upload multiple files (PDF, Word, Excel, Images). Maximum 10 files.
+                                </p>
+                                {marketSurveyForm.documents.length > 0 && (
+                                    <div className="mt-2">
+                                        <p className="text-sm font-medium text-gray-700">Selected files:</p>
+                                        <ul className="text-xs text-gray-600">
+                                            {Array.from(marketSurveyForm.documents).map((file, index) => (
+                                                <li key={index}>• {file.name}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowMarketSurveyModal(false);
+                                        setMarketSurveyForm({ notes: '', documents: [] });
+                                    }}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                                >
+                                    <i className="fas fa-paper-plane mr-2"></i>
+                                    Send for Market Survey
                                 </button>
                             </div>
                         </form>

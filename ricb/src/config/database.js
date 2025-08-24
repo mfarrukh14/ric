@@ -590,6 +590,72 @@ const initializeDatabase = async () => {
             });
         });
 
+        // Create financial_grievances table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_grievances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                meeting_datetime DATETIME NOT NULL,
+                meeting_location TEXT NOT NULL,
+                custom_message TEXT,
+                grievance_start_date DATETIME NOT NULL,
+                grievance_end_date DATETIME NOT NULL,
+                initiated_by INTEGER NOT NULL,
+                status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+                emails_sent INTEGER DEFAULT 0,
+                total_recipients INTEGER DEFAULT 0,
+                meeting_held_at DATETIME,
+                meeting_minutes_file TEXT,
+                completed_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (initiated_by) REFERENCES users(id),
+                FOREIGN KEY (completed_by) REFERENCES users(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create financial_grievance_emails table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_grievance_emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                grievance_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                email_address TEXT NOT NULL,
+                status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'bounced')),
+                error_message TEXT,
+                sent_at DATETIME,
+                opened_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (grievance_id) REFERENCES financial_grievances(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create financial_opening_reports table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_opening_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                report_file_path TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                file_size INTEGER,
+                generated_by INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (generated_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
         // Create pre_bid_meetings table
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS pre_bid_meetings (
@@ -1198,6 +1264,30 @@ const initializeDatabase = async () => {
                         if (err) reject(err);
                         else {
                             console.log('Vetting Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Market Survey Committee exists
+        const marketSurveyCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Market Survey Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!marketSurveyCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Market Survey Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Market Survey Committee created successfully');
                             resolve();
                         }
                     }
@@ -2898,6 +2988,82 @@ const runMigrations = async () => {
                     });
                 } else {
                     console.log('knockout_clause_documents table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 20: Create market survey committee tables
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='market_surveys'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating market_surveys table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS market_surveys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        sent_by INTEGER NOT NULL,
+                        status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+                        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        completed_at DATETIME,
+                        completed_by INTEGER,
+                        notes TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                        FOREIGN KEY (sent_by) REFERENCES users(id),
+                        FOREIGN KEY (completed_by) REFERENCES users(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating market_surveys table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created market_surveys table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('market_surveys table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Create market survey documents table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='market_survey_documents'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating market_survey_documents table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS market_survey_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        survey_id INTEGER NOT NULL,
+                        document_type TEXT NOT NULL CHECK (document_type IN ('supporting', 'evaluation')),
+                        filename TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        uploaded_by INTEGER NOT NULL,
+                        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (survey_id) REFERENCES market_surveys(id) ON DELETE CASCADE,
+                        FOREIGN KEY (uploaded_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating market_survey_documents table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created market_survey_documents table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('market_survey_documents table already exists');
                     resolve();
                 }
             });

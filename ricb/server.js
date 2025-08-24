@@ -13,6 +13,7 @@ const technicalEvaluationRoutes = require('./src/routes/technicalEvaluation');
 const grievanceRoutes = require('./src/routes/grievanceRoutes');
 const purchaseGrievanceRoutes = require('./src/routes/purchaseGrievances');
 const financialOpeningRoutes = require('./src/routes/financialOpening');
+const financialGrievanceRoutes = require('./src/routes/financialGrievance');
 const preBidMeetingRoutes = require('./src/routes/preBidMeeting');
 const letterRoutes = require('./src/routes/letters');
 const itemRoutes = require('./src/routes/items');
@@ -26,6 +27,7 @@ const testEmailRoutes = require('./src/routes/testEmail');
 const debugRoutes = require('./src/routes/debugRoutes');
 const vettingRoutes = require('./src/routes/vetting');
 const demandMergeRoutes = require('./src/routes/demandMerge');
+const marketSurveyRoutes = require('./src/routes/marketSurvey');
 
 const app = express();
 const PORT = 5000;
@@ -46,6 +48,7 @@ app.use('/api/technical-evaluation', technicalEvaluationRoutes);
 app.use('/api/grievances', grievanceRoutes);
 app.use('/api/purchase-grievances', purchaseGrievanceRoutes);
 app.use('/api/financial-opening', financialOpeningRoutes);
+app.use('/api/financial-grievance', financialGrievanceRoutes);
 app.use('/api/pre-bid-meetings', preBidMeetingRoutes);
 app.use('/api/letters', letterRoutes);
 app.use('/api/items', itemRoutes);
@@ -59,6 +62,7 @@ app.use('/api/test-email', testEmailRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/vetting', vettingRoutes);
 app.use('/api/demand-merge', demandMergeRoutes);
+app.use('/api/market-survey', marketSurveyRoutes);
 
 // Test route
 app.get('/', (req, res) => {
@@ -88,7 +92,9 @@ connectDatabase()
       'uploads',
       'uploads/knockout-documents',
       'uploads/grievance-minutes',
+      'uploads/market-survey',
       'tender-documents',
+      'meeting-minutes',
       'reports',
       'reports/technical',
       'grievance-letters',

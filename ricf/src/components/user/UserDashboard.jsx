@@ -7,6 +7,7 @@ import PurchaseDepartment from '../department/PurchaseDepartment';
 import GrievanceCommitteeNew from '../committee/GrievanceCommitteeNew';
 import VettingDashboard from '../vetting/VettingDashboard';
 import HodDashboard from '../hod/HodDashboard';
+import MarketSurveyCommittee from '../committee/MarketSurveyCommittee';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
 import { apiUrl } from '../../config/api';
 
@@ -35,6 +36,9 @@ export default function UserDashboard() {
   
   // Check if user is Vetting Committee member
   const isVettingCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('vetting');
+  
+  // Check if user is Market Survey Committee member
+  const isMarketSurveyCommittee = user?.committeeName && user.committeeName.toLowerCase().includes('market survey');
   
   // Check if user is HOD
   const isHod = user?.isHod === 1 || user?.isHod === true;
@@ -123,6 +127,7 @@ export default function UserDashboard() {
            isPurchaseDepartment ? 'Purchase Department Dashboard' :
            isGrievanceCommittee ? 'Grievance Committee Dashboard' :
            isVettingCommittee ? 'Vetting Committee Dashboard' :
+           isMarketSurveyCommittee ? 'Market Survey Committee Dashboard' :
            isHod ? 'Head of Department Dashboard' : 'User Dashboard'}
         </h1>
         <div className="flex space-x-3">
@@ -608,6 +613,10 @@ export default function UserDashboard() {
 
       {isVettingCommittee && activeTab === 'vetting-evaluation' && (
         <VettingDashboard />
+      )}
+
+      {isMarketSurveyCommittee && (
+        <MarketSurveyCommittee />
       )}
 
       {/* 2FA Setup Modal */}

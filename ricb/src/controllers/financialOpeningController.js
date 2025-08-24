@@ -30,8 +30,17 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
                 COUNT(te.id) as evaluated_bids,
                 fo.scheduled_opening_time,
                 fo.status as opening_status,
+                fo.opened_at,
+                fo.opened_by,
                 COUNT(ga.id) as total_grievances,
-                COUNT(CASE WHEN ga.status NOT IN ('resolved', 'rejected') THEN 1 END) as unresolved_grievances
+                COUNT(CASE WHEN ga.status NOT IN ('resolved', 'rejected') THEN 1 END) as unresolved_grievances,
+                COUNT(CASE WHEN ga.status = 'resolved' THEN 1 END) as resolved_grievances_count,
+                COUNT(CASE WHEN ga.status = 'rejected' THEN 1 END) as rejected_grievances_count,
+                fg.id as financial_grievance_id,
+                fg.meeting_datetime as grievance_meeting_datetime,
+                fg.status as grievance_status,
+                fg.created_at as grievance_sent_at,
+                CASE WHEN fo.status = 'opened' THEN 1 ELSE 0 END as is_financially_opened
             FROM demand_tenders dt
             JOIN demands d ON dt.demand_id = d.id
             LEFT JOIN users u ON d.created_by = u.id
@@ -40,12 +49,15 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
             LEFT JOIN technical_evaluations te ON sb.id = te.bid_id AND te.status = 'approved'
             LEFT JOIN financial_openings fo ON dt.id = fo.tender_id
             LEFT JOIN grievance_applications ga ON dt.id = ga.tender_id
+            LEFT JOIN financial_grievances fg ON dt.id = fg.tender_id
             WHERE dt.technical_evaluation_completed_at IS NOT NULL
             AND dt.tender_status NOT IN ('awarded', 'cancelled')
             GROUP BY dt.id
             HAVING COUNT(te.id) > 0 
             AND COUNT(CASE WHEN ga.status NOT IN ('resolved', 'rejected') THEN 1 END) = 0
-            ORDER BY dt.created_at DESC
+            ORDER BY 
+                CASE WHEN fo.status = 'opened' THEN 0 ELSE 1 END,
+                dt.created_at DESC
         `;
 
         db.all(query, [], (err, tenders) => {
@@ -54,7 +66,31 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
                 return res.status(500).json({ error: 'Failed to fetch tenders' });
             }
 
-            res.json(tenders);
+            // Enhance tenders with additional information
+            const enhancedTenders = tenders.map(tender => {
+                const financial_opening = tender.scheduled_opening_time ? {
+                    scheduled_opening_time: tender.scheduled_opening_time,
+                    status: tender.opening_status,
+                    opened_at: tender.opened_at
+                } : null;
+
+                const financial_grievance_details = tender.financial_grievance_id ? {
+                    meeting_datetime: tender.grievance_meeting_datetime,
+                    status: tender.grievance_status,
+                    sent_at: tender.grievance_sent_at
+                } : null;
+
+                return {
+                    ...tender,
+                    financial_opening,
+                    financial_grievance_details,
+                    grievances_count: tender.total_grievances || 0,
+                    resolved_grievances_count: tender.resolved_grievances_count || 0,
+                    rejected_grievances_count: tender.rejected_grievances_count || 0
+                };
+            });
+
+            res.json(enhancedTenders);
         });
     } catch (error) {
         console.error('Error in getTendersReadyForFinancialOpening:', error);
@@ -340,11 +376,29 @@ const openFinancialBids = async (req, res) => {
         // Generate detailed comparative report with multiple tabs
         const reportPath = await generateEnhancedComparativeReport(tenderId, itemAnalysis, optimalCombinations);
 
+        // Save report information to database
+        const reportFileName = path.basename(reportPath);
+        const reportFileSize = fs.statSync(reportPath).size;
+        
+        await new Promise((resolve, reject) => {
+            db.run(`
+                INSERT INTO financial_opening_reports 
+                (tender_id, report_file_path, original_filename, file_size, generated_by)
+                VALUES (?, ?, ?, ?, ?)
+            `, [tenderId, reportFileName, reportFileName, reportFileSize, userId], function(err) {
+                if (err) {
+                    console.error('Error saving report info to database:', err);
+                    // Don't fail the main process for report saving error
+                }
+                resolve();
+            });
+        });
+
         res.json({
             message: 'Financial bids opened successfully',
             comparative_analysis: itemAnalysis,
             optimal_combinations: optimalCombinations,
-            report_file: path.basename(reportPath),
+            report_file: reportFileName,
             total_items: Object.keys(itemAnalysis).length,
             opened_at: new Date().toISOString()
         });
