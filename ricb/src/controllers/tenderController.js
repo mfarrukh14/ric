@@ -529,7 +529,7 @@ const createTenderWithCriteria = async (req, res) => {
                         tenderDocumentPath,
                         itemsListPath,
                         createdBy,
-                        'pending_vetting',
+                        'pending_purchase_hod_approval',
                         tenderNumber
                     ],
                     function(err) {
@@ -590,7 +590,7 @@ const createTenderWithCriteria = async (req, res) => {
                     `INSERT INTO tender_status_history (
                         tender_id, status, comments, changed_by
                     ) VALUES (?, ?, ?, ?)`,
-                    [tenderId, 'pending_vetting', 'Tender created and submitted for vetting committee approval', createdBy],
+                    [tenderId, 'pending_purchase_hod_approval', 'Tender created and submitted for Purchase HOD approval', createdBy],
                     (err) => {
                         if (err) reject(err);
                         else resolve();
@@ -1382,6 +1382,528 @@ const downloadKnockoutClauseDocument = async (req, res) => {
     }
 };
 
+// Get tenders pending Purchase HOD approval
+const getPurchaseHodPendingTenders = async (req, res) => {
+    const db = getDatabase();
+    const userId = req.user.id;
+    
+    try {
+        // Verify user is Purchase HOD
+        const hodInfo = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT department_id FROM users WHERE id = ? AND is_hod = 1',
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!hodInfo) {
+            return res.status(403).json({ error: 'You are not authorized as an HOD' });
+        }
+
+        // Check if this is Purchase department HOD
+        const isPurchaseHod = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT name FROM departments WHERE id = ?',
+                [hodInfo.department_id],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row?.name?.toLowerCase() === 'purchase');
+                }
+            );
+        });
+
+        if (!isPurchaseHod) {
+            return res.status(403).json({ error: 'Only Purchase HOD can access this resource' });
+        }
+
+        // Get tenders pending Purchase HOD approval
+        const tenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost, u.name as creator_name
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 JOIN users u ON dt.created_by = u.id
+                 WHERE dt.tender_status = 'pending_purchase_hod_approval'
+                 ORDER BY dt.created_at DESC`,
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+
+        res.json(tenders);
+    } catch (error) {
+        console.error('Error fetching pending tenders for Purchase HOD:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// Purchase HOD approve/reject tender
+const approveTenderByPurchaseHod = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId, action, rejectionReason } = req.body;
+    const userId = req.user.id;
+    
+    if (!tenderId || !action || !['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ error: 'Tender ID and valid action (approve/reject) are required' });
+    }
+
+    if (action === 'reject' && !rejectionReason) {
+        return res.status(400).json({ error: 'Rejection reason is required when rejecting a tender' });
+    }
+
+    try {
+        // Verify user is Purchase HOD
+        const hodInfo = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT department_id FROM users WHERE id = ? AND is_hod = 1',
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!hodInfo) {
+            return res.status(403).json({ error: 'You are not authorized as an HOD' });
+        }
+
+        // Check if this is Purchase department HOD
+        const isPurchaseHod = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT name FROM departments WHERE id = ?',
+                [hodInfo.department_id],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row?.name?.toLowerCase() === 'purchase');
+                }
+            );
+        });
+
+        if (!isPurchaseHod) {
+            return res.status(403).json({ error: 'Only Purchase HOD can approve/reject tenders' });
+        }
+
+        // Verify tender exists and is pending Purchase HOD approval
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demand_tenders WHERE id = ? AND tender_status = ?',
+                [tenderId, 'pending_purchase_hod_approval'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ error: 'Tender not found or not pending Purchase HOD approval' });
+        }
+
+        // Update tender status based on action
+        let newStatus, statusComment;
+        if (action === 'approve') {
+            newStatus = 'pending_vetting';
+            statusComment = 'Tender approved by Purchase HOD and sent to vetting committee';
+        } else {
+            newStatus = 'purchase_hod_rejected';
+            statusComment = `Tender rejected by Purchase HOD: ${rejectionReason}`;
+        }
+
+        // Update tender status
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE demand_tenders SET tender_status = ?, purchase_hod_response_by = ?, purchase_hod_response_at = CURRENT_TIMESTAMP WHERE id = ?',
+                [newStatus, userId, tenderId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Add status history
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO tender_status_history (tender_id, status, comments, changed_by) VALUES (?, ?, ?, ?)`,
+                [tenderId, newStatus, statusComment, userId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ message: `Tender ${action}d successfully` });
+    } catch (error) {
+        console.error(`Error ${action}ing tender:`, error);
+        res.status(500).json({ error: `Error ${action}ing tender` });
+    }
+};
+
+// Get tenders pending Finance HOD approval
+const getFinanceHodPendingTenders = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    
+    // Check if user is Finance HOD
+    const isFinanceHOD = user.is_hod && user.department_name && user.department_name.toLowerCase() === 'finance';
+    
+    if (!isFinanceHOD) {
+        return res.status(403).json({ error: 'Only Finance HOD can view pending tenders' });
+    }
+    
+    try {
+        const tenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost, u.name as creator_name
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 JOIN users u ON dt.created_by = u.id
+                 WHERE dt.tender_status = 'pending_finance_ms_approval'
+                 AND dt.finance_hod_response_by IS NULL
+                 ORDER BY dt.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+        
+        res.json(tenders);
+    } catch (error) {
+        console.error('Error fetching Finance HOD pending tenders:', error);
+        res.status(500).json({ error: 'Failed to fetch pending tenders' });
+    }
+};
+
+// Get tenders pending MS HOD approval
+const getMsHodPendingTenders = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    
+    // Check if user is MS HOD
+    const isMsHOD = user.is_hod && user.department_name && user.department_name.toLowerCase() === 'ms';
+    
+    if (!isMsHOD) {
+        return res.status(403).json({ error: 'Only MS HOD can view pending tenders' });
+    }
+    
+    try {
+        const tenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost, u.name as creator_name
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 JOIN users u ON dt.created_by = u.id
+                 WHERE dt.tender_status = 'pending_finance_ms_approval'
+                 AND dt.ms_hod_response_by IS NULL
+                 ORDER BY dt.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+        
+        res.json(tenders);
+    } catch (error) {
+        console.error('Error fetching MS HOD pending tenders:', error);
+        res.status(500).json({ error: 'Failed to fetch pending tenders' });
+    }
+};
+
+// Approve/Reject tender by Finance HOD
+const approveTenderByFinanceHod = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId, action, rejectionReason } = req.body;
+    const user = req.user;
+    
+    // Check if user is Finance HOD
+    const isFinanceHOD = user.is_hod && user.department_name && user.department_name.toLowerCase() === 'finance';
+    
+    if (!isFinanceHOD) {
+        return res.status(403).json({ error: 'Only Finance HOD can approve/reject tenders' });
+    }
+    
+    if (!['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ error: 'Action must be approve or reject' });
+    }
+    
+    if (action === 'reject' && !rejectionReason) {
+        return res.status(400).json({ error: 'Rejection reason is required' });
+    }
+    
+    try {
+        // Check if tender exists and is pending Finance and MS approval
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demand_tenders WHERE id = ? AND tender_status = ? AND finance_hod_response_by IS NULL',
+                [tenderId, 'pending_finance_ms_approval'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+        
+        if (!tender) {
+            return res.status(404).json({ error: 'Tender not found or not pending Finance HOD approval' });
+        }
+        
+        // Update Finance HOD response
+        if (action === 'approve') {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'UPDATE demand_tenders SET finance_hod_response_by = ?, finance_hod_response_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [user.id, tenderId],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+            
+            // Check if both Finance and MS HOD have approved
+            const updatedTender = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT finance_hod_response_by, ms_hod_response_by FROM demand_tenders WHERE id = ?',
+                    [tenderId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+            
+            if (updatedTender.finance_hod_response_by && updatedTender.ms_hod_response_by) {
+                // Both have approved, send to Purchase HOD for final publishing
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'UPDATE demand_tenders SET tender_status = ? WHERE id = ?',
+                        ['pending_purchase_hod_publishing', tenderId],
+                        function(err) {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+            
+            res.json({ message: 'Tender approved by Finance HOD successfully' });
+        } else {
+            // Reject tender
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'UPDATE demand_tenders SET tender_status = ?, finance_hod_response_by = ?, finance_hod_response_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    ['finance_rejected', user.id, tenderId],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+            
+            res.json({ message: 'Tender rejected by Finance HOD successfully' });
+        }
+    } catch (error) {
+        console.error('Error processing Finance HOD tender approval:', error);
+        res.status(500).json({ error: 'Failed to process approval' });
+    }
+};
+
+// Approve/Reject tender by MS HOD
+const approveTenderByMsHod = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId, action, rejectionReason } = req.body;
+    const user = req.user;
+    
+    // Check if user is MS HOD
+    const isMsHOD = user.is_hod && user.department_name && user.department_name.toLowerCase() === 'ms';
+    
+    if (!isMsHOD) {
+        return res.status(403).json({ error: 'Only MS HOD can approve/reject tenders' });
+    }
+    
+    if (!['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ error: 'Action must be approve or reject' });
+    }
+    
+    if (action === 'reject' && !rejectionReason) {
+        return res.status(400).json({ error: 'Rejection reason is required' });
+    }
+    
+    try {
+        // Check if tender exists and is pending Finance and MS approval
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demand_tenders WHERE id = ? AND tender_status = ? AND ms_hod_response_by IS NULL',
+                [tenderId, 'pending_finance_ms_approval'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+        
+        if (!tender) {
+            return res.status(404).json({ error: 'Tender not found or not pending MS HOD approval' });
+        }
+        
+        // Update MS HOD response
+        if (action === 'approve') {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'UPDATE demand_tenders SET ms_hod_response_by = ?, ms_hod_response_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [user.id, tenderId],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+            
+            // Check if both Finance and MS HOD have approved
+            const updatedTender = await new Promise((resolve, reject) => {
+                db.get(
+                    'SELECT finance_hod_response_by, ms_hod_response_by FROM demand_tenders WHERE id = ?',
+                    [tenderId],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+            
+            if (updatedTender.finance_hod_response_by && updatedTender.ms_hod_response_by) {
+                // Both have approved, send to Purchase HOD for final publishing
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'UPDATE demand_tenders SET tender_status = ? WHERE id = ?',
+                        ['pending_purchase_hod_publishing', tenderId],
+                        function(err) {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+            
+            res.json({ message: 'Tender approved by MS HOD successfully' });
+        } else {
+            // Reject tender
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'UPDATE demand_tenders SET tender_status = ?, ms_hod_response_by = ?, ms_hod_response_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    ['ms_rejected', user.id, tenderId],
+                    function(err) {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+            
+            res.json({ message: 'Tender rejected by MS HOD successfully' });
+        }
+    } catch (error) {
+        console.error('Error processing MS HOD tender approval:', error);
+        res.status(500).json({ error: 'Failed to process approval' });
+    }
+};
+
+// Get tenders pending Purchase HOD publishing
+const getPurchaseHodPendingPublishing = async (req, res) => {
+    const db = getDatabase();
+    const user = req.user;
+    
+    // Check if user is Purchase HOD
+    const isPurchaseHOD = user.is_hod && user.department_name && user.department_name.toLowerCase() === 'purchase';
+    
+    if (!isPurchaseHOD) {
+        return res.status(403).json({ error: 'Only Purchase HOD can view pending publishing tenders' });
+    }
+    
+    try {
+        const tenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost, u.name as creator_name
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 JOIN users u ON dt.created_by = u.id
+                 WHERE dt.tender_status = 'pending_purchase_hod_publishing'
+                 ORDER BY dt.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+        
+        res.json(tenders);
+    } catch (error) {
+        console.error('Error fetching Purchase HOD pending publishing tenders:', error);
+        res.status(500).json({ error: 'Failed to fetch pending publishing tenders' });
+    }
+};
+
+// Publish tender by Purchase HOD
+const publishTenderByPurchaseHod = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const user = req.user;
+    
+    // Check if user is Purchase HOD
+    const isPurchaseHOD = user.is_hod && user.department_name && user.department_name.toLowerCase() === 'purchase';
+    
+    if (!isPurchaseHOD) {
+        return res.status(403).json({ error: 'Only Purchase HOD can publish tenders' });
+    }
+    
+    try {
+        // Check if tender exists and is pending publishing
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demand_tenders WHERE id = ? AND tender_status = ?',
+                [tenderId, 'pending_purchase_hod_publishing'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+        
+        if (!tender) {
+            return res.status(404).json({ error: 'Tender not found or not approved by Finance & MS HOD' });
+        }
+        
+        // Publish the tender
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE demand_tenders SET tender_status = ?, published_at = CURRENT_TIMESTAMP, published_by = ? WHERE id = ?',
+                ['active', user.id, tenderId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+        
+        res.json({ message: 'Tender published successfully' });
+    } catch (error) {
+        console.error('Error publishing tender:', error);
+        res.status(500).json({ error: 'Failed to publish tender' });
+    }
+};
+
 module.exports = {
     processExpiredTenders,
     getAwardedTenders,
@@ -1398,5 +1920,13 @@ module.exports = {
     addTenderCriteria,
     getPublishedTenders,
     getKnockoutClauseDocuments,
-    downloadKnockoutClauseDocument
+    downloadKnockoutClauseDocument,
+    getPurchaseHodPendingTenders,
+    approveTenderByPurchaseHod,
+    getFinanceHodPendingTenders,
+    getMsHodPendingTenders,
+    approveTenderByFinanceHod,
+    approveTenderByMsHod,
+    getPurchaseHodPendingPublishing,
+    publishTenderByPurchaseHod
 };

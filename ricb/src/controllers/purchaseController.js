@@ -205,7 +205,7 @@ const approveDemand = async (req, res) => {
                 db.run(
                     `UPDATE demands SET 
                      status = 'tender_created', 
-                     purchase_response = 'Approved by purchase department - Tender created',
+                     purchase_response = 'Approved by purchase department - Tender created and sent to Purchase HOD for approval',
                      purchase_response_by = ?,
                      purchase_response_date = CURRENT_TIMESTAMP,
                      updated_at = CURRENT_TIMESTAMP
@@ -218,11 +218,11 @@ const approveDemand = async (req, res) => {
                 );
             });
 
-            // Create a tender automatically with file paths
+            // Create a tender automatically with file paths - send to Purchase HOD for approval first
             await new Promise((resolve, reject) => {
                 db.run(
                     `INSERT INTO demand_tenders (demand_id, bidding_end_time, tender_status, created_by, tender_document_path, items_list_path)
-                     VALUES (?, ?, 'active', ?, ?, ?)`,
+                     VALUES (?, ?, 'pending_purchase_hod_approval', ?, ?, ?)`,
                     [id, expiryDate, user.id, tenderDocPath, itemsListPath],
                     function(err) {
                         if (err) reject(err);
@@ -240,9 +240,10 @@ const approveDemand = async (req, res) => {
             });
 
             res.json({ 
-                message: 'Demand approved successfully',
+                message: 'Demand approved and tender sent to Purchase HOD for approval',
                 status: 'tender_created',
-                createdTender: true
+                createdTender: true,
+                pendingHodApproval: true
             });
         } catch (error) {
             // Rollback transaction on error
@@ -396,7 +397,7 @@ const getTendersWithVettingStatus = async (req, res) => {
                  JOIN demands d ON dt.demand_id = d.id
                  JOIN users u ON dt.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
-                 WHERE dt.tender_status IN ('pending_vetting', 'vetting_approved', 'vetting_rejected')
+                 WHERE dt.tender_status IN ('pending_vetting', 'vetting_approved', 'vetting_rejected', 'pending_finance_ms_approval')
                  ORDER BY dt.created_at DESC`,
                 [],
                 (err, rows) => {
@@ -476,6 +477,68 @@ const publishApprovedTender = async (req, res) => {
     }
 };
 
+const submitTenderForFinanceApproval = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canSubmit = user.role === 'superadmin' || 
+                     (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canSubmit) {
+        return res.status(403).json({ message: 'Only purchase department can submit tenders for approval' });
+    }
+    
+    try {
+        // Check if tender is approved by vetting committee
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id, tender_status FROM demand_tenders WHERE id = ? AND tender_status = ?',
+                [tenderId, 'vetting_approved'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not approved by vetting committee' });
+        }
+
+        // Update tender status to pending Finance and MS approval
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE demand_tenders SET tender_status = ? WHERE id = ?',
+                ['pending_finance_ms_approval', tenderId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Add status history
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO tender_status_history (tender_id, status, comments, changed_by)
+                 VALUES (?, ?, ?, ?)`,
+                [tenderId, 'pending_finance_ms_approval', 'Tender submitted for Finance and MS HOD approval after vetting committee approval', user.id],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ message: 'Tender submitted for Finance & MS approvals successfully' });
+    } catch (error) {
+        console.error('Error submitting tender for approval:', error);
+        res.status(500).json({ message: 'Failed to submit tender for approval', error: error.message });
+    }
+};
+
 module.exports = {
     getPurchaseDemands,
     evaluateDemandPurchase,
@@ -483,5 +546,6 @@ module.exports = {
     setExpiryForTender,
     getSupplyOrders,
     getTendersWithVettingStatus,
-    publishApprovedTender
+    publishApprovedTender,
+    submitTenderForFinanceApproval
 };

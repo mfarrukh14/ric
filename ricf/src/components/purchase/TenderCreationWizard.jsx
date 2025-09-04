@@ -1011,7 +1011,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
               Submitting...
             </>
           ) : (
-            'Proceed for Vetting Evaluation'
+            'Submit for HOD Approval'
           )}
         </button>
       </div>

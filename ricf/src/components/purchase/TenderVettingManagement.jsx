@@ -25,15 +25,15 @@ const TenderVettingManagement = () => {
         }
     };
 
-    const publishTender = async (tenderId) => {
+    const submitForFinanceApproval = async (tenderId) => {
         try {
             setLoading(true);
-            await api.post(`/demands/purchase/tenders/${tenderId}/publish`);
-            toast.success('Tender published successfully!');
+            await api.post(`/demands/purchase/tenders/${tenderId}/submit-for-finance-approval`);
+            toast.success('Tender submitted for Finance & MS approvals successfully!');
             fetchTendersWithVettingStatus(); // Refresh the list
         } catch (error) {
-            console.error('Error publishing tender:', error);
-            const errorMessage = error.response?.data?.message || 'Failed to publish tender';
+            console.error('Error submitting tender for approval:', error);
+            const errorMessage = error.response?.data?.message || 'Failed to submit tender for approval';
             toast.error(errorMessage);
         } finally {
             setLoading(false);
@@ -50,9 +50,15 @@ const TenderVettingManagement = () => {
                 };
             case 'vetting_approved':
                 return {
-                    text: 'Approved by Vetting Committee',
+                    text: 'Ready for Finance & MS Approval',
                     color: 'bg-green-100 text-green-800',
                     icon: 'fas fa-check-circle'
+                };
+            case 'pending_finance_ms_approval':
+                return {
+                    text: 'Pending Finance & MS Approval',
+                    color: 'bg-blue-100 text-blue-800',
+                    icon: 'fas fa-hourglass-half'
                 };
             case 'vetting_rejected':
                 return {
@@ -106,11 +112,11 @@ const TenderVettingManagement = () => {
                     
                     {tender.tender_status === 'vetting_approved' && (
                         <button
-                            onClick={() => publishTender(tender.id)}
+                            onClick={() => submitForFinanceApproval(tender.id)}
                             disabled={loading}
                             className="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
                         >
-                            {loading ? 'Publishing...' : 'Publish Tender'}
+                            {loading ? 'Submitting...' : 'Submit for Finance & MS Approvals'}
                         </button>
                     )}
                     
@@ -179,7 +185,7 @@ const TenderVettingManagement = () => {
                                     <div className="ml-3">
                                         <h3 className="text-sm font-medium text-green-800">Tender Approved</h3>
                                         <p className="text-sm text-green-700 mt-1">
-                                            This tender has been approved by the vetting committee and is ready to be published.
+                                            This tender has been approved by the vetting committee and is ready to be submitted for Finance & MS HOD approvals.
                                         </p>
                                     </div>
                                 </div>
@@ -224,13 +230,13 @@ const TenderVettingManagement = () => {
                             {selectedTender.tender_status === 'vetting_approved' && (
                                 <button
                                     onClick={() => {
-                                        publishTender(selectedTender.id);
+                                        submitForFinanceApproval(selectedTender.id);
                                         setShowDetailsModal(false);
                                     }}
                                     disabled={loading}
                                     className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
                                 >
-                                    {loading ? 'Publishing...' : 'Publish Tender'}
+                                    {loading ? 'Submitting...' : 'Submit for Finance & MS Approvals'}
                                 </button>
                             )}
                         </div>

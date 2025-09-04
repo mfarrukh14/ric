@@ -13,6 +13,7 @@ import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
 import TenderOpeningDetails from '../components/purchase/TenderOpeningDetails';
 import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
 import VettingDashboard from '../components/vetting/VettingDashboard';
+import TenderReviewPage from '../components/vetting/TenderReviewPage';
 import CreateDemandForm from '../components/demand/CreateDemandForm';
 import FulfillmentPage from '../components/store/FulfillmentPage';
 import Header from '../components/layout/header/Header';
@@ -176,6 +177,16 @@ function App() {
               <ProtectedRoute currentUser={user}>
                 <TwoFactorEnforcementWrapper>
                   <VettingDashboard />
+                </TwoFactorEnforcementWrapper>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/committee/vetting/tender/:tenderId"
+            element={
+              <ProtectedRoute currentUser={user}>
+                <TwoFactorEnforcementWrapper>
+                  <TenderReviewPage />
                 </TwoFactorEnforcementWrapper>
               </ProtectedRoute>
             }

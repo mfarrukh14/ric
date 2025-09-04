@@ -142,8 +142,8 @@ export default function UserDashboard() {
         </div>
       </div>
 
-      {/* Tab Navigation for Store Department Users */}
-      {isStoreDepartmentUser && (
+      {/* Tab Navigation for Store Department Users (Non-HOD) */}
+      {isStoreDepartmentUser && !isHod && (
         <div className="mb-6">
           <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">
@@ -230,8 +230,8 @@ export default function UserDashboard() {
         </div>
       )}
 
-      {/* Tab Navigation for Purchase Department Users */}
-      {isPurchaseDepartment && (
+      {/* Tab Navigation for Purchase Department Users (excluding HODs) */}
+      {isPurchaseDepartment && !isHod && (
         <div className="mb-6">
           <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">

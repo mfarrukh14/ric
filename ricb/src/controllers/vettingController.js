@@ -465,7 +465,7 @@ const finalizeTenderVetting = async (tenderId) => {
                     tenderId, 
                     newStatus, 
                     allApproved 
-                        ? 'Tender approved by all vetting committee members' 
+                        ? 'Tender approved by all vetting committee members, ready for Purchase Department to submit for Finance and MS HOD approval' 
                         : 'Tender rejected by vetting committee',
                     1 // System user
                 ],
@@ -480,6 +480,126 @@ const finalizeTenderVetting = async (tenderId) => {
     } catch (error) {
         console.error('Error finalizing tender vetting:', error);
         throw error;
+    }
+};
+
+// Update tender items (for vetting committee)
+const updateTenderItems = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const { items } = req.body;
+    const user = req.user;
+
+    // Check if user is from vetting committee
+    const canUpdate = user.role === 'superadmin' || 
+                     (user.committee_name && user.committee_name.toLowerCase() === 'vetting committee');
+
+    if (!canUpdate) {
+        return res.status(403).json({ message: 'Only vetting committee members can update tender items' });
+    }
+
+    try {
+        // Check if tender exists and is pending vetting
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT demand_id FROM demand_tenders WHERE id = ? AND tender_status = ?',
+                [tenderId, 'pending_vetting'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found or not pending vetting' });
+        }
+
+        const demandId = tender.demand_id;
+
+        // Begin transaction
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        try {
+            // Delete existing demand items for this demand
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'DELETE FROM demand_items WHERE demand_id = ?',
+                    [demandId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Insert updated items
+            for (const item of items) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO demand_items (
+                            demand_id, item_name, custom_item_name, quantity, unit, 
+                            estimated_cost, store_estimated_cost, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                        [
+                            demandId,
+                            item.item_name,
+                            item.custom_item_name,
+                            item.quantity,
+                            item.unit,
+                            item.estimated_cost,
+                            item.store_estimated_cost || (item.estimated_cost * item.quantity)
+                        ],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+            }
+
+            // Update the demand's estimated cost
+            const totalCost = items.reduce((sum, item) => sum + (item.estimated_cost * item.quantity), 0);
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'UPDATE demands SET estimated_cost = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [totalCost, demandId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+
+            // Commit transaction
+            await new Promise((resolve, reject) => {
+                db.run('COMMIT', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            res.json({ message: 'Tender items updated successfully' });
+
+        } catch (error) {
+            // Rollback transaction on error
+            await new Promise((resolve, reject) => {
+                db.run('ROLLBACK', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('Error updating tender items:', error);
+        res.status(500).json({ message: 'Failed to update tender items', error: error.message });
     }
 };
 
@@ -517,5 +637,6 @@ module.exports = {
     getAllVettingTenders,
     getTenderForVetting,
     submitTenderVettingEvaluation,
+    updateTenderItems,
     getVettingCommitteeMembers
 };

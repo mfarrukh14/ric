@@ -164,7 +164,7 @@ const updateDemandItemsStatus = async (req, res) => {
 
         let newDemandStatus = 'available';
         if (itemsNeedingPurchase.length > 0) {
-            newDemandStatus = 'purchase_pending';
+            newDemandStatus = 'pending_hod_approval';
         }
 
         // Update main demand status
@@ -197,6 +197,7 @@ const updateDemandItemsStatus = async (req, res) => {
 };
 
 // Update item statuses and handle fulfillment logic
+// NEW WORKFLOW: Store submits fulfillment -> HOD approval -> Purchase department (if needed)
 const updateItemStatuses = async (req, res) => {
     const db = getDatabase();
     
@@ -338,34 +339,21 @@ const updateItemStatuses = async (req, res) => {
                 }
             }
 
-            // Determine overall demand status based on final database state
-            const finalItems = await new Promise((resolve, reject) => {
-                db.all(
-                    'SELECT store_fulfilled FROM demand_items WHERE demand_id = ? AND is_removed != 1',
-                    [id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
+            // After store processing, send to STORE HOD for approval before going to purchase
+            // Reset hod_status to NULL since this is a new approval stage (Store HOD, not original department HOD)
+            const demandStatus = 'pending_store_hod_approval';
 
-            let demandStatus;
-            const hasUnfulfilledItems = finalItems.some(item => item.store_fulfilled === 0);
-            
-            if (hasUnfulfilledItems) {
-                demandStatus = 'purchase_pending'; // Items need to go to tender
-            } else {
-                demandStatus = 'available'; // All items fulfilled by store
-            }
-
-            // Update demand status and store response
+            // Update demand status and store response, reset HOD approval fields for Store HOD stage
             const updateDemandQuery = `
                 UPDATE demands 
                 SET status = ?, 
                     store_response = ?, 
                     store_response_by = ?, 
-                    store_response_at = datetime('now')
+                    store_response_at = datetime('now'),
+                    hod_status = NULL,
+                    hod_response_by = NULL,
+                    hod_response_at = NULL,
+                    hod_rejection_reason = NULL
                 WHERE id = ?
             `;
 
@@ -385,9 +373,9 @@ const updateItemStatuses = async (req, res) => {
             });
 
             res.json({ 
-                message: 'Fulfillment updated successfully', 
+                message: 'Fulfillment updated successfully. Sent to HOD for approval.', 
                 status: demandStatus,
-                redirectsToVetting: demandStatus === 'vetting_pending'
+                redirectsToHod: true
             });
 
         } catch (error) {
@@ -404,8 +392,230 @@ const updateItemStatuses = async (req, res) => {
     }
 };
 
+// Get pending demands for Store HOD approval
+const getStorePendingForHodApproval = async (req, res) => {
+    try {
+        const db = getDatabase();
+        const userId = req.user.id;
+
+        // Verify user is Store HOD
+        const user = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT u.*, d.name as departmentName 
+                 FROM users u 
+                 LEFT JOIN departments d ON u.department_id = d.id 
+                 WHERE u.id = ? AND u.is_hod = 1 AND LOWER(d.name) = 'store'`,
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!user) {
+            return res.status(403).json({ message: 'Access denied. Store HOD access required.' });
+        }
+
+        // Get demands pending Store HOD approval
+        const demands = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT d.*, 
+                        u.name as createdByName, 
+                        dept.name as departmentName,
+                        stor.name as storeResponseByName
+                 FROM demands d
+                 LEFT JOIN users u ON d.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 LEFT JOIN users stor ON d.store_response_by = stor.id
+                 WHERE d.status = 'pending_store_hod_approval'
+                 ORDER BY d.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        res.json(demands);
+    } catch (error) {
+        console.error('Get store pending for HOD approval error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+// Approve Store fulfillment by Store HOD
+const approveStoreFulfillmentByHod = async (req, res) => {
+    try {
+        const db = getDatabase();
+        const { demandId } = req.params;
+        const userId = req.user.id;
+
+        // Verify user is Store HOD
+        const user = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT u.*, d.name as departmentName 
+                 FROM users u 
+                 LEFT JOIN departments d ON u.department_id = d.id 
+                 WHERE u.id = ? AND u.is_hod = 1 AND LOWER(d.name) = 'store'`,
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!user) {
+            return res.status(403).json({ message: 'Access denied. Store HOD access required.' });
+        }
+
+        // Get demand details and check if items need purchase
+        const demand = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demands WHERE id = ? AND status = ?',
+                [demandId, 'pending_store_hod_approval'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!demand) {
+            return res.status(404).json({ message: 'Demand not found or not in correct status for Store HOD approval' });
+        }
+
+        // Check if any items need to go to purchase (not fully fulfilled by store)
+        const unfulfilled = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT * FROM demand_items 
+                 WHERE demand_id = ? AND store_fulfilled = 0`,
+                [demandId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        // Determine the appropriate status after Store HOD approval
+        const hasUnfulfilledItems = unfulfilled.length > 0;
+        const finalStatus = hasUnfulfilledItems ? 'purchase_pending' : 'available';
+
+        // Update demand status based on whether items need purchase
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE demands SET 
+                    status = ?,
+                    hod_status = 'approved',
+                    hod_response_by = ?,
+                    hod_response_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [finalStatus, userId, demandId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this);
+                }
+            );
+        });
+
+        res.json({ 
+            message: `Store fulfillment approved successfully by Store HOD. Status: ${finalStatus}`,
+            demandId: demandId,
+            status: finalStatus,
+            needsPurchase: hasUnfulfilledItems
+        });
+
+    } catch (error) {
+        console.error('Approve store fulfillment by HOD error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+// Reject Store fulfillment by Store HOD
+const rejectStoreFulfillmentByHod = async (req, res) => {
+    try {
+        const db = getDatabase();
+        const { demandId } = req.params;
+        const { rejectionReason } = req.body;
+        const userId = req.user.id;
+        
+        if (!rejectionReason || rejectionReason.trim() === '') {
+            return res.status(400).json({ message: 'Rejection reason is required' });
+        }
+
+        // Verify user is Store HOD
+        const user = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT u.*, d.name as departmentName 
+                 FROM users u 
+                 LEFT JOIN departments d ON u.department_id = d.id 
+                 WHERE u.id = ? AND u.is_hod = 1 AND LOWER(d.name) = 'store'`,
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!user) {
+            return res.status(403).json({ message: 'Access denied. Store HOD access required.' });
+        }
+
+        // Get demand details
+        const demand = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demands WHERE id = ? AND status = ?',
+                [demandId, 'pending_store_hod_approval'],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!demand) {
+            return res.status(404).json({ message: 'Demand not found or not in correct status for Store HOD approval' });
+        }
+
+        // Update demand status to rejected by Store HOD
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE demands SET 
+                    status = 'rejected',
+                    hod_status = 'rejected',
+                    hod_response_by = ?,
+                    hod_response_at = CURRENT_TIMESTAMP,
+                    hod_rejection_reason = ?
+                 WHERE id = ?`,
+                [userId, rejectionReason.trim(), demandId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this);
+                }
+            );
+        });
+
+        res.json({ 
+            message: 'Store fulfillment rejected successfully by Store HOD',
+            demandId: demandId,
+            rejectionReason: rejectionReason.trim()
+        });
+
+    } catch (error) {
+        console.error('Reject store fulfillment by HOD error:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
 module.exports = {
     updateDemandStatus,
     updateDemandItemsStatus,
-    updateItemStatuses
+    updateItemStatuses,
+    getStorePendingForHodApproval,
+    approveStoreFulfillmentByHod,
+    rejectStoreFulfillmentByHod
 };

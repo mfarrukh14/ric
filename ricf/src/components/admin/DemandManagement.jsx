@@ -12,11 +12,22 @@ const DemandManagement = () => {
     const [selectedDemands, setSelectedDemands] = useState([]);
     const [mergeMode, setMergeMode] = useState(false);
     const [validationResult, setValidationResult] = useState(null);
+    const [user, setUser] = useState(null);
     const [mergeForm, setMergeForm] = useState({
         description: '',
         urgency: 'normal',
         requiredBy: ''
     });
+
+    // Get current user information
+    useEffect(() => {
+        const stored = localStorage.getItem('user');
+        if (stored) {
+            setUser(JSON.parse(stored));
+        }
+    }, []);
+
+    const isHod = user?.is_hod === 1 || user?.is_hod === true;
 
     useEffect(() => {
         fetchDemands();
@@ -104,7 +115,44 @@ const DemandManagement = () => {
     };
 
     const canManageFulfillment = (demand) => {
-        return demand.status === 'pending' || demand.status === 'store_pending';
+        // HODs should not see manage fulfillment - they only approve/reject
+        if (isHod) {
+            return false;
+        }
+        
+        // Check if store has already responded to this demand
+        const hasStoreResponse = demand.store_response_by || demand.store_response_at;
+        
+        // Non-HOD store users can manage fulfillment if:
+        // 1. Status is pending or store_pending, OR
+        // 2. Status is any other status BUT store hasn't actually responded yet
+        if (demand.status === 'pending' || demand.status === 'store_pending') {
+            return true;
+        }
+        
+        // Allow management if no store response exists yet, regardless of status
+        return !hasStoreResponse;
+    };
+
+    const getActionButtonMessage = (demand) => {
+        const hasStoreResponse = demand.store_response_by || demand.store_response_at;
+        
+        if (isHod && demand.status === 'pending_hod_approval') {
+            return 'Pending HOD Approval - Check HOD Dashboard';
+        }
+        if (demand.status === 'pending_hod_approval') {
+            return 'Store response submitted - Pending HOD approval';
+        }
+        if (hasStoreResponse) {
+            return 'Response already submitted';
+        }
+        
+        // If no store response but status suggests it should have one
+        if (demand.status === 'purchase_pending' || demand.status === 'available') {
+            return 'Status inconsistency - You can re-submit fulfillment';
+        }
+        
+        return 'Response already submitted';
     };
 
     const handleMergeDemandsClick = () => {
@@ -244,8 +292,15 @@ const DemandManagement = () => {
             <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
                 <div className="px-4 py-6 sm:px-0">
                     <div className="mb-6">
-                        <h1 className="text-3xl font-bold text-gray-900">Store Department - Demand Management</h1>
-                        <p className="text-gray-600">Review and manage fulfillment for incoming demands</p>
+                        <h1 className="text-3xl font-bold text-gray-900">
+                            Store Department - {isHod ? 'HOD Review' : 'Demand Management'}
+                        </h1>
+                        <p className="text-gray-600">
+                            {isHod 
+                                ? 'Review store fulfillment responses and approve/reject demands. Use the HOD Dashboard for approval actions.'
+                                : 'Review and manage fulfillment for incoming demands'
+                            }
+                        </p>
                     </div>
 
                     {error && (
@@ -467,7 +522,7 @@ const DemandManagement = () => {
                                                     </button>
                                                 ) : (
                                                     <div className="text-sm text-gray-500">
-                                                        Response already submitted
+                                                        {getActionButtonMessage(demand)}
                                                     </div>
                                                 )}
                                             </div>

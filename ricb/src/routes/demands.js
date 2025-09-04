@@ -23,7 +23,10 @@ const {
 const {
     updateDemandStatus,
     updateDemandItemsStatus,
-    updateItemStatuses
+    updateItemStatuses,
+    getStorePendingForHodApproval,
+    approveStoreFulfillmentByHod,
+    rejectStoreFulfillmentByHod
 } = require('../controllers/storeController');
 
 const {
@@ -33,7 +36,8 @@ const {
     setExpiryForTender,
     getSupplyOrders,
     getTendersWithVettingStatus,
-    publishApprovedTender
+    publishApprovedTender,
+    submitTenderForFinanceApproval
 } = require('../controllers/purchaseController');
 
 const {
@@ -51,7 +55,15 @@ const {
     getKnockoutClauseDocuments,
     downloadKnockoutClauseDocument,
     openTender,
-    getPublishedTenders
+    getPublishedTenders,
+    getPurchaseHodPendingTenders,
+    approveTenderByPurchaseHod,
+    getFinanceHodPendingTenders,
+    getMsHodPendingTenders,
+    approveTenderByFinanceHod,
+    approveTenderByMsHod,
+    getPurchaseHodPendingPublishing,
+    publishTenderByPurchaseHod
 } = require('../controllers/tenderController');
 
 // Create tender documents directory if it doesn't exist
@@ -146,6 +158,22 @@ router.get('/user', auth, getUserDemands);
 router.get('/hod/pending', auth, getHodPendingDemands);
 router.put('/hod/approve-reject', auth, approveRejectDemandByHod);
 
+// Purchase HOD approval routes
+router.get('/purchase-hod/pending-tenders', auth, getPurchaseHodPendingTenders);
+router.put('/purchase-hod/approve-reject-tender', auth, approveTenderByPurchaseHod);
+
+// Finance HOD approval routes
+router.get('/finance-hod/pending-tenders', auth, getFinanceHodPendingTenders);
+router.put('/finance-hod/approve-reject-tender', auth, approveTenderByFinanceHod);
+
+// MS HOD approval routes
+router.get('/ms-hod/pending-tenders', auth, getMsHodPendingTenders);
+router.put('/ms-hod/approve-reject-tender', auth, approveTenderByMsHod);
+
+// Purchase HOD publishing routes
+router.get('/purchase-hod/pending-publishing', auth, getPurchaseHodPendingPublishing);
+router.put('/purchase-hod/publish-tender/:tenderId', auth, publishTenderByPurchaseHod);
+
 // Get all demands (for superadmin and store department)
 router.get('/all', auth, getAllDemands);
 
@@ -179,6 +207,11 @@ router.put('/:id/items-status', auth, updateItemStatuses);
 
 // Update demand items status with partial quantities
 router.put('/:id/items', auth, updateDemandItemsStatus);
+
+// Store HOD approval routes
+router.get('/store-hod/pending', auth, getStorePendingForHodApproval);
+router.put('/store-hod/:demandId/approve', auth, approveStoreFulfillmentByHod);
+router.put('/store-hod/:demandId/reject', auth, rejectStoreFulfillmentByHod);
 
 // Evaluate demand in purchase department
 router.put('/:id/purchase', auth, evaluateDemandPurchase);
@@ -372,7 +405,8 @@ router.post('/tenders/:tenderId/add-criteria', auth, addTenderCriteria);
 
 // Purchase department routes for vetting workflow
 router.get('/purchase/tenders-vetting-status', auth, getTendersWithVettingStatus);
-router.post('/purchase/tenders/:tenderId/publish', auth, publishApprovedTender);
+// Submit tender for Finance & MS approval after vetting committee approval
+router.post('/purchase/tenders/:tenderId/submit-for-finance-approval', auth, submitTenderForFinanceApproval);
 
 // Error handling middleware for multer errors
 router.use((error, req, res, next) => {

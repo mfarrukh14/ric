@@ -404,7 +404,7 @@ const FulfillmentPage = () => {
         } else if (fullyAvailable === totalNonRemovedItems) {
             return { status: 'available', text: 'All remaining items will be marked as AVAILABLE', color: 'text-green-600' };
         } else if (partiallyAvailable > 0 || notAvailable > 0) {
-            return { status: 'purchase_pending', text: 'Demand will go to PURCHASE DEPARTMENT for procurement', color: 'text-blue-600' };
+            return { status: 'pending_hod_approval', text: 'Demand will go to HOD for approval first, then to PURCHASE DEPARTMENT if needed', color: 'text-orange-600' };
         }
         
         return { status: 'pending', text: 'Status will be determined', color: 'text-gray-600' };

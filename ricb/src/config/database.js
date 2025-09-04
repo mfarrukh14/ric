@@ -1200,6 +1200,54 @@ const initializeDatabase = async () => {
             });
         }
 
+        // Check if Finance Department exists
+        const financeDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'Finance'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!financeDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['Finance'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Finance Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if MS Department exists
+        const msDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'MS'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!msDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['MS'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('MS Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
         // Check if Grievance Committee exists
         const grievanceCommitteeRow = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM committees WHERE name = 'Grievance Committee'", (err, row) => {
@@ -1860,9 +1908,9 @@ const runMigrations = async () => {
             });
         });
 
-        // Migration 8a: Add tender opening columns to demand_tenders
+        // Migration 8a: Add tender opening columns and Purchase HOD approval fields to demand_tenders
         await new Promise((resolve, reject) => {
-            console.log('Adding tender opening columns to demand_tenders table...');
+            console.log('Adding tender opening columns and Purchase HOD approval fields to demand_tenders table...');
             
             db.all("PRAGMA table_info(demand_tenders)", [], (err, columns) => {
                 if (err) { 
@@ -1883,16 +1931,40 @@ const runMigrations = async () => {
                 if (!columnNames.includes('tender_number')) {
                     additions.push('ALTER TABLE demand_tenders ADD COLUMN tender_number TEXT');
                 }
+                if (!columnNames.includes('purchase_hod_response_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN purchase_hod_response_by INTEGER');
+                }
+                if (!columnNames.includes('purchase_hod_response_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN purchase_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('finance_hod_response_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_response_by INTEGER');
+                }
+                if (!columnNames.includes('finance_hod_response_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('ms_hod_response_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_response_by INTEGER');
+                }
+                if (!columnNames.includes('ms_hod_response_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('published_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN published_at DATETIME');
+                }
+                if (!columnNames.includes('published_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN published_by INTEGER');
+                }
                 
                 if (additions.length === 0) { 
-                    console.log('Tender opening columns and tender_number already exist in demand_tenders table');
+                    console.log('Tender opening columns, tender_number, Purchase HOD, Finance HOD, MS HOD approval fields, and publishing fields already exist in demand_tenders table');
                     resolve(); 
                     return; 
                 }
                 
                 const runNext = () => {
                     if (additions.length === 0) { 
-                        console.log('Successfully added tender opening columns and tender_number to demand_tenders table');
+                        console.log('Successfully added tender opening columns, tender_number, Purchase HOD, Finance HOD, MS HOD approval fields, and publishing fields to demand_tenders table');
                         
                         // Populate tender_number for existing tenders
                         db.all('SELECT id, created_at FROM demand_tenders WHERE tender_number IS NULL', [], (err, rows) => {

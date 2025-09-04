@@ -12,6 +12,7 @@ router.get('/tenders/pending', auth, vettingController.getPendingTenders);
 router.get('/tenders/all', auth, vettingController.getAllVettingTenders);
 router.get('/tenders/:tenderId', auth, vettingController.getTenderForVetting);
 router.post('/tenders/:tenderId/evaluate', auth, vettingController.submitTenderVettingEvaluation);
+router.put('/tenders/:tenderId/update-items', auth, vettingController.updateTenderItems);
 router.get('/committee/members', auth, vettingController.getVettingCommitteeMembers);
 
 module.exports = router;
