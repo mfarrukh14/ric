@@ -33,8 +33,18 @@ const app = express();
 const PORT = 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Middleware
-app.use(cors());
+// Allow all origins, methods, and headers
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*"); // Allow everyone
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ limit: '20mb', extended: true }));
 

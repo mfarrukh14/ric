@@ -539,6 +539,148 @@ const submitTenderForFinanceApproval = async (req, res) => {
     }
 };
 
+// Get manageable tenders (tenders that have been approved by HOD and are active)
+const getManagableTenders = async (req, res) => {
+    console.log('🔍 getManagableTenders called by user:', req.user);
+    const db = getDatabase();
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canView = user.role === 'superadmin' || 
+                   (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canView) {
+        console.log('❌ Access denied for user:', user.name, 'Department:', user.department_name);
+        return res.status(403).json({ message: 'You do not have permission to view manageable tenders' });
+    }
+
+    console.log('✅ Access granted for user:', user.name, 'Department:', user.department_name);
+
+    try {
+        console.log('📊 Executing manageable tenders query...');
+        const tenders = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost,
+                        u.name as created_by_name, dept.name as creator_department,
+                        fu.name as finance_hod_response_by_name,
+                        mu.name as ms_hod_response_by_name,
+                        eu.name as extension_by_name,
+                        CASE 
+                            WHEN dt.bidding_end_time > datetime('now') THEN 'active'
+                            WHEN dt.bidding_end_time <= datetime('now') THEN 'expired'
+                        END as tender_time_status
+                 FROM demand_tenders dt
+                 JOIN demands d ON dt.demand_id = d.id
+                 LEFT JOIN users u ON d.created_by = u.id
+                 LEFT JOIN departments dept ON u.department_id = dept.id
+                 LEFT JOIN users fu ON dt.finance_hod_response_by = fu.id
+                 LEFT JOIN users mu ON dt.ms_hod_response_by = mu.id
+                 LEFT JOIN users eu ON dt.time_extension_by = eu.id
+                 WHERE d.hod_status = 'approved'
+                 AND (dt.finance_hod_status = 'pending' OR dt.ms_hod_status = 'pending' OR dt.tender_status IN ('published', 'active'))
+                 ORDER BY dt.created_at DESC`,
+                [],
+                (err, rows) => {
+                    if (err) {
+                        console.error('❌ Database query error:', err);
+                        reject(err);
+                    } else {
+                        console.log('✅ Query executed successfully. Found', rows.length, 'tenders');
+                        console.log('📋 Tender details:', rows.map(r => ({
+                            id: r.id,
+                            tender_number: r.tender_number,
+                            item_name: r.item_name,
+                            tender_status: r.tender_status,
+                            finance_hod_status: r.finance_hod_status,
+                            ms_hod_status: r.ms_hod_status,
+                            hod_status: r.hod_status
+                        })));
+                        resolve(rows);
+                    }
+                }
+            );
+        });
+
+        console.log('📤 Sending response with', tenders.length, 'tenders');
+        res.json({ tenders });
+    } catch (error) {
+        console.error('💥 Error fetching manageable tenders:', error);
+        res.status(500).json({ message: 'Failed to fetch manageable tenders' });
+    }
+};
+
+// Update tender bidding time
+const updateTenderTime = async (req, res) => {
+    const db = getDatabase();
+    const { tenderId } = req.params;
+    const { newBiddingEndTime, reason } = req.body;
+    const user = req.user;
+
+    // Check if user is from purchase department
+    const canUpdate = user.role === 'superadmin' || 
+                     (user.department_name && user.department_name.toLowerCase() === 'purchase');
+
+    if (!canUpdate) {
+        return res.status(403).json({ message: 'You do not have permission to update tender time' });
+    }
+
+    if (!newBiddingEndTime || !reason) {
+        return res.status(400).json({ message: 'New bidding end time and reason are required' });
+    }
+
+    try {
+        // Validate that the new time is in the future
+        const newTime = new Date(newBiddingEndTime);
+        const currentTime = new Date();
+        
+        if (newTime <= currentTime) {
+            return res.status(400).json({ message: 'New bidding end time must be in the future' });
+        }
+
+        // Get current tender details
+        const tender = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM demand_tenders WHERE id = ?',
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!tender) {
+            return res.status(404).json({ message: 'Tender not found' });
+        }
+
+        // Update the tender with new bidding end time
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE demand_tenders 
+                 SET bidding_end_time = ?, 
+                     time_extension_reason = ?,
+                     time_extension_by = ?,
+                     time_extension_at = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [newBiddingEndTime, reason, user.id, tenderId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        res.json({ 
+            message: 'Tender bidding time updated successfully',
+            newBiddingEndTime,
+            reason
+        });
+    } catch (error) {
+        console.error('Error updating tender time:', error);
+        res.status(500).json({ message: 'Failed to update tender time' });
+    }
+};
+
 module.exports = {
     getPurchaseDemands,
     evaluateDemandPurchase,
@@ -547,5 +689,7 @@ module.exports = {
     getSupplyOrders,
     getTendersWithVettingStatus,
     publishApprovedTender,
-    submitTenderForFinanceApproval
+    submitTenderForFinanceApproval,
+    getManagableTenders,
+    updateTenderTime
 };

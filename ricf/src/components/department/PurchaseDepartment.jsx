@@ -25,6 +25,15 @@ const PurchaseDepartment = () => {
     const [processingTenderIds, setProcessingTenderIds] = useState([]);
     const [showTenderWizard, setShowTenderWizard] = useState(false);
     const [selectedDemandForTender, setSelectedDemandForTender] = useState(null);
+    
+    // Tender Management States
+    const [managableTenders, setManagableTenders] = useState([]);
+    const [showTimeExtensionModal, setShowTimeExtensionModal] = useState(false);
+    const [selectedTenderForExtension, setSelectedTenderForExtension] = useState(null);
+    const [timeExtensionForm, setTimeExtensionForm] = useState({
+        newBiddingEndTime: '',
+        reason: ''
+    });
 
     const [evaluationForm, setEvaluationForm] = useState({
         status: '',
@@ -111,6 +120,7 @@ const PurchaseDepartment = () => {
         fetchScheduledOpenings();
         fetchPendingTenders();
         fetchGrievances();
+        fetchManagableTenders();
     }, []);
 
     // Auto-redirect after success modal
@@ -132,6 +142,8 @@ const PurchaseDepartment = () => {
         if (activeTab === 'market-survey') {
             fetchMarketSurveyTenders();
             fetchCompletedSurveys();
+        } else if (activeTab === 'tender-management') {
+            fetchManagableTenders();
         }
     }, [activeTab]);
 
@@ -267,6 +279,67 @@ const PurchaseDepartment = () => {
             }
         } catch (err) {
             console.error('Error fetching grievances:', err);
+        }
+    };
+
+    const fetchManagableTenders = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/managable-tenders`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setManagableTenders(data.tenders || []);
+            } else {
+                console.error('Failed to fetch managable tenders');
+            }
+        } catch (err) {
+            console.error('Error fetching managable tenders:', err);
+        }
+    };
+
+    const handleTimeExtension = (tender) => {
+        setSelectedTenderForExtension(tender);
+        setTimeExtensionForm({
+            newBiddingEndTime: '',
+            reason: ''
+        });
+        setShowTimeExtensionModal(true);
+    };
+
+    const submitTimeExtension = async () => {
+        if (!timeExtensionForm.newBiddingEndTime || !timeExtensionForm.reason) {
+            toast.error('Please provide both new bidding end time and reason');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/tenders/${selectedTenderForExtension.id}/update-time`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(timeExtensionForm)
+            });
+
+            if (response.ok) {
+                toast.success('Tender time updated successfully');
+                setShowTimeExtensionModal(false);
+                fetchManagableTenders(); // Refresh the list
+            } else {
+                const errorData = await response.json();
+                toast.error(errorData.message || 'Failed to update tender time');
+            }
+        } catch (error) {
+            console.error('Error updating tender time:', error);
+            toast.error('Failed to update tender time');
         }
     };
 
@@ -1166,113 +1239,101 @@ const PurchaseDepartment = () => {
                             </div>
                         )}
 
-                    {/* Tab Navigation */}
-                    <div className="mb-6">
-                        <nav className="flex space-x-8" aria-label="Tabs">
-                            <button
-                                onClick={() => setActiveTab('demands')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'demands'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
+                    {/* Sidebar + Content */}
+                    <div className="flex gap-6">
+                        {/* Mobile menu */}
+                        <div className="w-full md:hidden mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Menu</label>
+                            <select
+                                value={activeTab}
+                                onChange={(e) => setActiveTab(e.target.value)}
+                                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
-                                Pending Demands (Excel Reports)
-                                {demands.length > 0 && (
-                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
-                                        {demands.length}
-                                    </span>
-                                )}
-                            </button>                            <button
-                                onClick={() => setActiveTab('supply-orders')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'supply-orders'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                <i className="fas fa-envelope mr-1"></i>
-                                Letters
-                                {supplyOrders.length > 0 && (
-                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                        {supplyOrders.length}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('pending-tenders')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'pending-tenders'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                Tender Opening
-                                {pendingTenders.length > 0 && (
-                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                        {pendingTenders.length}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('financial-opening')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'financial-opening'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                Financial Opening
-                                {(readyTenders.length + scheduledOpenings.ready_to_open?.length + scheduledOpenings.scheduled_future?.length) > 0 && (
-                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                                        {readyTenders.length + (scheduledOpenings.ready_to_open?.length || 0) + (scheduledOpenings.scheduled_future?.length || 0)}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('grievance-management')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'grievance-management'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                Grievance Management
-                                {pendingGrievances.length > 0 && (
-                                    <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                                        {pendingGrievances.length}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('pre-bid-meetings')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'pre-bid-meetings'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                <i className="fas fa-calendar-alt mr-1"></i>
-                                Pre-Bid Meetings
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('vetting-management')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'vetting-management'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                <i className="fas fa-clipboard-check mr-1"></i>
-                                Vetting Management
-                            </button>
-                            
-                            <button
-                                onClick={() => setActiveTab('market-survey')}
-                                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'market-survey'
-                                        ? 'border-indigo-500 text-indigo-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                <i className="fas fa-chart-line mr-1"></i>
-                                Market Survey
-                            </button>
-                        </nav>
-                    </div>                    {/* Tab Content */}
-                    {activeTab === 'demands' && (
+                                <option value="demands">Pending Demands</option>
+                                <option value="supply-orders">Letters</option>
+                                <option value="pending-tenders">Tender Opening</option>
+                                <option value="financial-opening">Financial Opening</option>
+                                <option value="grievance-management">Grievance Management</option>
+                                <option value="pre-bid-meetings">Pre-Bid Meetings</option>
+                                <option value="vetting-management">Vetting Management</option>
+                                <option value="market-survey">Market Survey</option>
+                                <option value="tender-management">Tender Management</option>
+                            </select>
+                        </div>
+
+                        {/* Sidebar */}
+                        <aside className="hidden md:block w-64">
+                            <div className="bg-white border border-gray-200 rounded-lg p-3 sticky top-24">
+                                <nav className="space-y-1" aria-label="Sidebar">
+                                    {[
+                                        {
+                                            id: 'demands',
+                                            label: 'Pending Demands',
+                                            icon: 'fas fa-clipboard-list',
+                                            count: demands.length,
+                                            badgeClass: 'bg-indigo-100 text-indigo-800'
+                                        },
+                                        {
+                                            id: 'supply-orders',
+                                            label: 'Letters',
+                                            icon: 'fas fa-envelope',
+                                            count: supplyOrders.length,
+                                            badgeClass: 'bg-green-100 text-green-800'
+                                        },
+                                        {
+                                            id: 'pending-tenders',
+                                            label: 'Tender Opening',
+                                            icon: 'fas fa-folder-open',
+                                            count: pendingTenders.length,
+                                            badgeClass: 'bg-yellow-100 text-yellow-800'
+                                        },
+                                        {
+                                            id: 'financial-opening',
+                                            label: 'Financial Opening',
+                                            icon: 'fas fa-coins',
+                                            count: (readyTenders.length + (scheduledOpenings.ready_to_open?.length || 0) + (scheduledOpenings.scheduled_future?.length || 0)),
+                                            badgeClass: 'bg-orange-100 text-orange-800'
+                                        },
+                                        {
+                                            id: 'grievance-management',
+                                            label: 'Grievance Management',
+                                            icon: 'fas fa-exclamation-triangle',
+                                            count: pendingGrievances.length,
+                                            badgeClass: 'bg-red-100 text-red-800'
+                                        },
+                                        { id: 'pre-bid-meetings', label: 'Pre-Bid Meetings', icon: 'fas fa-calendar-alt' },
+                                        { id: 'vetting-management', label: 'Vetting Management', icon: 'fas fa-clipboard-check' },
+                                        { id: 'market-survey', label: 'Market Survey', icon: 'fas fa-chart-line' },
+                                        { id: 'tender-management', label: 'Tender Management', icon: 'fas fa-clock' }
+                                    ].map(item => (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => setActiveTab(item.id)}
+                                            className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                                                activeTab === item.id
+                                                    ? 'bg-indigo-50 text-indigo-700'
+                                                    : 'text-gray-700 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <span className="flex items-center">
+                                                <i className={`${item.icon} mr-2 text-gray-500`}></i>
+                                                {item.label}
+                                            </span>
+                                            {typeof item.count === 'number' && item.count > 0 && (
+                                                <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${item.badgeClass}`}>
+                                                    {item.count}
+                                                </span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </nav>
+                            </div>
+                        </aside>
+
+                        {/* Content Area */}
+                        <div className="flex-1">
+                            {/* Section Content */}
+                            {activeTab === 'demands' && (
                         <div className="bg-white shadow overflow-hidden sm:rounded-md">
                             <div className="px-4 py-5 sm:p-6">
                                 <h2 className="text-lg font-medium text-gray-900 mb-4">Demands for Purchase Review & Excel Reports</h2>
@@ -1783,12 +1844,9 @@ const PurchaseDepartment = () => {
                             )}
                         </div>
                     )}
-                </div>
-            </div>
-            )}
 
-            {/* Grievance Management Tab */}
-            {activeTab === 'grievance-management' && (
+                    {/* Grievance Management Tab */}
+                    {activeTab === 'grievance-management' && (
                 <div className="space-y-6">
                     <div className="bg-white shadow overflow-hidden sm:rounded-md">
                         <div className="px-4 py-5 sm:p-6">
@@ -2247,6 +2305,293 @@ const PurchaseDepartment = () => {
                                 </div>
                             )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Tender Management Tab */}
+            {activeTab === 'tender-management' && (
+                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                    <div className="px-4 py-5 sm:p-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-lg font-medium text-gray-900">
+                                <i className="fas fa-clock mr-2"></i>
+                                Tender Time Management
+                            </h3>
+                            <button
+                                onClick={fetchManagableTenders}
+                                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                            >
+                                <i className="fas fa-sync-alt mr-2"></i>
+                                Refresh
+                            </button>
+                        </div>
+
+                        {loading ? (
+                            <div className="text-center py-12">
+                                <i className="fas fa-spinner fa-spin text-gray-400 text-4xl mb-4"></i>
+                                <p className="text-gray-500">Loading tenders...</p>
+                            </div>
+                        ) : managableTenders.length === 0 ? (
+                            <div className="text-center py-12">
+                                <i className="fas fa-clock text-gray-400 text-4xl mb-4"></i>
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">No Manageable Tenders</h3>
+                                <p className="text-gray-500">There are no approved tenders available for time management.</p>
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Tender Details
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Item Information
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Current Timing
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Extension History
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                Actions
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {managableTenders.map((tender) => (
+                                            <tr key={tender.id} className="hover:bg-gray-50">
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <div className="text-sm font-medium text-gray-900">
+                                                        Tender #{tender.id}
+                                                    </div>
+                                                    <div className="text-sm text-gray-500">
+                                                        Status: <span className={`font-medium ${
+                                                            tender.status === 'hod_approved' ? 'text-green-600' :
+                                                            tender.status === 'active' ? 'text-blue-600' :
+                                                            'text-gray-600'
+                                                        }`}>{tender.status}</span>
+                                                    </div>
+                                                    <div className="text-sm text-gray-500">
+                                                        Created: {new Date(tender.created_at).toLocaleDateString()}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="text-sm font-medium text-gray-900">
+                                                        {tender.item_name}
+                                                    </div>
+                                                    <div className="text-sm text-gray-500">
+                                                        Qty: {tender.quantity}
+                                                    </div>
+                                                    <div className="text-sm text-gray-500 max-w-xs truncate">
+                                                        {tender.description}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <div className="text-sm text-gray-900">
+                                                        <div className="flex items-center mb-1">
+                                                            <i className="fas fa-calendar-start mr-1 text-green-600"></i>
+                                                            <span className="font-medium">Start:</span>
+                                                        </div>
+                                                        <div className="text-sm text-gray-600 mb-2">
+                                                            {new Date(tender.bidding_start_time).toLocaleString()}
+                                                        </div>
+                                                        <div className="flex items-center mb-1">
+                                                            <i className="fas fa-calendar-times mr-1 text-red-600"></i>
+                                                            <span className="font-medium">End:</span>
+                                                        </div>
+                                                        <div className="text-sm text-gray-600">
+                                                            {new Date(tender.bidding_end_time).toLocaleString()}
+                                                        </div>
+                                                        {new Date(tender.bidding_end_time) < new Date() ? (
+                                                            <span className="mt-2 px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800">
+                                                                Expired
+                                                            </span>
+                                                        ) : new Date(tender.bidding_end_time) - new Date() < 24 * 60 * 60 * 1000 ? (
+                                                            <span className="mt-2 px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800">
+                                                                Ending Soon
+                                                            </span>
+                                                        ) : (
+                                                            <span className="mt-2 px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
+                                                                Active
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    {tender.time_extension_reason ? (
+                                                        <div className="text-sm">
+                                                            <div className="text-gray-900 font-medium mb-1">
+                                                                <i className="fas fa-history mr-1 text-blue-600"></i>
+                                                                Extended
+                                                            </div>
+                                                            <div className="text-gray-600 mb-1">
+                                                                <strong>Reason:</strong> {tender.time_extension_reason}
+                                                            </div>
+                                                            <div className="text-gray-600 mb-1">
+                                                                <strong>By:</strong> {tender.extension_by_name}
+                                                            </div>
+                                                            <div className="text-gray-600">
+                                                                <strong>At:</strong> {new Date(tender.time_extension_at).toLocaleString()}
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-sm text-gray-400">No extensions</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                    <button
+                                                        onClick={() => handleTimeExtension(tender)}
+                                                        className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                                    >
+                                                        <i className="fas fa-clock mr-1"></i>
+                                                        Manage Time
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+                        </div>{/* End Content Area */}
+                    </div>{/* End Sidebar + Content */}
+                </div>
+            </div>
+            )}
+
+            {/* Time Extension Modal */}
+            {showTimeExtensionModal && selectedTender && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                Manage Tender Time - #{selectedTender.id}
+                            </h3>
+                            <button
+                                onClick={() => {
+                                    setShowTimeExtensionModal(false);
+                                    setSelectedTender(null);
+                                    setTimeExtensionForm({ action: 'extend', hours: '', reason: '' });
+                                }}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        <form onSubmit={submitTimeExtension}>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Current End Time
+                                </label>
+                                <div className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                    {new Date(selectedTender.bidding_end_time).toLocaleString()}
+                                </div>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Action
+                                </label>
+                                <select
+                                    value={timeExtensionForm.action}
+                                    onChange={(e) => setTimeExtensionForm({...timeExtensionForm, action: e.target.value})}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    required
+                                >
+                                    <option value="extend">Extend Time</option>
+                                    <option value="reduce">Reduce Time</option>
+                                </select>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Hours to {timeExtensionForm.action === 'extend' ? 'Add' : 'Subtract'}
+                                </label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    value={timeExtensionForm.hours}
+                                    onChange={(e) => setTimeExtensionForm({...timeExtensionForm, hours: e.target.value})}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Enter hours (1-168)"
+                                    required
+                                />
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Maximum: 168 hours (7 days)
+                                </p>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Reason for Time Change
+                                </label>
+                                <textarea
+                                    value={timeExtensionForm.reason}
+                                    onChange={(e) => setTimeExtensionForm({...timeExtensionForm, reason: e.target.value})}
+                                    rows="3"
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Explain why you need to change the tender time..."
+                                    required
+                                />
+                            </div>
+
+                            {timeExtensionForm.hours && (
+                                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                    <div className="text-sm font-medium text-blue-800 mb-1">
+                                        Preview New End Time:
+                                    </div>
+                                    <div className="text-sm text-blue-700">
+                                        {(() => {
+                                            const currentEnd = new Date(selectedTender.bidding_end_time);
+                                            const hoursToChange = parseInt(timeExtensionForm.hours) || 0;
+                                            const newEnd = new Date(currentEnd);
+                                            
+                                            if (timeExtensionForm.action === 'extend') {
+                                                newEnd.setHours(newEnd.getHours() + hoursToChange);
+                                            } else {
+                                                newEnd.setHours(newEnd.getHours() - hoursToChange);
+                                            }
+                                            
+                                            return newEnd.toLocaleString();
+                                        })()}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowTimeExtensionModal(false);
+                                        setSelectedTender(null);
+                                        setTimeExtensionForm({ action: 'extend', hours: '', reason: '' });
+                                    }}
+                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className={`px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                                        timeExtensionForm.action === 'extend' 
+                                            ? 'bg-green-600 hover:bg-green-700' 
+                                            : 'bg-orange-600 hover:bg-orange-700'
+                                    }`}
+                                >
+                                    <i className={`fas ${timeExtensionForm.action === 'extend' ? 'fa-plus' : 'fa-minus'} mr-2`}></i>
+                                    {timeExtensionForm.action === 'extend' ? 'Extend' : 'Reduce'} Time
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

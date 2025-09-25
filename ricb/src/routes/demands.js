@@ -37,7 +37,9 @@ const {
     getSupplyOrders,
     getTendersWithVettingStatus,
     publishApprovedTender,
-    submitTenderForFinanceApproval
+    submitTenderForFinanceApproval,
+    getManagableTenders,
+    updateTenderTime
 } = require('../controllers/purchaseController');
 
 const {
@@ -407,6 +409,13 @@ router.post('/tenders/:tenderId/add-criteria', auth, addTenderCriteria);
 router.get('/purchase/tenders-vetting-status', auth, getTendersWithVettingStatus);
 // Submit tender for Finance & MS approval after vetting committee approval
 router.post('/purchase/tenders/:tenderId/submit-for-finance-approval', auth, submitTenderForFinanceApproval);
+
+// Tender Management routes for purchase department
+router.get('/test-route', (req, res) => {
+    res.json({ message: 'Test route is working!' });
+});
+router.get('/managable-tenders', auth, getManagableTenders);
+router.put('/tenders/:tenderId/update-time', auth, updateTenderTime);
 
 // Error handling middleware for multer errors
 router.use((error, req, res, next) => {

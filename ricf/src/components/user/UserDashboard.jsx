@@ -381,7 +381,7 @@ export default function UserDashboard() {
             {isPurchaseDepartment && (
               <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
                 <p className="text-orange-800">
-                  As a Purchase Department member, you can review and approve demands directly from the store department. Use the tabs above to switch between your personal demands and purchase reviews.
+                  As a Purchase Department member, you can review and approve demands directly from the store department. Use the sidebar on the left to switch between sections.
                 </p>
               </div>
             )}

@@ -1943,11 +1943,17 @@ const runMigrations = async () => {
                 if (!columnNames.includes('finance_hod_response_at')) {
                     additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_response_at DATETIME');
                 }
+                if (!columnNames.includes('finance_hod_status')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_status TEXT DEFAULT \'pending\'');
+                }
                 if (!columnNames.includes('ms_hod_response_by')) {
                     additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_response_by INTEGER');
                 }
                 if (!columnNames.includes('ms_hod_response_at')) {
                     additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('ms_hod_status')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_status TEXT DEFAULT \'pending\'');
                 }
                 if (!columnNames.includes('published_at')) {
                     additions.push('ALTER TABLE demand_tenders ADD COLUMN published_at DATETIME');
@@ -3137,6 +3143,50 @@ const runMigrations = async () => {
                     });
                 } else {
                     console.log('market_survey_documents table already exists');
+                    resolve();
+                }
+            });
+        });
+        
+        // Migration 21: Add tender time extension tracking columns to demand_tenders table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demand_tenders)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const hasTimeExtensionColumns = columns.some(col => col.name === 'time_extension_reason');
+                
+                if (!hasTimeExtensionColumns) {
+                    console.log('Adding tender time extension tracking columns to demand_tenders table...');
+                    db.run(`ALTER TABLE demand_tenders ADD COLUMN time_extension_reason TEXT`, (err) => {
+                        if (err) {
+                            console.error('Error adding time_extension_reason column:', err);
+                            reject(err);
+                            return;
+                        }
+                        
+                        db.run(`ALTER TABLE demand_tenders ADD COLUMN time_extension_by INTEGER`, (err) => {
+                            if (err) {
+                                console.error('Error adding time_extension_by column:', err);
+                                reject(err);
+                                return;
+                            }
+                            
+                            db.run(`ALTER TABLE demand_tenders ADD COLUMN time_extension_at DATETIME`, (err) => {
+                                if (err) {
+                                    console.error('Error adding time_extension_at column:', err);
+                                    reject(err);
+                                } else {
+                                    console.log('Successfully added tender time extension tracking columns');
+                                    resolve();
+                                }
+                            });
+                        });
+                    });
+                } else {
+                    console.log('Tender time extension tracking columns already exist');
                     resolve();
                 }
             });
