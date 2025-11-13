@@ -30,7 +30,7 @@ const demandMergeRoutes = require('./src/routes/demandMerge');
 const marketSurveyRoutes = require('./src/routes/marketSurvey');
 
 const app = express();
-const PORT = 5000;
+const PORT = 6100;
 const HOST = process.env.HOST || '0.0.0.0';
 
 // Allow all origins, methods, and headers

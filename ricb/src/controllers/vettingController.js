@@ -441,7 +441,7 @@ const finalizeTenderVetting = async (tenderId) => {
         });
 
         // Check if all decisions are approve
-        const allApproved = evaluations.every(eval => eval.decision === 'approve');
+        const allApproved = evaluations.every(evaluation => evaluation.decision === 'approve');
         const newStatus = allApproved ? 'vetting_approved' : 'vetting_rejected';
 
         // Update tender status
