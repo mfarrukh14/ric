@@ -25,7 +25,7 @@ exports.login = async (req, res) => {
     try {        const user = await new Promise((resolve, reject) => {
             db.get(
                 `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, u.password, u.eligible_for_demand_creation,
-                        u.two_factor_enabled, u.is_hod, d.name as department_name, c.name as committee_name
+                        u.two_factor_enabled, u.is_hod, u.is_finance_user, u.plain_password, d.name as department_name, c.name as committee_name
                  FROM users u 
                  LEFT JOIN departments d ON u.department_id = d.id
                  LEFT JOIN committees c ON u.committee_id = c.id
@@ -63,6 +63,30 @@ exports.login = async (req, res) => {
                 req
             );
             return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Check if user is a Finance-only user (not an eProcurement user)
+        // SQLite can return 0/1 as numbers or strings; avoid JS truthiness pitfalls.
+        if (Number(user.is_finance_user) === 1) {
+            // Log finance user login redirect
+            await auditLogger.logAuth(
+                user.id,
+                user.role,
+                user.name,
+                'FINANCE_USER_REDIRECT',
+                'User redirected to Finance module',
+                req
+            );
+            
+            // Return response indicating this is a finance user
+            return res.json({
+                isFinanceUser: true,
+                financeCredentials: {
+                    username: user.username,
+                    password: user.plain_password // Use plain password for Finance module cross-auth
+                },
+                message: 'This account is for Finance module. Redirecting...'
+            });
         }
 
         // Check if 2FA is enabled

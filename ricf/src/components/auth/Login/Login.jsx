@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../../../config/api';
+import { login, FINANCE_API_URL, FINANCE_FRONTEND_URL } from '../../../config/api';
 import { apiUrl } from '../../../config/api';
 import TwoFactorVerification from '../TwoFactorVerification/TwoFactorVerification';
 import SupplierRegistrationProcess from '../SupplierRegistrationProcess';
@@ -48,6 +48,45 @@ const Login = ({ onLogin }) => {
 
     try {
       const response = await login(credentials.username, credentials.password);
+      
+      // Check if this is a finance-only user
+      if (response.isFinanceUser) {
+        // Cross-authenticate with Finance module
+        try {
+          const crossAuthResponse = await fetch(`${FINANCE_API_URL}/auth/cross-auth`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              username: response.financeCredentials.username,
+              password: response.financeCredentials.password,
+              fullName: response.financeCredentials.username,
+              department: 'eProcurement'
+            }),
+          });
+
+          if (crossAuthResponse.ok) {
+            const financeData = await crossAuthResponse.json();
+            const userJson = JSON.stringify(financeData.user);
+            const userB64 = btoa(unescape(encodeURIComponent(userJson)));
+
+            // Redirect to Finance module with session handoff.
+            // Note: localStorage is origin-scoped, so we must pass the token across.
+            const url = `${FINANCE_FRONTEND_URL}/login?token=${encodeURIComponent(
+              financeData.token
+            )}&user=${encodeURIComponent(userB64)}`;
+            window.location.href = url;
+            return;
+          } else {
+            setError('Failed to authenticate with Finance module. Please contact administrator.');
+          }
+        } catch (financeErr) {
+          console.error('Finance cross-auth error:', financeErr);
+          setError('Finance module is not available. Please try again later.');
+        }
+        return;
+      }
       
       if (response.requires2FA) {
         setRequires2FA(true);

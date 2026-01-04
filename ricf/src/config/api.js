@@ -1,6 +1,23 @@
 import axios from 'axios';
 
-const API_URL = 'http://72.60.211.71:6100/api';
+const runtimeHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
+// eProc backend
+// - Prefer env override for deployments
+// - Default to the same host running the frontend (port 6100)
+const API_URL =
+    import.meta.env.VITE_EPROC_API_URL ||
+    `http://${runtimeHost}:6100/api`;
+
+// Finance module configuration for cross-authentication
+// - Prefer env override for deployments
+// - Default to the same host running the frontend (ports 5000/5173)
+export const FINANCE_API_URL =
+    import.meta.env.VITE_FINANCE_API_URL ||
+    `http://${runtimeHost}:5000/api`;
+export const FINANCE_FRONTEND_URL =
+    import.meta.env.VITE_FINANCE_FRONTEND_URL ||
+    `http://${runtimeHost}:5173`;
 
 const api = axios.create({
     baseURL: API_URL,
@@ -216,6 +233,18 @@ export const updateHodStatus = async (userId, isHod) => {
         return response.data;
     } catch (error) {
         throw error.response?.data || { error: 'Failed to update HOD status' };
+    }
+};
+
+export const updateEprocStatus = async (userId, isEprocUser) => {
+    try {
+        const response = await api.put('/admin/users/eproc-status', {
+            userId,
+            isEprocUser
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || { error: 'Failed to update eProcurement status' };
     }
 };
 

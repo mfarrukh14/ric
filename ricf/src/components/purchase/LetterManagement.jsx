@@ -215,11 +215,7 @@ const LetterManagement = () => {
             if (!response.ok) throw new Error('Failed to send letter of award');
             
             const data = await response.json();
-            toast.success(
-                `Letter of Award sent successfully! 
-                Sent to ${data.totalRecipients} suppliers. 
-                ${data.successfulSends} successful, ${data.failedSends} failed.`
-            );
+            toast.success(data?.message || 'Letter of Award queued (pending Finance approval).');
 
             setShowAwardModal(false);
             setAwardForm({ letterTitle: '', letterContent: '', letterFile: null, awardDetails: {} });
@@ -231,7 +227,7 @@ const LetterManagement = () => {
             fetchAllLetters();
         } catch (error) {
             console.error('Error sending letter of award:', error);
-            toast.error('Failed to send letter of award');
+            toast.error(error?.message || 'Failed to queue letter of award');
         } finally {
             setLoading(false);
         }
@@ -462,15 +458,25 @@ const LetterManagement = () => {
                                                         <i className="fas fa-check-circle mr-1 text-green-500"></i>
                                                         Intent sent: {formatDate(tender.intent_sent_at)}
                                                     </span>
+                                                    {tender.tender_status === 'award_pending' && (
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
+                                                            <i className="fas fa-clock mr-1"></i>
+                                                            Pending Finance Approval
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                             <div className="ml-4">
                                                 <button
                                                     onClick={() => openAwardModal(tender)}
-                                                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                                                    disabled={tender.tender_status === 'award_pending'}
+                                                    className={`${tender.tender_status === 'award_pending'
+                                                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                                        : 'bg-green-600 hover:bg-green-700 text-white'
+                                                    } px-4 py-2 rounded-md text-sm font-medium`}
                                                 >
                                                     <i className="fas fa-trophy mr-2"></i>
-                                                    Send Award
+                                                    {tender.tender_status === 'award_pending' ? 'Queued' : 'Send Award'}
                                                 </button>
                                             </div>
                                         </div>
@@ -549,15 +555,24 @@ const LetterManagement = () => {
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap">
                                                     <div className="text-xs">
-                                                        <div className="text-green-600">
-                                                            <i className="fas fa-check-circle mr-1"></i>
-                                                            {letter.successful_sends} sent
-                                                        </div>
-                                                        {letter.failed_sends > 0 && (
-                                                            <div className="text-red-600">
-                                                                <i className="fas fa-times-circle mr-1"></i>
-                                                                {letter.failed_sends} failed
+                                                        {letter.letter_type === 'award' && !letter.sent_at ? (
+                                                            <div className="text-yellow-700">
+                                                                <i className="fas fa-clock mr-1"></i>
+                                                                Pending Finance Approval
                                                             </div>
+                                                        ) : (
+                                                            <>
+                                                                <div className="text-green-600">
+                                                                    <i className="fas fa-check-circle mr-1"></i>
+                                                                    {letter.successful_sends} sent
+                                                                </div>
+                                                                {letter.failed_sends > 0 && (
+                                                                    <div className="text-red-600">
+                                                                        <i className="fas fa-times-circle mr-1"></i>
+                                                                        {letter.failed_sends} failed
+                                                                    </div>
+                                                                )}
+                                                            </>
                                                         )}
                                                     </div>
                                                 </td>

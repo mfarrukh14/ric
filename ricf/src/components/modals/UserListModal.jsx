@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { EyeIcon, EyeOffIcon as EyeSlashIcon, ClipboardIcon, ClipboardCheckIcon } from 'lucide-react';
 
 
-const UserListModal = ({ show, onClose, title, users, onDelete, onToggleHod, searchTerm, onSearchChange }) => {
+const UserListModal = ({ show, onClose, title, users, onDelete, onToggleHod, onToggleEproc, searchTerm, onSearchChange }) => {
     const [showPasswords, setShowPasswords] = useState({});
     const [copiedStates, setCopiedStates] = useState({});
 
@@ -126,7 +126,7 @@ const UserListModal = ({ show, onClose, title, users, onDelete, onToggleHod, sea
                                             </div>
                                         </td>
                                         <td className="px-4 py-2 text-center">
-                                            <div className="flex space-x-2 justify-center">
+                                            <div className="flex flex-wrap gap-1 justify-center">
                                                 {user.department_id && (
                                                     <button
                                                         onClick={() => onToggleHod && onToggleHod(user.id, !user.is_hod)}
@@ -140,6 +140,17 @@ const UserListModal = ({ show, onClose, title, users, onDelete, onToggleHod, sea
                                                         {user.is_hod ? 'Remove HOD' : 'Make HOD'}
                                                     </button>
                                                 )}
+                                                <button
+                                                    onClick={() => onToggleEproc && onToggleEproc(user.id, !!user.is_finance_user)}
+                                                    className={`text-xs px-2 py-1 rounded ${
+                                                        !user.is_finance_user 
+                                                            ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                                                            : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                                                    }`}
+                                                    title={!user.is_finance_user ? 'Switch to Finance-only' : 'Enable eProcurement access'}
+                                                >
+                                                    {!user.is_finance_user ? 'eProc ✓' : 'Finance Only'}
+                                                </button>
                                                 <button
                                                     onClick={() => onDelete('user', user.id)}
                                                     className="text-red-600 hover:text-red-800 text-sm hover:bg-red-50 px-2 py-1 rounded"

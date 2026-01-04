@@ -27,6 +27,7 @@ router.post('/users', auth, isSuperAdmin, adminController.createUser);
 router.get('/users', auth, isSuperAdmin, adminController.listUsers);
 router.delete('/users/:id', auth, isSuperAdmin, adminController.deleteUser);
 router.put('/users/hod-status', auth, isSuperAdmin, adminController.updateHodStatus);
+router.put('/users/eproc-status', auth, isSuperAdmin, adminController.updateEprocStatus);
 
 // System configuration routes
 router.get('/system-configurations', auth, isSuperAdmin, adminController.getSystemConfigurations);

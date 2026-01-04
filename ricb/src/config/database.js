@@ -3192,6 +3192,35 @@ const runMigrations = async () => {
             });
         });
         
+        // Migration 22: Add is_finance_user column to users table (for Finance module cross-auth)
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(users)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasFinanceUserColumn = columnNames.includes('is_finance_user');
+                
+                if (!hasFinanceUserColumn) {
+                    console.log('Adding is_finance_user column to users table...');
+                    db.run(`ALTER TABLE users ADD COLUMN is_finance_user INTEGER DEFAULT 0`, (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            console.error('Error adding is_finance_user column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added is_finance_user column to users table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('users table already has is_finance_user column');
+                    resolve();
+                }
+            });
+        });
+        
         console.log('Database migrations completed successfully');
     } catch (error) {
         console.error('Error running database migrations:', error);

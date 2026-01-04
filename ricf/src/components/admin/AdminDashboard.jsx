@@ -10,6 +10,7 @@ import {
     deleteCommittee,
     deleteUser,
     updateHodStatus,
+    updateEprocStatus,
     getItemCategories,
     getAllItemNames,
     createItemCategory,
@@ -55,7 +56,7 @@ const AdminDashboard = () => {
 
     const [newName, setNewName] = useState('');
     const [newUser, setNewUser] = useState({
-        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false
+        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false
     });
     const [newCategory, setNewCategory] = useState({ name: '', description: '' });
     const [newItemName, setNewItemName] = useState({ categoryId: '', name: '', description: '' });
@@ -121,7 +122,7 @@ const AdminDashboard = () => {
             const { credentials } = await createUser(newUser);
             setCreatedCredentials(credentials);
             setShowUserModal(false);
-            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false });
+            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false });
             fetchAll();
         } catch {
             setError('Error creating user');
@@ -134,6 +135,15 @@ const AdminDashboard = () => {
             fetchAll();
         } catch (error) {
             setError(error.error || 'Error updating HOD status');
+        }
+    };
+
+    const handleToggleEproc = async (userId, isEprocUser) => {
+        try {
+            await updateEprocStatus(userId, isEprocUser);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Error updating eProcurement status');
         }
     };
 
@@ -478,6 +488,7 @@ const AdminDashboard = () => {
                 users={filteredUsers}
                 onDelete={handleDelete}
                 onToggleHod={handleToggleHod}
+                onToggleEproc={handleToggleEproc}
                 searchTerm={searchTerm}
                 onSearchChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -569,6 +580,20 @@ const AdminDashboard = () => {
                             } className="form-checkbox h-5 w-5 text-indigo-600"
                         />
                         <span>Eligible for demand creation</span>
+                    </label>
+                    <label className="flex items-center space-x-2 mb-4">
+                        <input
+                            type="checkbox"
+                            checked={!newUser.isFinanceUser}
+                            onChange={e =>
+                                setNewUser(u => ({
+                                    ...u,
+                                    isFinanceUser: !e.target.checked
+                                }))
+                            } className="form-checkbox h-5 w-5 text-green-600"
+                        />
+                        <span>eProcurement User</span>
+                        <span className="text-xs text-gray-500">(Uncheck for Finance-only access)</span>
                     </label>
                     {newUser.departmentId && !departmentHasHod(newUser.departmentId) && (
                         <label className="flex items-center space-x-2 mb-4">

@@ -8,12 +8,26 @@ const {
     sendLetterOfIntent,
     getSuppliersWithLetterOfIntent,
     sendLetterOfAward,
+    finalizeLetterOfAwardFromFinance,
     getAllLetters,
     getLetterDetails,
     downloadLetter,
     getSuppliersForIntent
 } = require('../controllers/letterController');
 const { authenticateToken } = require('../middleware/auth');
+
+const financeCallbackAuth = (req, res, next) => {
+    const expected = process.env.FINANCE_CALLBACK_TOKEN;
+    const provided = req.headers['x-finance-token'];
+    if (!expected) {
+        console.warn('FINANCE_CALLBACK_TOKEN not configured; rejecting callback');
+        return res.status(500).json({ error: 'Finance callback token not configured' });
+    }
+    if (!provided || provided !== expected) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+};
 
 // Configure multer for letter file uploads
 const storage = multer.diskStorage({
@@ -73,6 +87,9 @@ router.get('/intent/recipients/:tenderId', authenticateToken, getSuppliersWithLe
 
 // Send letter of award to selected suppliers
 router.post('/award/send/:tenderId', authenticateToken, upload.single('letterFile'), sendLetterOfAward);
+
+// Finance callback: after final Asaan Cheque approval, eProc sends pending award letters automatically
+router.post('/award/finalize-from-finance', financeCallbackAuth, finalizeLetterOfAwardFromFinance);
 
 // Get all letters sent by purchase department
 router.get('/', authenticateToken, getAllLetters);

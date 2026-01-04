@@ -122,7 +122,7 @@ exports.deleteCommittee = (req, res) => {
 
 // User Controllers
 exports.createUser = async (req, res) => {
-    const { name, designation, departmentId, committeeId, eligibleForDemandCreation, isHod } = req.body;
+    const { name, designation, departmentId, committeeId, eligibleForDemandCreation, isHod, isFinanceUser } = req.body;
     const db = getDatabase();
     
     if (!name || !designation || (!departmentId && !committeeId)) {
@@ -160,8 +160,8 @@ exports.createUser = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
         await new Promise((resolve, reject) => {
             db.run(
-                'INSERT INTO users (name, username, password, plain_password, designation, department_id, committee_id, role, eligible_for_demand_creation, is_hod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [name, username, hashedPassword, password, designation, departmentId || null, committeeId || null, 'user', eligibleForDemandCreation ? 1 : 0, isHod ? 1 : 0],
+                'INSERT INTO users (name, username, password, plain_password, designation, department_id, committee_id, role, eligible_for_demand_creation, is_hod, is_finance_user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [name, username, hashedPassword, password, designation, departmentId || null, committeeId || null, 'user', eligibleForDemandCreation ? 1 : 0, isHod ? 1 : 0, isFinanceUser ? 1 : 0],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -176,7 +176,7 @@ exports.createUser = async (req, res) => {
             req.user.name,
             'USER_CREATED',
             name,
-            `Username: ${username} | Designation: ${designation} | Department ID: ${departmentId || 'None'} | Committee ID: ${committeeId || 'None'} | HOD: ${isHod ? 'Yes' : 'No'}`,
+            `Username: ${username} | Designation: ${designation} | Department ID: ${departmentId || 'None'} | Committee ID: ${committeeId || 'None'} | HOD: ${isHod ? 'Yes' : 'No'} | Finance User: ${isFinanceUser ? 'Yes' : 'No'}`,
             req
         );
 
@@ -198,7 +198,7 @@ exports.listUsers = async (req, res) => {
         const db = getDatabase();
         const query = `
             SELECT u.id, u.name, u.username, u.plain_password as password, u.designation, 
-                   u.department_id, u.committee_id, u.role, u.created_at, u.is_hod,
+                   u.department_id, u.committee_id, u.role, u.created_at, u.is_hod, u.is_finance_user,
                    d.name as department_name, c.name as committee_name, u.eligible_for_demand_creation as eligibleForDemandCreation 
             FROM users u 
             LEFT JOIN departments d ON u.department_id = d.id 
@@ -638,6 +638,62 @@ exports.updateHodStatus = async (req, res) => {
     }
 };
 
+// eProcurement User Status Management
+exports.updateEprocStatus = async (req, res) => {
+    const { userId, isEprocUser } = req.body;
+    const db = getDatabase();
+    
+    if (!userId) {
+        return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    try {
+        // Get user details
+        const user = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT id, name, department_id, committee_id FROM users WHERE id = ?',
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Update eProcurement status (is_finance_user is the inverse: true = finance-only, false = eproc user)
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE users SET is_finance_user = ? WHERE id = ?',
+                [isEprocUser ? 0 : 1, userId],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Log the change
+        await auditLogger.logUserManagement(
+            req.user.id,
+            req.user.role,
+            req.user.name,
+            'EPROC_STATUS_UPDATED',
+            user.name,
+            `eProcurement access changed to: ${isEprocUser ? 'Yes' : 'No (Finance-only)'}`,
+            req
+        );
+
+        res.json({ message: 'eProcurement status updated successfully' });
+    } catch (err) {
+        console.error('Error updating eProcurement status:', err);
+        res.status(500).json({ error: 'Error updating eProcurement status' });
+    }
+};
+
 module.exports = {
     createDepartment: exports.createDepartment,
     listDepartments: exports.listDepartments,
@@ -653,5 +709,6 @@ module.exports = {
     getGrievanceDeadlines: exports.getGrievanceDeadlines,
     getGrievanceDeadlineConfig,
     updateGrievanceDeadlineConfig,
-    updateHodStatus: exports.updateHodStatus
+    updateHodStatus: exports.updateHodStatus,
+    updateEprocStatus: exports.updateEprocStatus
 };

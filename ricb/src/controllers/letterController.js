@@ -350,6 +350,30 @@ const sendLetterOfAward = async (req, res) => {
         const userId = req.user.id;
         const db = getDatabase();
 
+        // Do not allow queuing/sending award letters multiple times
+        const tenderRow = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT tender_status FROM demand_tenders WHERE id = ?',
+                [tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (tenderRow?.tender_status === 'award_pending') {
+            return res.status(409).json({
+                error: 'Letter of Award is already pending Finance approval for this tender.'
+            });
+        }
+
+        if (tenderRow?.tender_status === 'awarded') {
+            return res.status(409).json({
+                error: 'Tender is already awarded; cannot send another Letter of Award.'
+            });
+        }
+
         console.log('Send Letter of Award request:', {
             tenderId,
             letterTitle,
@@ -395,12 +419,12 @@ const sendLetterOfAward = async (req, res) => {
         });
 
         try {
-            // Insert letter record
+            // Insert letter record (PENDING: do not send emails until Finance workflow finishes)
             const letterId = await new Promise((resolve, reject) => {
                 db.run(
                     `INSERT INTO tender_letters 
-                    (tender_id, letter_type, letter_title, letter_content, letter_file_path, letter_original_name, sent_to, sent_by)
-                    VALUES (?, 'award', ?, ?, ?, ?, 'selected', ?)`,
+                    (tender_id, letter_type, letter_title, letter_content, letter_file_path, letter_original_name, sent_to, sent_by, sent_at)
+                    VALUES (?, 'award', ?, ?, ?, ?, 'selected', ?, NULL)`,
                     [tenderId, letterTitle, letterContent, letterFile.filename, letterFile.originalname, userId],
                     function(err) {
                         if (err) reject(err);
@@ -435,7 +459,7 @@ const sendLetterOfAward = async (req, res) => {
                 );
             });
 
-            // Send emails and create award records
+            // Create recipients + award records (emails remain pending)
             let successfulSends = 0;
             let failedSends = 0;
 
@@ -471,60 +495,14 @@ const sendLetterOfAward = async (req, res) => {
                     );
                 });
 
-                // Send email
-                try {
-                    await sendLetterOfAwardEmail(
-                        recipient.business_email,
-                        recipient.business_name,
-                        recipient.contact_person_name,
-                        letterTitle,
-                        letterContent,
-                        letterFile.path,
-                        letterFile.originalname,
-                        awardAmount
-                    );
-
-                    // Update recipient status to sent
-                    await new Promise((resolve, reject) => {
-                        db.run(
-                            `UPDATE letter_recipients 
-                            SET email_status = 'sent', sent_at = CURRENT_TIMESTAMP
-                            WHERE letter_id = ? AND supplier_id = ?`,
-                            [letterId, recipient.id],
-                            (err) => {
-                                if (err) reject(err);
-                                else resolve();
-                            }
-                        );
-                    });
-
-                    successfulSends++;
-                } catch (emailError) {
-                    console.error(`Failed to send award letter to ${recipient.business_email}:`, emailError);
-                    
-                    // Update recipient status to failed
-                    await new Promise((resolve, reject) => {
-                        db.run(
-                            `UPDATE letter_recipients 
-                            SET email_status = 'failed', error_message = ?
-                            WHERE letter_id = ? AND supplier_id = ?`,
-                            [emailError.message, letterId, recipient.id],
-                            (err) => {
-                                if (err) reject(err);
-                                else resolve();
-                            }
-                        );
-                    });
-
-                    failedSends++;
-                }
+                // Do NOT send emails here. Finance approval will trigger automatic sending later.
             }
 
-            // Update tender status to awarded
+            // Update tender status to award_pending (final award happens after Finance approval)
             await new Promise((resolve, reject) => {
                 db.run(
                     'UPDATE demand_tenders SET tender_status = ?, awarded_at = CURRENT_TIMESTAMP WHERE id = ?',
-                    ['awarded', tenderId],
+                    ['award_pending', tenderId],
                     (err) => {
                         if (err) reject(err);
                         else resolve();
@@ -554,12 +532,77 @@ const sendLetterOfAward = async (req, res) => {
                 });
             });
 
+            // Send contingent bill data to Finance module for each awarded supplier
+            const financeIntegrationResults = [];
+            for (const recipient of recipients) {
+                const awardAmount = awardDetails[recipient.id]?.amount || recipient.total_cost;
+                
+                // Get tender details for Finance module
+                const tenderDetails = await new Promise((resolve, reject) => {
+                    db.get(
+                        `SELECT dt.tender_number, d.item_name, d.description 
+                         FROM demand_tenders dt 
+                         JOIN demands d ON dt.demand_id = d.id 
+                         WHERE dt.id = ?`,
+                        [tenderId],
+                        (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        }
+                    );
+                });
+
+                try {
+                    // Send to Finance module
+                    const financeResponse = await fetch('http://localhost:5000/api/contingentbill/contingent-bills/from-eproc', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            // IMPORTANT: must match Finance DTO (EprocContingentBillDto)
+                            tenderId: tenderId,
+                            supplierName: recipient.business_name,
+                            tenderTitle: tenderDetails?.item_name || tenderDetails?.description,
+                            letterOfAwardNumber: String(letterId),
+                            totalAmount: awardAmount
+                        })
+                    });
+
+                    if (financeResponse.ok) {
+                        const financeData = await financeResponse.json();
+                        financeIntegrationResults.push({
+                            supplierId: recipient.id,
+                            success: true,
+                            billNumber: financeData.billNumber
+                        });
+                        console.log(`Contingent bill created in Finance for supplier ${recipient.business_name}: ${financeData.billNumber}`);
+                    } else {
+                        const errorData = await financeResponse.text();
+                        console.error(`Failed to create contingent bill in Finance for supplier ${recipient.id}:`, errorData);
+                        financeIntegrationResults.push({
+                            supplierId: recipient.id,
+                            success: false,
+                            error: errorData
+                        });
+                    }
+                } catch (financeError) {
+                    console.error(`Error calling Finance module for supplier ${recipient.id}:`, financeError.message);
+                    financeIntegrationResults.push({
+                        supplierId: recipient.id,
+                        success: false,
+                        error: financeError.message
+                    });
+                }
+            }
+
             res.json({
-                message: 'Letter of award sent successfully',
+                message: 'Letter of award queued (pending Finance approvals). It will be sent automatically after Asaan Cheque approval.',
                 letterId: letterId,
                 totalRecipients: recipients.length,
                 successfulSends: successfulSends,
-                failedSends: failedSends
+                failedSends: failedSends,
+                financeIntegration: financeIntegrationResults
             });
 
         } catch (error) {
@@ -576,6 +619,167 @@ const sendLetterOfAward = async (req, res) => {
     } catch (error) {
         console.error('Error sending letter of award:', error);
         res.status(500).json({ error: 'Failed to send letter of award' });
+    }
+};
+
+// Finance callback: finalize sending Letter of Award after Asaan Cheque approval
+const finalizeLetterOfAwardFromFinance = async (req, res) => {
+    try {
+        const { tenderId, letterOfAwardNumber } = req.body || {};
+        const db = getDatabase();
+
+        const parsedTenderId = parseInt(String(tenderId), 10);
+        const parsedLetterId = parseInt(String(letterOfAwardNumber), 10);
+
+        if (!Number.isFinite(parsedTenderId) || !Number.isFinite(parsedLetterId)) {
+            return res.status(400).json({ error: 'tenderId and letterOfAwardNumber are required' });
+        }
+
+        const letter = await new Promise((resolve, reject) => {
+            db.get(
+                `SELECT * FROM tender_letters WHERE id = ? AND tender_id = ? AND letter_type = 'award'`,
+                [parsedLetterId, parsedTenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (!letter) {
+            return res.status(404).json({ error: 'Award letter not found' });
+        }
+
+        const pendingRecipients = await new Promise((resolve, reject) => {
+            db.all(
+                `SELECT * FROM letter_recipients WHERE letter_id = ? AND email_status IN ('pending', 'failed')`,
+                [parsedLetterId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        if (pendingRecipients.length === 0) {
+            return res.json({
+                message: 'No pending recipients; award letter already finalized',
+                letterId: parsedLetterId,
+                tenderId: parsedTenderId,
+                sent: 0,
+                failed: 0
+            });
+        }
+
+        const letterFilePath = letter.letter_file_path
+            ? path.join(__dirname, '../../tender-letters', letter.letter_file_path)
+            : null;
+
+        if (!letterFilePath || !fs.existsSync(letterFilePath)) {
+            return res.status(400).json({ error: 'Stored letter file not found for this award letter' });
+        }
+
+        let successfulSends = 0;
+        let failedSends = 0;
+
+        for (const recipient of pendingRecipients) {
+            // Fetch award amount for email context
+            const awardRow = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT award_amount FROM supplier_awards WHERE tender_id = ? AND supplier_id = ?`,
+                    [parsedTenderId, recipient.supplier_id],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+            const awardAmount = awardRow?.award_amount;
+
+            try {
+                await sendLetterOfAwardEmail(
+                    recipient.supplier_email,
+                    recipient.supplier_name,
+                    null,
+                    letter.letter_title,
+                    letter.letter_content,
+                    letterFilePath,
+                    letter.letter_original_name,
+                    awardAmount
+                );
+
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE letter_recipients 
+                         SET email_status = 'sent', sent_at = CURRENT_TIMESTAMP, error_message = NULL
+                         WHERE letter_id = ? AND supplier_id = ?`,
+                        [parsedLetterId, recipient.supplier_id],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+
+                successfulSends++;
+            } catch (emailError) {
+                console.error(`Finance-finalize: failed to send award letter to ${recipient.supplier_email}:`, emailError);
+
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE letter_recipients 
+                         SET email_status = 'failed', error_message = ?
+                         WHERE letter_id = ? AND supplier_id = ?`,
+                        [emailError.message, parsedLetterId, recipient.supplier_id],
+                        (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        }
+                    );
+                });
+
+                failedSends++;
+            }
+        }
+
+        // Mark as actually sent now
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE tender_letters
+                 SET sent_at = CURRENT_TIMESTAMP,
+                     successful_sends = successful_sends + ?,
+                     failed_sends = failed_sends + ?
+                 WHERE id = ?`,
+                [successfulSends, failedSends, parsedLetterId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Finalize tender status
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE demand_tenders SET tender_status = ?, awarded_at = CURRENT_TIMESTAMP WHERE id = ?',
+                ['awarded', parsedTenderId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        return res.json({
+            message: 'Award letter finalized and sent',
+            letterId: parsedLetterId,
+            tenderId: parsedTenderId,
+            sent: successfulSends,
+            failed: failedSends
+        });
+    } catch (error) {
+        console.error('Error in finalizeLetterOfAwardFromFinance:', error);
+        res.status(500).json({ error: 'Failed to finalize letter of award' });
     }
 };
 
@@ -905,6 +1109,7 @@ module.exports = {
     sendLetterOfIntent,
     getSuppliersWithLetterOfIntent,
     sendLetterOfAward,
+    finalizeLetterOfAwardFromFinance,
     getAllLetters,
     getLetterDetails,
     downloadLetter,
