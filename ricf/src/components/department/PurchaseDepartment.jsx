@@ -7,6 +7,7 @@ import TenderCreationWizard from '../purchase/TenderCreationWizard';
 import PreBidMeetingManagement from '../purchase/PreBidMeetingManagement';
 import LetterManagement from '../purchase/LetterManagement';
 import TenderVettingManagement from '../purchase/TenderVettingManagement';
+import PurchaseOrdersManagement from '../purchase/PurchaseOrdersManagement';
 
 const PurchaseDepartment = () => {
     const navigate = useNavigate();
@@ -1251,6 +1252,7 @@ const PurchaseDepartment = () => {
                             >
                                 <option value="demands">Pending Demands</option>
                                 <option value="supply-orders">Letters</option>
+                                <option value="purchase-orders">Purchase Orders</option>
                                 <option value="pending-tenders">Tender Opening</option>
                                 <option value="financial-opening">Financial Opening</option>
                                 <option value="grievance-management">Grievance Management</option>
@@ -1279,6 +1281,12 @@ const PurchaseDepartment = () => {
                                             icon: 'fas fa-envelope',
                                             count: supplyOrders.length,
                                             badgeClass: 'bg-green-100 text-green-800'
+                                        },
+                                        {
+                                            id: 'purchase-orders',
+                                            label: 'Purchase Orders',
+                                            icon: 'fas fa-file-invoice',
+                                            badgeClass: 'bg-teal-100 text-teal-800'
                                         },
                                         {
                                             id: 'pending-tenders',
@@ -1585,6 +1593,10 @@ const PurchaseDepartment = () => {
 
                     {activeTab === 'supply-orders' && (
                         <LetterManagement />
+                    )}
+
+                    {activeTab === 'purchase-orders' && (
+                        <PurchaseOrdersManagement />
                     )}
 
                     {/* Financial Opening Tab */}

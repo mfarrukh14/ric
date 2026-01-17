@@ -20,6 +20,24 @@ const LetterManagement = () => {
     const [selectedSuppliersForAward, setSelectedSuppliersForAward] = useState([]);
     const [selectedAwardSupplierIds, setSelectedAwardSupplierIds] = useState([]);
     
+    // Purchase Order modal states
+    const [showPOModal, setShowPOModal] = useState(false);
+    const [selectedLetterForPO, setSelectedLetterForPO] = useState(null);
+    const [awardedSuppliersForPO, setAwardedSuppliersForPO] = useState([]);
+    const [selectedSupplierForPO, setSelectedSupplierForPO] = useState(null);
+    const [existingPOs, setExistingPOs] = useState([]);
+    const [poItems, setPOItems] = useState([]);
+    const [poRemarks, setPORemarks] = useState('');
+    const [poDeliveryDate, setPODeliveryDate] = useState('');
+    const [poPaymentTerms, setPOPaymentTerms] = useState('');
+    const [poBillingAddress, setPOBillingAddress] = useState('');
+    const [poShippingAddress, setPOShippingAddress] = useState('');
+    const [poContactName, setPOContactName] = useState('');
+    const [poContactPhone, setPOContactPhone] = useState('');
+    const [poContactEmail, setPOContactEmail] = useState('');
+    const [poReferenceNo, setPOReferenceNo] = useState('');
+    const [loadingPO, setLoadingPO] = useState(false);
+    
     // Form states
     const [intentForm, setIntentForm] = useState({
         letterTitle: '',
@@ -215,7 +233,7 @@ const LetterManagement = () => {
             if (!response.ok) throw new Error('Failed to send letter of award');
             
             const data = await response.json();
-            toast.success(data?.message || 'Letter of Award queued (pending Finance approval).');
+            toast.success(data?.message || 'Letter of Award sent successfully.');
 
             setShowAwardModal(false);
             setAwardForm({ letterTitle: '', letterContent: '', letterFile: null, awardDetails: {} });
@@ -305,6 +323,200 @@ const LetterManagement = () => {
             console.error('Error downloading letter:', error);
             toast.error('Failed to download letter');
         }
+    };
+
+    // Purchase Order functions
+    const openPOModal = async (letter) => {
+        setSelectedLetterForPO(letter);
+        setLoadingPO(true);
+        setShowPOModal(true);
+        setPODeliveryDate('');
+        setPOPaymentTerms('');
+        setPOBillingAddress('');
+        setPOShippingAddress('');
+        setPOContactName('');
+        setPOContactPhone('');
+        setPOContactEmail('');
+        setPOReferenceNo('');
+        
+        try {
+            const token = localStorage.getItem('token');
+            
+            // Fetch awarded suppliers for this tender
+            const suppliersResponse = await fetch(
+                `${apiUrl}/api/purchase-orders/tender/${letter.tender_id}/awarded-suppliers`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            
+            if (!suppliersResponse.ok) throw new Error('Failed to fetch awarded suppliers');
+            const suppliers = await suppliersResponse.json();
+            setAwardedSuppliersForPO(suppliers);
+            
+            // Fetch existing POs for this award letter
+            const posResponse = await fetch(
+                `${apiUrl}/api/purchase-orders/award-letter/${letter.id}`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            
+            if (!posResponse.ok) throw new Error('Failed to fetch existing POs');
+            const pos = await posResponse.json();
+            setExistingPOs(pos);
+            
+        } catch (error) {
+            console.error('Error loading PO data:', error);
+            toast.error('Failed to load data for Purchase Order');
+        } finally {
+            setLoadingPO(false);
+        }
+    };
+
+    const handleSupplierSelectForPO = (supplier) => {
+        setSelectedSupplierForPO(supplier);
+        // Initialize PO items from awarded items
+        const awardedItems = supplier.awarded_items || [];
+        const initialItems = awardedItems.map(item => ({
+            itemId: item.itemId || item.id,
+            itemName: item.itemName || item.name || item.item_name,
+            unitPrice: Number(item.unitPrice || item.unit_price || 0),
+            awardedQuantity: Number(item.quantity || item.awarded_quantity || 0),
+            quantity: Number(item.quantity || item.awarded_quantity || 0)
+        }));
+        if (initialItems.length === 0) {
+            initialItems.push({
+                itemId: null,
+                itemName: '',
+                unitPrice: 0,
+                awardedQuantity: 0,
+                quantity: 0
+            });
+        }
+        setPOItems(initialItems);
+        setPORemarks('');
+    };
+
+    const handlePOItemQuantityChange = (index, quantity) => {
+        const updatedItems = [...poItems];
+        updatedItems[index].quantity = parseInt(quantity) || 0;
+        setPOItems(updatedItems);
+    };
+
+    const handlePOItemUnitPriceChange = (index, unitPrice) => {
+        const updatedItems = [...poItems];
+        updatedItems[index].unitPrice = parseFloat(unitPrice) || 0;
+        setPOItems(updatedItems);
+    };
+
+    const handlePOItemNameChange = (index, name) => {
+        const updatedItems = [...poItems];
+        updatedItems[index].itemName = name;
+        setPOItems(updatedItems);
+    };
+
+    const addPOItem = () => {
+        setPOItems((prev) => ([
+            ...prev,
+            { itemId: null, itemName: '', unitPrice: 0, awardedQuantity: 0, quantity: 0 }
+        ]));
+    };
+
+    const removePOItem = (index) => {
+        setPOItems((prev) => prev.filter((_, i) => i !== index));
+    };
+
+    const handleCreatePO = async () => {
+        if (!selectedSupplierForPO) {
+            toast.error('Please select a supplier');
+            return;
+        }
+
+        const itemsWithQuantity = poItems.filter(item => item.quantity > 0);
+        if (itemsWithQuantity.length === 0) {
+            toast.error('Please enter quantity for at least one item');
+            return;
+        }
+
+        try {
+            setLoadingPO(true);
+            const token = localStorage.getItem('token');
+            
+            const response = await fetch(`${apiUrl}/api/purchase-orders`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    tenderId: selectedLetterForPO.tender_id,
+                    awardLetterId: selectedLetterForPO.id,
+                    supplierId: selectedSupplierForPO.supplier_id,
+                    items: itemsWithQuantity,
+                    remarks: poRemarks,
+                    deliveryDate: poDeliveryDate || null,
+                    paymentTerms: poPaymentTerms || null,
+                    billingAddress: poBillingAddress || null,
+                    shippingAddress: poShippingAddress || null,
+                    contactName: poContactName || null,
+                    contactPhone: poContactPhone || null,
+                    contactEmail: poContactEmail || null,
+                    referenceNo: poReferenceNo || null
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create Purchase Order');
+            }
+
+            const data = await response.json();
+            toast.success(`Purchase Order ${data.purchaseOrder.poNumber} created successfully!`);
+            
+            // Refresh existing POs list
+            const posResponse = await fetch(
+                `${apiUrl}/api/purchase-orders/award-letter/${selectedLetterForPO.id}`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            if (posResponse.ok) {
+                const pos = await posResponse.json();
+                setExistingPOs(pos);
+            }
+            
+            // Reset form
+            setSelectedSupplierForPO(null);
+            setPOItems([]);
+            setPORemarks('');
+            setPODeliveryDate('');
+            setPOPaymentTerms('');
+            setPOBillingAddress('');
+            setPOShippingAddress('');
+            setPOContactName('');
+            setPOContactPhone('');
+            setPOContactEmail('');
+            setPOReferenceNo('');
+            
+        } catch (error) {
+            console.error('Error creating PO:', error);
+            toast.error(error.message || 'Failed to create Purchase Order');
+        } finally {
+            setLoadingPO(false);
+        }
+    };
+
+    const closePOModal = () => {
+        setShowPOModal(false);
+        setSelectedLetterForPO(null);
+        setAwardedSuppliersForPO([]);
+        setSelectedSupplierForPO(null);
+        setExistingPOs([]);
+        setPOItems([]);
+        setPORemarks('');
+        setPODeliveryDate('');
+        setPOPaymentTerms('');
+        setPOBillingAddress('');
+        setPOShippingAddress('');
+        setPOContactName('');
+        setPOContactPhone('');
+        setPOContactEmail('');
+        setPOReferenceNo('');
     };
 
     const formatDate = (dateString) => {
@@ -461,7 +673,7 @@ const LetterManagement = () => {
                                                     {tender.tender_status === 'award_pending' && (
                                                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
                                                             <i className="fas fa-clock mr-1"></i>
-                                                            Pending Finance Approval
+                                                            Pending Send
                                                         </span>
                                                     )}
                                                 </div>
@@ -469,14 +681,10 @@ const LetterManagement = () => {
                                             <div className="ml-4">
                                                 <button
                                                     onClick={() => openAwardModal(tender)}
-                                                    disabled={tender.tender_status === 'award_pending'}
-                                                    className={`${tender.tender_status === 'award_pending'
-                                                        ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                                                        : 'bg-green-600 hover:bg-green-700 text-white'
-                                                    } px-4 py-2 rounded-md text-sm font-medium`}
+                                                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium"
                                                 >
                                                     <i className="fas fa-trophy mr-2"></i>
-                                                    {tender.tender_status === 'award_pending' ? 'Queued' : 'Send Award'}
+                                                    Send Award
                                                 </button>
                                             </div>
                                         </div>
@@ -558,7 +766,7 @@ const LetterManagement = () => {
                                                         {letter.letter_type === 'award' && !letter.sent_at ? (
                                                             <div className="text-yellow-700">
                                                                 <i className="fas fa-clock mr-1"></i>
-                                                                Pending Finance Approval
+                                                                Pending Send
                                                             </div>
                                                         ) : (
                                                             <>
@@ -587,6 +795,15 @@ const LetterManagement = () => {
                                                         <i className="fas fa-download mr-1"></i>
                                                         Download
                                                     </button>
+                                                    {letter.letter_type === 'award' && (
+                                                        <button
+                                                            onClick={() => openPOModal(letter)}
+                                                            className="text-green-600 hover:text-green-900 ml-2"
+                                                        >
+                                                            <i className="fas fa-file-invoice mr-1"></i>
+                                                            Create PO
+                                                        </button>
+                                                    )}
                                                 </td>
                                             </tr>
                                         ))}
@@ -852,6 +1069,350 @@ const LetterManagement = () => {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Purchase Order Modal */}
+            {showPOModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+                    <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-2/3 shadow-lg rounded-md bg-white max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">
+                                <i className="fas fa-file-invoice mr-2 text-green-600"></i>
+                                Create Purchase Order
+                            </h3>
+                            <button
+                                onClick={closePOModal}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <i className="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        {loadingPO ? (
+                            <div className="text-center py-8">
+                                <i className="fas fa-spinner fa-spin text-3xl text-gray-400 mb-4"></i>
+                                <p className="text-gray-500">Loading...</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                {/* Letter Info */}
+                                {selectedLetterForPO && (
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <h4 className="font-medium text-gray-900">{selectedLetterForPO.letter_title}</h4>
+                                        <p className="text-sm text-gray-600 mt-1">
+                                            Tender: {selectedLetterForPO.tender_number} - {selectedLetterForPO.tender_title}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* PO Details */}
+                                <div className="border border-gray-200 rounded-lg p-4">
+                                    <h4 className="font-medium text-gray-900 mb-3">
+                                        <i className="fas fa-clipboard-list mr-2 text-indigo-600"></i>
+                                        Purchase Order Details
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">PO Date</label>
+                                            <input
+                                                type="text"
+                                                value={new Date().toLocaleDateString()}
+                                                readOnly
+                                                className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-gray-50"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Delivery Date</label>
+                                            <input
+                                                type="date"
+                                                value={poDeliveryDate}
+                                                onChange={(e) => setPODeliveryDate(e.target.value)}
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Payment Terms</label>
+                                            <input
+                                                type="text"
+                                                value={poPaymentTerms}
+                                                onChange={(e) => setPOPaymentTerms(e.target.value)}
+                                                placeholder="e.g., Net 30 days"
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Reference No</label>
+                                            <input
+                                                type="text"
+                                                value={poReferenceNo}
+                                                onChange={(e) => setPOReferenceNo(e.target.value)}
+                                                placeholder="Internal reference or file number"
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Billing Address</label>
+                                            <textarea
+                                                value={poBillingAddress}
+                                                onChange={(e) => setPOBillingAddress(e.target.value)}
+                                                rows={2}
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                placeholder="Billing address"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Delivery Address</label>
+                                            <textarea
+                                                value={poShippingAddress}
+                                                onChange={(e) => setPOShippingAddress(e.target.value)}
+                                                rows={2}
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                placeholder="Delivery address"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Contact Name</label>
+                                            <input
+                                                type="text"
+                                                value={poContactName}
+                                                onChange={(e) => setPOContactName(e.target.value)}
+                                                placeholder="Contact person"
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Contact Phone</label>
+                                            <input
+                                                type="text"
+                                                value={poContactPhone}
+                                                onChange={(e) => setPOContactPhone(e.target.value)}
+                                                placeholder="Contact phone"
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">Contact Email</label>
+                                            <input
+                                                type="email"
+                                                value={poContactEmail}
+                                                onChange={(e) => setPOContactEmail(e.target.value)}
+                                                placeholder="Contact email"
+                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Existing POs */}
+                                {existingPOs.length > 0 && (
+                                    <div className="border border-gray-200 rounded-lg p-4">
+                                        <h4 className="font-medium text-gray-900 mb-3">
+                                            <i className="fas fa-history mr-2 text-blue-600"></i>
+                                            Existing Purchase Orders ({existingPOs.length})
+                                        </h4>
+                                        <div className="space-y-2">
+                                            {existingPOs.map((po) => (
+                                                <div key={po.id} className="flex justify-between items-center bg-blue-50 p-3 rounded">
+                                                    <div>
+                                                        <span className="font-medium text-blue-800">{po.po_number}</span>
+                                                        <span className="text-sm text-gray-600 ml-3">{po.supplier_name}</span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className="text-sm font-medium">Rs {Number(po.total_amount).toLocaleString()}</span>
+                                                        <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
+                                                            po.status === 'created' ? 'bg-yellow-100 text-yellow-800' :
+                                                            po.status === 'sent' ? 'bg-blue-100 text-blue-800' :
+                                                            po.status === 'fulfilled' ? 'bg-green-100 text-green-800' :
+                                                            'bg-gray-100 text-gray-800'
+                                                        }`}>
+                                                            {po.status}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Select Supplier */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Select Supplier for New PO
+                                    </label>
+                                    <div className="grid gap-2">
+                                        {awardedSuppliersForPO.map((supplier) => (
+                                            <div
+                                                key={supplier.supplier_id}
+                                                onClick={() => handleSupplierSelectForPO(supplier)}
+                                                className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                                                    selectedSupplierForPO?.supplier_id === supplier.supplier_id
+                                                        ? 'border-green-500 bg-green-50'
+                                                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <div className="flex justify-between items-center">
+                                                    <div>
+                                                        <div className="font-medium text-gray-900">{supplier.supplier_name}</div>
+                                                        <div className="text-sm text-gray-500">{supplier.supplier_email}</div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-sm font-medium">
+                                                            Award: Rs {Number(supplier.award_amount).toLocaleString()}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500">
+                                                            {(supplier.awarded_items || []).length} items
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* PO Items - show when supplier is selected */}
+                                {selectedSupplierForPO && (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Enter Quantities for Items
+                                        </label>
+                                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className="bg-gray-50">
+                                                    <tr>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Unit Price</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Awarded Qty</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">PO Quantity</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                    {poItems.map((item, index) => (
+                                                        <tr key={index}>
+                                                            <td className="px-4 py-3">
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.itemName}
+                                                                    onChange={(e) => handlePOItemNameChange(index, e.target.value)}
+                                                                    className="w-full px-2 py-1 border border-gray-300 rounded-md text-sm"
+                                                                    placeholder="Item name"
+                                                                />
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <div className="flex items-center space-x-2">
+                                                                    <span className="text-xs text-gray-500">Rs</span>
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        step="0.01"
+                                                                        value={item.unitPrice}
+                                                                        onChange={(e) => handlePOItemUnitPriceChange(index, e.target.value)}
+                                                                        className="w-28 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                                                                    />
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-sm text-gray-600">{item.awardedQuantity}</td>
+                                                            <td className="px-4 py-3">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    max={item.awardedQuantity > 0 ? item.awardedQuantity : undefined}
+                                                                    value={item.quantity}
+                                                                    onChange={(e) => handlePOItemQuantityChange(index, e.target.value)}
+                                                                    className="w-24 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                                                                />
+                                                            </td>
+                                                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                                                Rs {(item.quantity * item.unitPrice).toLocaleString()}
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => removePOItem(index)}
+                                                                    className="text-red-600 hover:text-red-800 text-sm"
+                                                                >
+                                                                    Remove
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                                <tfoot className="bg-gray-50">
+                                                    <tr>
+                                                        <td colSpan="4" className="px-4 py-3 text-right text-sm font-medium text-gray-900">Total Amount:</td>
+                                                        <td className="px-4 py-3 text-sm font-bold text-green-600">
+                                                            Rs {poItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0).toLocaleString()}
+                                                        </td>
+                                                        <td className="px-4 py-3"></td>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
+                                        </div>
+                                        <div className="mt-3">
+                                            <button
+                                                type="button"
+                                                onClick={addPOItem}
+                                                className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                                            >
+                                                <i className="fas fa-plus mr-1"></i>
+                                                Add Item
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Remarks */}
+                                {selectedSupplierForPO && (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Remarks (Optional)
+                                        </label>
+                                        <textarea
+                                            value={poRemarks}
+                                            onChange={(e) => setPORemarks(e.target.value)}
+                                            rows={3}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            placeholder="Add any additional notes or remarks..."
+                                        />
+                                    </div>
+                                )}
+
+                                {/* Action Buttons */}
+                                <div className="flex justify-end space-x-3 pt-4 border-t">
+                                    <button
+                                        type="button"
+                                        onClick={closePOModal}
+                                        className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleCreatePO}
+                                        disabled={
+                                            loadingPO ||
+                                            !selectedSupplierForPO ||
+                                            poItems.filter(i => i.quantity > 0 && i.unitPrice > 0 && i.itemName.trim()).length === 0
+                                        }
+                                        className="px-4 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {loadingPO ? (
+                                            <>
+                                                <i className="fas fa-spinner fa-spin mr-2"></i>
+                                                Creating...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <i className="fas fa-file-invoice mr-2"></i>
+                                                Create Purchase Order
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

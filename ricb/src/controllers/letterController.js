@@ -362,12 +362,6 @@ const sendLetterOfAward = async (req, res) => {
             );
         });
 
-        if (tenderRow?.tender_status === 'award_pending') {
-            return res.status(409).json({
-                error: 'Letter of Award is already pending Finance approval for this tender.'
-            });
-        }
-
         if (tenderRow?.tender_status === 'awarded') {
             return res.status(409).json({
                 error: 'Tender is already awarded; cannot send another Letter of Award.'
@@ -459,9 +453,12 @@ const sendLetterOfAward = async (req, res) => {
                 );
             });
 
-            // Create recipients + award records (emails remain pending)
+            // Create recipients + award records and send emails immediately
             let successfulSends = 0;
             let failedSends = 0;
+
+            // Get letter file path for email attachments
+            const letterFilePath = path.join(__dirname, '../../tender-letters', letterFile.filename);
 
             for (const recipient of recipients) {
                 // Insert recipient record
@@ -495,14 +492,72 @@ const sendLetterOfAward = async (req, res) => {
                     );
                 });
 
-                // Do NOT send emails here. Finance approval will trigger automatic sending later.
+                // Send email immediately
+                try {
+                    await sendLetterOfAwardEmail(
+                        recipient.business_email,
+                        recipient.business_name,
+                        recipient.contact_person_name,
+                        letterTitle,
+                        letterContent,
+                        letterFilePath,
+                        letterFile.originalname,
+                        awardAmount
+                    );
+
+                    // Update recipient status to sent
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            `UPDATE letter_recipients 
+                             SET email_status = 'sent', sent_at = CURRENT_TIMESTAMP, error_message = NULL
+                             WHERE letter_id = ? AND supplier_id = ?`,
+                            [letterId, recipient.id],
+                            (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            }
+                        );
+                    });
+
+                    successfulSends++;
+                } catch (emailError) {
+                    console.error(`Failed to send award email to ${recipient.business_email}:`, emailError);
+
+                    // Update recipient status to failed
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            `UPDATE letter_recipients 
+                             SET email_status = 'failed', error_message = ?
+                             WHERE letter_id = ? AND supplier_id = ?`,
+                            [emailError.message, letterId, recipient.id],
+                            (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            }
+                        );
+                    });
+
+                    failedSends++;
+                }
             }
 
-            // Update tender status to award_pending (final award happens after Finance approval)
+            // Update tender status to awarded (direct award without Finance pending)
             await new Promise((resolve, reject) => {
                 db.run(
                     'UPDATE demand_tenders SET tender_status = ?, awarded_at = CURRENT_TIMESTAMP WHERE id = ?',
-                    ['award_pending', tenderId],
+                    ['awarded', tenderId],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+            
+            // Update letter sent_at timestamp
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'UPDATE tender_letters SET sent_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [letterId],
                     (err) => {
                         if (err) reject(err);
                         else resolve();
@@ -597,7 +652,7 @@ const sendLetterOfAward = async (req, res) => {
             }
 
             res.json({
-                message: 'Letter of award queued (pending Finance approvals). It will be sent automatically after Asaan Cheque approval.',
+                message: 'Letter of Award sent successfully to all selected suppliers.',
                 letterId: letterId,
                 totalRecipients: recipients.length,
                 successfulSends: successfulSends,

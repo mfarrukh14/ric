@@ -28,6 +28,7 @@ const debugRoutes = require('./src/routes/debugRoutes');
 const vettingRoutes = require('./src/routes/vetting');
 const demandMergeRoutes = require('./src/routes/demandMerge');
 const marketSurveyRoutes = require('./src/routes/marketSurvey');
+const purchaseOrderRoutes = require('./src/routes/purchaseOrders');
 
 const app = express();
 const PORT = 6100;
@@ -73,6 +74,7 @@ app.use('/api/debug', debugRoutes);
 app.use('/api/vetting', vettingRoutes);
 app.use('/api/demand-merge', demandMergeRoutes);
 app.use('/api/market-survey', marketSurveyRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
 
 // Test route
 app.get('/', (req, res) => {

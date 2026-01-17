@@ -3221,6 +3221,107 @@ const runMigrations = async () => {
             });
         });
         
+        // Migration 23: Create purchase_orders table for Purchase Order management
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='purchase_orders'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating purchase_orders table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS purchase_orders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        po_number TEXT NOT NULL UNIQUE,
+                        tender_id INTEGER NOT NULL,
+                        award_letter_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        items TEXT NOT NULL,
+                        total_amount DECIMAL(15,2) NOT NULL,
+                        status TEXT DEFAULT 'created' CHECK (status IN ('created', 'sent', 'acknowledged', 'fulfilled', 'cancelled')),
+                        remarks TEXT,
+                        created_by INTEGER NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        sent_at DATETIME,
+                        acknowledged_at DATETIME,
+                        fulfilled_at DATETIME,
+                        cancelled_at DATETIME,
+                        cancellation_reason TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (award_letter_id) REFERENCES tender_letters(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (created_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating purchase_orders table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created purchase_orders table');
+                            
+                            // Create indexes for purchase_orders table
+                            db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_tender_id ON purchase_orders(tender_id)`, (indexErr) => {
+                                if (indexErr) console.error('Error creating purchase_orders tender_id index:', indexErr);
+                            });
+                            db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier_id ON purchase_orders(supplier_id)`, (indexErr) => {
+                                if (indexErr) console.error('Error creating purchase_orders supplier_id index:', indexErr);
+                            });
+                            db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_po_number ON purchase_orders(po_number)`, (indexErr) => {
+                                if (indexErr) console.error('Error creating purchase_orders po_number index:', indexErr);
+                            });
+                            
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('purchase_orders table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 24: Add professional PO fields to purchase_orders
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(purchase_orders)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+
+                const existing = new Set((columns || []).map(col => col.name));
+                const additions = [
+                    { name: 'delivery_date', type: 'TEXT' },
+                    { name: 'payment_terms', type: 'TEXT' },
+                    { name: 'billing_address', type: 'TEXT' },
+                    { name: 'shipping_address', type: 'TEXT' },
+                    { name: 'contact_name', type: 'TEXT' },
+                    { name: 'contact_phone', type: 'TEXT' },
+                    { name: 'contact_email', type: 'TEXT' },
+                    { name: 'reference_no', type: 'TEXT' }
+                ];
+
+                const missing = additions.filter(col => !existing.has(col.name));
+                if (missing.length === 0) {
+                    console.log('purchase_orders already has professional PO fields');
+                    resolve();
+                    return;
+                }
+
+                let completed = 0;
+                missing.forEach((col) => {
+                    db.run(`ALTER TABLE purchase_orders ADD COLUMN ${col.name} ${col.type}`, (alterErr) => {
+                        if (alterErr) {
+                            console.error(`Error adding ${col.name} to purchase_orders:`, alterErr);
+                        }
+                        completed += 1;
+                        if (completed === missing.length) {
+                            resolve();
+                        }
+                    });
+                });
+            });
+        });
+        
         console.log('Database migrations completed successfully');
     } catch (error) {
         console.error('Error running database migrations:', error);

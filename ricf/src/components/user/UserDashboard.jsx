@@ -9,6 +9,7 @@ import VettingDashboard from '../vetting/VettingDashboard';
 import HodDashboard from '../hod/HodDashboard';
 import MarketSurveyCommittee from '../committee/MarketSurveyCommittee';
 import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
+import StorePurchaseOrders from '../store/StorePurchaseOrders';
 import { apiUrl } from '../../config/api';
 
 export default function UserDashboard() {
@@ -166,6 +167,16 @@ export default function UserDashboard() {
                 }`}
               >
                 Manage All Demands
+              </button>
+              <button
+                onClick={() => setActiveTab('purchase-orders')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'purchase-orders'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Purchase Orders
               </button>
             </nav>
           </div>
@@ -589,6 +600,10 @@ export default function UserDashboard() {
         </div>
       )}      {isStoreDepartmentUser && activeTab === 'manage-demands' && (
         <DemandManagement />
+      )}
+
+      {isStoreDepartmentUser && activeTab === 'purchase-orders' && (
+        <StorePurchaseOrders />
       )}
 
       {isEvaluationCommittee && activeTab === 'supplier-evaluation' && (
