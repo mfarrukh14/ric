@@ -38,7 +38,10 @@ const getTendersReadyForLetterOfIntent = async (req, res) => {
             WHERE fo.opened_at IS NOT NULL
             AND fo.status = 'opened'
             AND dt.tender_status NOT IN ('awarded', 'cancelled')
-            GROUP BY dt.id
+            GROUP BY dt.id, dt.tender_number, dt.demand_id, dt.tender_status,
+                d.item_name, d.description, u.name,
+                fo.opened_at, fo.opened_by, fo.status,
+                tl_intent.id, tl_intent.sent_at
             HAVING COUNT(DISTINCT te.supplier_id) > 0
             ORDER BY fo.opened_at DESC
         `;
@@ -609,7 +612,7 @@ const sendLetterOfAward = async (req, res) => {
 
                 try {
                     // Send to Finance module
-                    const financeResponse = await fetch('http://localhost:5000/api/contingentbill/contingent-bills/from-eproc', {
+                    const financeResponse = await fetch('http://10.10.10.35:5000/api/contingentbill/contingent-bills/from-eproc', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',

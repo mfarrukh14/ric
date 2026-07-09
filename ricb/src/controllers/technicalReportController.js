@@ -13,7 +13,7 @@ const getArchivedEvaluations = async (req, res) => {
         const query = `
             SELECT DISTINCT 
                 dt.id as tender_id,
-                'Tender #' || dt.id as title,
+                CONCAT('Tender #', dt.id) as title,
                 d.item_name,
                 d.description,
                 'Purchase Department' as department_name,

@@ -78,7 +78,7 @@ const initiateFinancialGrievance = async (req, res) => {
                 LEFT JOIN financial_openings fo ON dt.id = fo.tender_id
                 LEFT JOIN technical_evaluations te ON dt.id = te.tender_id AND te.status = 'approved'
                 WHERE dt.id = ?
-                GROUP BY dt.id
+                GROUP BY dt.id, dt.tender_number, dt.demand_id, d.item_name, d.description, fo.status, fo.opened_at
             `, [tenderId], (err, row) => {
                 if (err) reject(err);
                 else resolve(row);

@@ -1,24 +1,34 @@
-const sqlite3 = require('sqlite3').verbose();
+const { connect: mssqlConnect, getAdapter } = require('./mssqlAdapter');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
-const dbPath = path.resolve(__dirname, '../../database.sqlite');
-
 let db = null;
 
-const connectDatabase = () => {
-    return new Promise((resolve, reject) => {
-        db = new sqlite3.Database(dbPath, (err) => {
-            if (err) {
-                console.error('Error connecting to database:', err);
-                reject(err);
-            } else {
-                console.log('Connected to SQLite database');
-                initializeDatabase().then(() => resolve(db)).catch(reject);
-            }
-        });
-    });
+const connectDatabase = async () => {
+    const mssqlConfig = {
+        server: process.env.MSSQL_HOST || '58.65.158.107',
+        port: parseInt(process.env.MSSQL_PORT || '9194', 10),
+        database: process.env.MSSQL_DATABASE || 'HMS',
+        user: process.env.MSSQL_USER || 'sa',
+        password: process.env.MSSQL_PASSWORD || 'Pakistan123',
+        options: {
+            encrypt: false,
+            trustServerCertificate: true,
+            enableArithAbort: true,
+        },
+        pool: { max: 10, min: 0, idleTimeoutMillis: 30000 }
+    };
+
+    try {
+        db = await mssqlConnect(mssqlConfig);
+        console.log('Connected to SQL Server (HMS) database');
+        await initializeDatabase();
+        return db;
+    } catch (err) {
+        console.error('Error connecting to database:', err);
+        throw err;
+    }
 };
 
 const getDatabase = () => {

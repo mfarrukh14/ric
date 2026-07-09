@@ -116,20 +116,18 @@ const getPendingTenders = async (req, res) => {
             db.all(
                 `SELECT dt.*, d.description as demand_description,
                         u.name as created_by_name, dept.name as created_by_department,
-                        COUNT(di.id) as item_count,
-                        SUM(COALESCE(di.store_estimated_cost, di.estimated_cost * di.quantity)) as total_estimated_cost,
-                        GROUP_CONCAT(di.item_name, ', ') as item_names
+                        (SELECT COUNT(*) FROM demand_items WHERE demand_id = d.id) as item_count,
+                        (SELECT SUM(COALESCE(di2.store_estimated_cost, di2.estimated_cost * di2.quantity)) FROM demand_items di2 WHERE di2.demand_id = d.id) as total_estimated_cost,
+                        (SELECT GROUP_CONCAT(di3.item_name, ', ') FROM demand_items di3 WHERE di3.demand_id = d.id) as item_names
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  JOIN users u ON dt.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN demand_items di ON d.id = di.demand_id
                  WHERE dt.tender_status = 'pending_vetting'
                  AND NOT EXISTS (
                      SELECT 1 FROM tender_vetting_evaluations tve 
                      WHERE tve.tender_id = dt.id AND tve.committee_member_id = ?
                  )
-                 GROUP BY dt.id
                  ORDER BY dt.created_at DESC`,
                 [user.id],
                 (err, rows) => {
@@ -164,9 +162,9 @@ const getAllVettingTenders = async (req, res) => {
             db.all(
                 `SELECT dt.*, d.description as demand_description,
                         u.name as created_by_name, dept.name as created_by_department,
-                        COUNT(di.id) as item_count,
-                        SUM(COALESCE(di.store_estimated_cost, di.estimated_cost * di.quantity)) as total_estimated_cost,
-                        GROUP_CONCAT(di.item_name, ', ') as item_names,
+                        (SELECT COUNT(*) FROM demand_items WHERE demand_id = d.id) as item_count,
+                        (SELECT SUM(COALESCE(di2.store_estimated_cost, di2.estimated_cost * di2.quantity)) FROM demand_items di2 WHERE di2.demand_id = d.id) as total_estimated_cost,
+                        (SELECT GROUP_CONCAT(di3.item_name, ', ') FROM demand_items di3 WHERE di3.demand_id = d.id) as item_names,
                         tve.decision as my_decision,
                         tve.comments as my_comments,
                         tve.evaluated_at as my_evaluation_date
@@ -174,10 +172,8 @@ const getAllVettingTenders = async (req, res) => {
                  JOIN demands d ON dt.demand_id = d.id
                  JOIN users u ON dt.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN demand_items di ON d.id = di.demand_id
                  LEFT JOIN tender_vetting_evaluations tve ON dt.id = tve.tender_id AND tve.committee_member_id = ?
                  WHERE dt.tender_status IN ('pending_vetting', 'vetting_approved', 'vetting_rejected')
-                 GROUP BY dt.id
                  ORDER BY dt.created_at DESC`,
                 [user.id],
                 (err, rows) => {
@@ -214,15 +210,13 @@ const getTenderForVetting = async (req, res) => {
             db.get(
                 `SELECT dt.*, d.description as demand_description, d.urgency, d.required_by,
                         u.name as created_by_name, dept.name as created_by_department,
-                        SUM(COALESCE(di.store_estimated_cost, di.estimated_cost * di.quantity)) as total_estimated_cost,
-                        COUNT(di.id) as item_count
+                        (SELECT SUM(COALESCE(di2.store_estimated_cost, di2.estimated_cost * di2.quantity)) FROM demand_items di2 WHERE di2.demand_id = d.id) as total_estimated_cost,
+                        (SELECT COUNT(*) FROM demand_items WHERE demand_id = d.id) as item_count
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  JOIN users u ON dt.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN demand_items di ON d.id = di.demand_id
-                 WHERE dt.id = ? AND dt.tender_status = 'pending_vetting'
-                 GROUP BY dt.id`,
+                 WHERE dt.id = ? AND dt.tender_status = 'pending_vetting'`,
                 [tenderId],
                 (err, row) => {
                     if (err) reject(err);

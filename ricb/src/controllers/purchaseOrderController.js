@@ -11,7 +11,7 @@ const generatePONumber = async () => {
     // Get the count of POs created today
     const countRow = await new Promise((resolve, reject) => {
         db.get(
-            `SELECT COUNT(*) as count FROM purchase_orders WHERE DATE(created_at) = DATE('now')`,
+            `SELECT COUNT(*) as count FROM purchase_orders WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)`,
             [],
             (err, row) => {
                 if (err) reject(err);

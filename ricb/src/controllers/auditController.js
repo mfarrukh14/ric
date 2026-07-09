@@ -104,8 +104,8 @@ const getAuditLogs = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Error fetching audit logs:', error);
-        res.status(500).json({ error: 'Failed to fetch audit logs' });
+        console.error('Error fetching audit logs:', error.message, error.stack);
+        res.status(500).json({ error: 'Failed to fetch audit logs', detail: error.message });
     }
 };
 
@@ -198,7 +198,7 @@ const getAuditStatistics = async (req, res) => {
         // Get most active users
         const mostActiveUsers = await new Promise((resolve, reject) => {
             db.all(
-                'SELECT user_name, user_role, COUNT(*) as count FROM audit_logs WHERE created_at >= ? GROUP BY user_id ORDER BY count DESC LIMIT 10',
+                'SELECT user_name, user_role, COUNT(*) as count FROM audit_logs WHERE created_at >= ? GROUP BY user_id, user_name, user_role ORDER BY count DESC LIMIT 10',
                 [daysAgo],
                 (err, rows) => {
                     if (err) reject(err);
@@ -222,10 +222,10 @@ const getAuditStatistics = async (req, res) => {
         // Get daily activity count
         const dailyActivity = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT DATE(created_at) as date, COUNT(*) as count 
+                `SELECT CAST(created_at AS DATE) as date, COUNT(*) as count 
                  FROM audit_logs 
                  WHERE created_at >= ? 
-                 GROUP BY DATE(created_at) 
+                 GROUP BY CAST(created_at AS DATE) 
                  ORDER BY date DESC`,
                 [daysAgo],
                 (err, rows) => {

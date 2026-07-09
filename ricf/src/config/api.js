@@ -1,13 +1,13 @@
 import axios from 'axios';
 
-const runtimeHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const runtimeHost = typeof window !== 'undefined' ? window.location.hostname : '10.10.10.35';
 
 // eProc backend
 // - Prefer env override for deployments
-// - Default to the same host running the frontend (port 6100)
+// - Default to the same host running the frontend (port 5000)
 const API_URL =
     import.meta.env.VITE_EPROC_API_URL ||
-    `http://${runtimeHost}:6100/api`;
+    `http://${runtimeHost}:5000/api`;
 
 // Finance module configuration for cross-authentication
 // - Prefer env override for deployments

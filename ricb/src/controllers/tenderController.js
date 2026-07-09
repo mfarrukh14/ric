@@ -226,7 +226,7 @@ const processExpiredTenders = async (req, res) => {
                             `INSERT INTO supply_orders (
                                 order_number, demand_id, supplier_id, tender_id, bid_id,
                                 item_name, quantity, unit_price, total_amount, delivery_date, order_status
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', '+' || ? || ' days'), 'pending')`,
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATEADD(day, ?, GETDATE()), 'pending')`,
                             [
                                 orderNumber,
                                 tender.demand_id,
@@ -1001,14 +1001,12 @@ const getTendersPendingOpening = async (req, res) => {
             db.all(
                 `SELECT dt.*, d.item_name, d.description, d.urgency, d.required_by,
                         u.name as created_by_name, dept.name as creator_department,
-                        COUNT(sb.id) as bid_count
+                        (SELECT COUNT(*) FROM supplier_bids WHERE tender_id = dt.id) as bid_count
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  LEFT JOIN users u ON d.created_by = u.id
                  LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
                  WHERE dt.tender_status = 'pending_opening'
-                 GROUP BY dt.id
                  ORDER BY dt.bidding_end_time ASC`,
                 [],
                 (err, rows) => {

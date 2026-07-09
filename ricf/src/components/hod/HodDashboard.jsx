@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, Eye, AlertCircle, FileText, Check, X } from 'lucide-react';
 import Modal from '../modals/Modal';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:6100';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://10.10.10.35:5000';
 
 const HodDashboard = () => {
     const [pendingDemands, setPendingDemands] = useState([]);

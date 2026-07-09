@@ -52,7 +52,12 @@ const getTendersReadyForFinancialOpening = async (req, res) => {
             LEFT JOIN financial_grievances fg ON dt.id = fg.tender_id
             WHERE dt.technical_evaluation_completed_at IS NOT NULL
             AND dt.tender_status NOT IN ('awarded', 'cancelled')
-            GROUP BY dt.id
+            GROUP BY dt.id, dt.tender_number, dt.demand_id, dt.bidding_end_time,
+                dt.technical_evaluation_completed_at, dt.tender_status, dt.created_at,
+                d.item_name, d.description, d.urgency, d.required_by,
+                u.name, dept.name,
+                fo.scheduled_opening_time, fo.status, fo.opened_at, fo.opened_by,
+                fg.id, fg.meeting_datetime, fg.status, fg.created_at
             HAVING COUNT(te.id) > 0 
             AND COUNT(CASE WHEN ga.status NOT IN ('resolved', 'rejected') THEN 1 END) = 0
             ORDER BY 
@@ -239,7 +244,9 @@ const getScheduledFinancialOpenings = async (req, res) => {
             LEFT JOIN users u1 ON fo.scheduled_by = u1.id
             LEFT JOIN users u2 ON fo.opened_by = u2.id
             LEFT JOIN supplier_bids sb ON dt.id = sb.tender_id
-            GROUP BY fo.id
+            GROUP BY fo.id, fo.tender_id, fo.scheduled_opening_time, fo.status,
+                fo.opened_at, fo.opened_by, dt.tender_number,
+                d.item_name, d.description, u1.name, u2.name, fo.scheduled_by
             ORDER BY fo.scheduled_opening_time DESC
         `;
 

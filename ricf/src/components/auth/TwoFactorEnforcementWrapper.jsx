@@ -25,6 +25,10 @@ const TwoFactorEnforcementWrapper = ({ children }) => {
       if (response.ok) {
         const data = await response.json();
         setComplianceStatus(data);
+      } else if (response.status === 404) {
+        // Backend doesn't support enforcement endpoint yet
+        setComplianceStatus({ enforced: false, compliant: true, requiresSetup: false });
+        setError('');
       } else {
         console.error('Failed to check 2FA compliance');
         setError('Failed to check security requirements');
