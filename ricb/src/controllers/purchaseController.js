@@ -25,7 +25,7 @@ const getPurchaseDemands = async (req, res) => {
                  LEFT JOIN departments dept ON u.department_id = dept.id
                  LEFT JOIN users sr ON d.store_response_by = sr.id
                  LEFT JOIN demand_tenders dt ON d.id = dt.demand_id
-                 WHERE d.status IN ('purchase_pending', 'available') 
+                 WHERE d.status = 'purchase_pending'
                  AND d.purchase_response_by IS NULL
                  AND dt.demand_id IS NULL
                  ORDER BY d.created_at DESC`,
@@ -82,16 +82,19 @@ const evaluateDemandPurchase = async (req, res) => {
         return res.status(400).json({ message: 'Bidding end time is required for approval' });
     }
 
-    try {
-        // Start transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+    // Parse into a real Date so the driver binds it as a proper SQL datetime
+    // parameter instead of a raw string - MSSQL's implicit string->datetime
+    // conversion can reject valid-looking ISO strings.
+    let biddingEndDate = null;
+    if (action === 'approve') {
+        biddingEndDate = new Date(biddingEndTime);
+        if (isNaN(biddingEndDate.getTime())) {
+            return res.status(400).json({ message: 'Invalid bidding end time' });
+        }
+    }
 
-        try {
+    try {
+        {
             // For approved demands: status changes to tender_created (when tender is auto-created)
             // For rejected demands: status changes to purchase_rejected
             const newStatus = action === 'approve' ? 'tender_created' : 'purchase_rejected';
@@ -121,7 +124,7 @@ const evaluateDemandPurchase = async (req, res) => {
                     db.run(
                         `INSERT INTO demand_tenders (demand_id, bidding_end_time, tender_status, created_by)
                          VALUES (?, ?, 'active', ?)`,
-                        [id, biddingEndTime, user.id],
+                        [id, biddingEndDate, user.id],
                         function(err) {
                             if (err) reject(err);
                             else resolve({ id: this.lastID });
@@ -130,25 +133,11 @@ const evaluateDemandPurchase = async (req, res) => {
                 });
             }
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            res.json({ 
+            res.json({
                 message: `Demand ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
                 status: newStatus,
                 createdTender: action === 'approve'
             });
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
         }
     } catch (error) {
         console.error('Error evaluating demand:', error);
@@ -175,6 +164,14 @@ const approveDemand = async (req, res) => {
         return res.status(400).json({ message: 'Bidding expiry date is required for approval' });
     }
 
+    // Parse into a real Date so the driver binds it as a proper SQL datetime
+    // parameter instead of a raw string - MSSQL's implicit string->datetime
+    // conversion can reject valid-looking ISO strings.
+    const expiryDateParsed = new Date(expiryDate);
+    if (isNaN(expiryDateParsed.getTime())) {
+        return res.status(400).json({ message: 'Invalid bidding expiry date' });
+    }
+
     // Validate required files
     if (!req.files || !req.files.tenderDocument || !req.files.itemsList) {
         return res.status(400).json({ message: 'Both tender document (PDF) and items list (Excel/CSV) are required' });
@@ -191,15 +188,7 @@ const approveDemand = async (req, res) => {
     const itemsListPath = req.files.itemsList[0].path;
 
     try {
-        // Start transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Update the demand with approved status and indicate tender creation
             await new Promise((resolve, reject) => {
                 db.run(
@@ -223,7 +212,7 @@ const approveDemand = async (req, res) => {
                 db.run(
                     `INSERT INTO demand_tenders (demand_id, bidding_end_time, tender_status, created_by, tender_document_path, items_list_path)
                      VALUES (?, ?, 'pending_purchase_hod_approval', ?, ?, ?)`,
-                    [id, expiryDate, user.id, tenderDocPath, itemsListPath],
+                    [id, expiryDateParsed, user.id, tenderDocPath, itemsListPath],
                     function(err) {
                         if (err) reject(err);
                         else resolve({ id: this.lastID });
@@ -231,26 +220,12 @@ const approveDemand = async (req, res) => {
                 );
             });
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            res.json({ 
+            res.json({
                 message: 'Demand approved and tender sent to Purchase HOD for approval',
                 status: 'tender_created',
                 createdTender: true,
                 pendingHodApproval: true
             });
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
         }
     } catch (error) {
         console.error('Error approving demand:', error);

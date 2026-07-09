@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const runtimeHost = typeof window !== 'undefined' ? window.location.hostname : '10.10.10.35';
+const runtimeHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 
 // eProc backend
 // - Prefer env override for deployments
@@ -321,6 +321,42 @@ export const updateItemName = async (id, itemNameData) => {
 
 export const deleteItemName = async (id) => {
     const response = await api.delete(`/items/names/${id}`);
+    return response.data;
+};
+
+// Category Custom Fields (generic engine: text/number/dropdown fields per category)
+export const getCategoryFields = async (categoryId) => {
+    const response = await api.get(`/items/categories/${categoryId}/fields`);
+    return response.data;
+};
+
+export const createCategoryField = async (categoryId, fieldData) => {
+    const response = await api.post(`/items/categories/${categoryId}/fields`, fieldData);
+    return response.data;
+};
+
+export const updateCategoryField = async (fieldId, fieldData) => {
+    const response = await api.put(`/items/fields/${fieldId}`, fieldData);
+    return response.data;
+};
+
+export const deleteCategoryField = async (fieldId) => {
+    const response = await api.delete(`/items/fields/${fieldId}`);
+    return response.data;
+};
+
+export const createFieldOption = async (fieldId, optionData) => {
+    const response = await api.post(`/items/fields/${fieldId}/options`, optionData);
+    return response.data;
+};
+
+export const updateFieldOption = async (optionId, optionData) => {
+    const response = await api.put(`/items/fields/options/${optionId}`, optionData);
+    return response.data;
+};
+
+export const deleteFieldOption = async (optionId) => {
+    const response = await api.delete(`/items/fields/options/${optionId}`);
     return response.data;
 };
 

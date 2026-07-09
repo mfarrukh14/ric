@@ -134,19 +134,11 @@ const sendLetterOfIntent = async (req, res) => {
             return res.status(400).json({ error: 'Letter file is required' });
         }
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Insert letter record
             const letterId = await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO tender_letters 
+                    `INSERT INTO tender_letters
                     (tender_id, letter_type, letter_title, letter_content, letter_file_path, letter_original_name, sent_to, sent_by)
                     VALUES (?, 'intent', ?, ?, ?, ?, ?, ?)`,
                     [tenderId, letterTitle, letterContent, letterFile.filename, letterFile.originalname, sendTo, userId],
@@ -272,14 +264,6 @@ const sendLetterOfIntent = async (req, res) => {
                 });
             }
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             res.json({
                 message: 'Letter of intent sent successfully',
                 letterId: letterId,
@@ -288,16 +272,6 @@ const sendLetterOfIntent = async (req, res) => {
                 failedSends: failedSends,
                 emailResults: emailResults
             });
-
-        } catch (error) {
-            // Rollback transaction
-            await new Promise((resolve, reject) => {
-                db.run('ROLLBACK', (err) => {
-                    if (err) console.error('Rollback error:', err);
-                    resolve();
-                });
-            });
-            throw error;
         }
 
     } catch (error) {
@@ -407,19 +381,11 @@ const sendLetterOfAward = async (req, res) => {
             return res.status(400).json({ error: 'At least one supplier must be selected for award' });
         }
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Insert letter record (PENDING: do not send emails until Finance workflow finishes)
             const letterId = await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO tender_letters 
+                    `INSERT INTO tender_letters
                     (tender_id, letter_type, letter_title, letter_content, letter_file_path, letter_original_name, sent_to, sent_by, sent_at)
                     VALUES (?, 'award', ?, ?, ?, ?, 'selected', ?, NULL)`,
                     [tenderId, letterTitle, letterContent, letterFile.filename, letterFile.originalname, userId],
@@ -582,14 +548,6 @@ const sendLetterOfAward = async (req, res) => {
                 );
             });
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             // Send contingent bill data to Finance module for each awarded supplier
             const financeIntegrationResults = [];
             for (const recipient of recipients) {
@@ -612,7 +570,7 @@ const sendLetterOfAward = async (req, res) => {
 
                 try {
                     // Send to Finance module
-                    const financeResponse = await fetch('http://10.10.10.35:5000/api/contingentbill/contingent-bills/from-eproc', {
+                    const financeResponse = await fetch('http://localhost:5000/api/contingentbill/contingent-bills/from-eproc', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -662,16 +620,6 @@ const sendLetterOfAward = async (req, res) => {
                 failedSends: failedSends,
                 financeIntegration: financeIntegrationResults
             });
-
-        } catch (error) {
-            // Rollback transaction
-            await new Promise((resolve, reject) => {
-                db.run('ROLLBACK', (err) => {
-                    if (err) console.error('Rollback error:', err);
-                    resolve();
-                });
-            });
-            throw error;
         }
 
     } catch (error) {

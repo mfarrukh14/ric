@@ -3332,10 +3332,262 @@ const runMigrations = async () => {
             });
         });
         
+        // Migration 25: Create generic category custom-fields engine
+        // (category_fields / category_field_options / demand_item_field_values)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS category_fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                field_type TEXT NOT NULL CHECK (field_type IN ('text', 'number', 'dropdown')),
+                depends_on_field_id INTEGER,
+                is_required INTEGER DEFAULT 1,
+                display_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES item_categories (id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_field_id) REFERENCES category_fields (id) ON DELETE SET NULL
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating category_fields table:', err);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS category_field_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                field_id INTEGER NOT NULL,
+                value TEXT NOT NULL,
+                parent_option_id INTEGER,
+                display_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (field_id) REFERENCES category_fields (id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_option_id) REFERENCES category_field_options (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating category_field_options table:', err);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demand_item_field_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                demand_item_id INTEGER NOT NULL,
+                field_id INTEGER NOT NULL,
+                value_text TEXT,
+                option_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
+                FOREIGN KEY (field_id) REFERENCES category_fields (id) ON DELETE CASCADE,
+                FOREIGN KEY (option_id) REFERENCES category_field_options (id) ON DELETE SET NULL,
+                UNIQUE(demand_item_id, field_id)
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating demand_item_field_values table:', err);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_category_fields_category_id ON category_fields(category_id)`, (err) => {
+                if (err) console.error('Error creating category_fields category_id index:', err);
+                resolve();
+            });
+        });
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_category_field_options_field_id ON category_field_options(field_id)`, (err) => {
+                if (err) console.error('Error creating category_field_options field_id index:', err);
+                resolve();
+            });
+        });
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_demand_item_field_values_item_id ON demand_item_field_values(demand_item_id)`, (err) => {
+                if (err) console.error('Error creating demand_item_field_values demand_item_id index:', err);
+                resolve();
+            });
+        });
+
+        // Migration 26: Seed the generic custom-fields engine from the legacy
+        // pharmaceutical/equipment lookup tables, and backfill historical
+        // demand_items rows into demand_item_field_values so every downstream
+        // view can read item details from one place going forward.
+        await migratePharmaEquipmentToGenericFields();
+
         console.log('Database migrations completed successfully');
     } catch (error) {
         console.error('Error running database migrations:', error);
         throw error;
+    }
+};
+
+// Promise-wrapped query helpers used only by the one-off migration below.
+const dbAll = (sqlText, params = []) => new Promise((resolve, reject) => {
+    db.all(sqlText, params, (err, rows) => err ? reject(err) : resolve(rows || []));
+});
+const dbGet = (sqlText, params = []) => new Promise((resolve, reject) => {
+    db.get(sqlText, params, (err, row) => err ? reject(err) : resolve(row));
+});
+const dbRun = (sqlText, params = []) => new Promise((resolve, reject) => {
+    db.run(sqlText, params, function (err) { err ? reject(err) : resolve(this); });
+});
+
+const isPharmaCategoryName = (name) => {
+    const n = (name || '').toLowerCase();
+    return n.includes('pharmaceutical') || n.includes('medicine') || n.includes('drug');
+};
+const isEquipmentCategoryName = (name) => {
+    const n = (name || '').toLowerCase();
+    return n.includes('equipment') || n.includes('machinery') || n.includes('instrument');
+};
+
+const migratePharmaEquipmentToGenericFields = async () => {
+    const categories = await dbAll('SELECT * FROM item_categories');
+    const pharmaCategory = categories.find(c => isPharmaCategoryName(c.name));
+    const equipmentCategory = categories.find(c => isEquipmentCategoryName(c.name));
+
+    if (pharmaCategory) {
+        const existing = await dbGet('SELECT id FROM category_fields WHERE category_id = ?', [pharmaCategory.id]);
+        if (!existing) {
+            console.log('Migrating Pharmaceuticals lookup data into generic category fields...');
+            await seedPharmaFields(pharmaCategory.id);
+        }
+    }
+
+    if (equipmentCategory) {
+        const existing = await dbGet('SELECT id FROM category_fields WHERE category_id = ?', [equipmentCategory.id]);
+        if (!existing) {
+            console.log('Migrating Equipment lookup data into generic category fields...');
+            await seedEquipmentFields(equipmentCategory.id);
+        }
+    }
+};
+
+const createField = async (categoryId, label, fieldType, displayOrder, isRequired, dependsOnFieldId = null) => {
+    const result = await dbRun(
+        'INSERT INTO category_fields (category_id, label, field_type, depends_on_field_id, is_required, display_order) VALUES (?, ?, ?, ?, ?, ?)',
+        [categoryId, label, fieldType, dependsOnFieldId, isRequired ? 1 : 0, displayOrder]
+    );
+    return result.lastID;
+};
+
+const createOption = async (fieldId, value, displayOrder, parentOptionId = null) => {
+    const result = await dbRun(
+        'INSERT INTO category_field_options (field_id, value, parent_option_id, display_order) VALUES (?, ?, ?, ?)',
+        [fieldId, value, parentOptionId, displayOrder]
+    );
+    return result.lastID;
+};
+
+const seedPharmaFields = async (categoryId) => {
+    const drugCategories = await dbAll('SELECT * FROM drug_categories ORDER BY name');
+    const drugNames = await dbAll('SELECT * FROM drug_names ORDER BY name');
+    const strengthUnits = await dbAll('SELECT * FROM strength_units ORDER BY name');
+    const dosageForms = await dbAll('SELECT * FROM dosage_forms ORDER BY name');
+    const preparations = await dbAll('SELECT * FROM preparations ORDER BY name');
+
+    const drugCategoryFieldId = await createField(categoryId, 'Drug Category', 'dropdown', 1, true);
+    const drugCategoryOptionMap = {};
+    for (let i = 0; i < drugCategories.length; i++) {
+        drugCategoryOptionMap[drugCategories[i].id] = await createOption(drugCategoryFieldId, drugCategories[i].name, i);
+    }
+
+    const drugNameFieldId = await createField(categoryId, 'Drug Name', 'dropdown', 2, true, drugCategoryFieldId);
+    const drugNameOptionMap = {};
+    for (let i = 0; i < drugNames.length; i++) {
+        const parentOptionId = drugCategoryOptionMap[drugNames[i].drug_category_id] || null;
+        drugNameOptionMap[drugNames[i].id] = await createOption(drugNameFieldId, drugNames[i].name, i, parentOptionId);
+    }
+
+    const strengthValueFieldId = await createField(categoryId, 'Strength Value', 'number', 3, true);
+
+    const strengthUnitFieldId = await createField(categoryId, 'Strength Unit', 'dropdown', 4, true);
+    const strengthUnitOptionMap = {};
+    for (let i = 0; i < strengthUnits.length; i++) {
+        const label = strengthUnits[i].abbreviation
+            ? `${strengthUnits[i].name} (${strengthUnits[i].abbreviation})`
+            : strengthUnits[i].name;
+        strengthUnitOptionMap[strengthUnits[i].id] = await createOption(strengthUnitFieldId, label, i);
+    }
+
+    const dosageFormFieldId = await createField(categoryId, 'Dosage Form', 'dropdown', 5, true);
+    const dosageFormOptionMap = {};
+    for (let i = 0; i < dosageForms.length; i++) {
+        dosageFormOptionMap[dosageForms[i].id] = await createOption(dosageFormFieldId, dosageForms[i].name, i);
+    }
+
+    const preparationFieldId = await createField(categoryId, 'Preparation', 'dropdown', 6, false);
+    const preparationOptionMap = {};
+    for (let i = 0; i < preparations.length; i++) {
+        preparationOptionMap[preparations[i].id] = await createOption(preparationFieldId, preparations[i].name, i);
+    }
+
+    const legacyItems = await dbAll('SELECT * FROM demand_items WHERE drug_category_id IS NOT NULL OR drug_name_id IS NOT NULL');
+    for (const item of legacyItems) {
+        if (item.drug_category_id && drugCategoryOptionMap[item.drug_category_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, drugCategoryFieldId, drugCategoryOptionMap[item.drug_category_id]]);
+        }
+        if (item.drug_name_id && drugNameOptionMap[item.drug_name_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, drugNameFieldId, drugNameOptionMap[item.drug_name_id]]);
+        }
+        if (item.strength_value !== null && item.strength_value !== undefined) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, value_text) VALUES (?, ?, ?)',
+                [item.id, strengthValueFieldId, String(item.strength_value)]);
+        }
+        if (item.strength_unit_id && strengthUnitOptionMap[item.strength_unit_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, strengthUnitFieldId, strengthUnitOptionMap[item.strength_unit_id]]);
+        }
+        if (item.dosage_form_id && dosageFormOptionMap[item.dosage_form_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, dosageFormFieldId, dosageFormOptionMap[item.dosage_form_id]]);
+        }
+        if (item.preparation_id && preparationOptionMap[item.preparation_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, preparationFieldId, preparationOptionMap[item.preparation_id]]);
+        }
+    }
+};
+
+const seedEquipmentFields = async (categoryId) => {
+    const equipmentCategories = await dbAll('SELECT * FROM equipment_categories ORDER BY name');
+    const equipmentTypes = await dbAll('SELECT * FROM equipment_types ORDER BY name');
+
+    const equipmentCategoryFieldId = await createField(categoryId, 'Equipment Category', 'dropdown', 1, true);
+    const equipmentCategoryOptionMap = {};
+    for (let i = 0; i < equipmentCategories.length; i++) {
+        equipmentCategoryOptionMap[equipmentCategories[i].id] = await createOption(equipmentCategoryFieldId, equipmentCategories[i].name, i);
+    }
+
+    const equipmentTypeFieldId = await createField(categoryId, 'Equipment Type', 'dropdown', 2, true, equipmentCategoryFieldId);
+    const equipmentTypeOptionMap = {};
+    for (let i = 0; i < equipmentTypes.length; i++) {
+        const parentOptionId = equipmentCategoryOptionMap[equipmentTypes[i].equipment_category_id] || null;
+        equipmentTypeOptionMap[equipmentTypes[i].id] = await createOption(equipmentTypeFieldId, equipmentTypes[i].name, i, parentOptionId);
+    }
+
+    const legacyItems = await dbAll('SELECT * FROM demand_items WHERE equipment_category_id IS NOT NULL OR equipment_type_id IS NOT NULL');
+    for (const item of legacyItems) {
+        if (item.equipment_category_id && equipmentCategoryOptionMap[item.equipment_category_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, equipmentCategoryFieldId, equipmentCategoryOptionMap[item.equipment_category_id]]);
+        }
+        if (item.equipment_type_id && equipmentTypeOptionMap[item.equipment_type_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, equipmentTypeFieldId, equipmentTypeOptionMap[item.equipment_type_id]]);
+        }
     }
 };
 

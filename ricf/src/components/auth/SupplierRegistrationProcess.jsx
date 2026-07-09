@@ -44,11 +44,21 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
   const [emailOTP, setEmailOTP] = useState('');
   const [emailVerified, setEmailVerified] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [declaration, setDeclaration] = useState(false);
   const [resubmissionFeedback, setResubmissionFeedback] = useState(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState(''); // 'saving', 'saved', 'error', ''
   const [autoSaveTimeout, setAutoSaveTimeout] = useState(null); // Debounced auto-save timeout
+
+  // Countdown for the "Resend Code" cooldown (1 minute after any send)
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   // Fetch existing registration data on component mount
   useEffect(() => {
@@ -505,6 +515,8 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
       }
 
       setOtpSent(true);
+      setEmailOTP('');
+      setResendCooldown(60);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1196,11 +1208,16 @@ const SupplierRegistrationProcess = ({ supplierId, onComplete, isResubmission })
                 
                 <button
                   onClick={sendEmailOTP}
-                  disabled={loading}
+                  disabled={loading || resendCooldown > 0}
                   className="w-full px-6 py-3 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:opacity-50"
                 >
-                  Resend Code
+                  {resendCooldown > 0 ? `Resend Code (${resendCooldown}s)` : 'Resend Code'}
                 </button>
+                <p className="text-xs text-gray-400 text-center">
+                  {resendCooldown > 0
+                    ? `You can request a new code in ${resendCooldown}s. Codes expire 2 minutes after they're sent.`
+                    : "Didn't get it? You can request a new code now. Codes expire 2 minutes after they're sent."}
+                </p>
               </div>
             ) : (
               <div className="text-center text-green-400">

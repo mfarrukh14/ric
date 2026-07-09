@@ -184,15 +184,7 @@ const mergeDemands = async (req, res) => {
     }
 
     try {
-        // Start transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Get all items from selected demands
             const allItems = await new Promise((resolve, reject) => {
                 const placeholders = demandIds.map(() => '?').join(',');
@@ -250,16 +242,14 @@ const mergeDemands = async (req, res) => {
 
             const newDemandId = mergedDemandResult.id;
 
-            // Copy all items to the new demand
+            // Copy all items to the new demand, along with their generic custom field values
             for (const item of allItems) {
-                await new Promise((resolve, reject) => {
+                const newItemResult = await new Promise((resolve, reject) => {
                     db.run(
                         `INSERT INTO demand_items (
-                            demand_id, item_name, quantity, estimated_cost, remarks, unit, 
-                            category_id, item_name_id, prev_year_cost, current_year_cost, specifications,
-                            drug_category_id, drug_name_id, strength_value, strength_unit_id, 
-                            dosage_form_id, preparation_id, equipment_category_id, equipment_type_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            demand_id, item_name, quantity, estimated_cost, remarks, unit,
+                            category_id, item_name_id, prev_year_cost, current_year_cost, specifications
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
                             newDemandId,
                             item.item_name,
@@ -271,22 +261,32 @@ const mergeDemands = async (req, res) => {
                             item.item_name_id,
                             item.prev_year_cost,
                             item.current_year_cost,
-                            item.specifications,
-                            item.drug_category_id,
-                            item.drug_name_id,
-                            item.strength_value,
-                            item.strength_unit_id,
-                            item.dosage_form_id,
-                            item.preparation_id,
-                            item.equipment_category_id,
-                            item.equipment_type_id
+                            item.specifications
                         ],
-                        (err) => {
+                        function(err) {
                             if (err) reject(err);
-                            else resolve();
+                            else resolve({ id: this.lastID });
                         }
                     );
                 });
+
+                const fieldValues = await new Promise((resolve, reject) => {
+                    db.all(
+                        'SELECT field_id, value_text, option_id FROM demand_item_field_values WHERE demand_item_id = ?',
+                        [item.id],
+                        (err, rows) => err ? reject(err) : resolve(rows || [])
+                    );
+                });
+
+                for (const fv of fieldValues) {
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'INSERT INTO demand_item_field_values (demand_item_id, field_id, value_text, option_id) VALUES (?, ?, ?, ?)',
+                            [newItemResult.id, fv.field_id, fv.value_text, fv.option_id],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+                }
             }
 
             // Mark original demands as merged
@@ -315,14 +315,6 @@ const mergeDemands = async (req, res) => {
                 });
             }
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             // Log the merge action
             await auditLogger.logDemandManagement(
                 user.id,
@@ -342,13 +334,6 @@ const mergeDemands = async (req, res) => {
                 category: categories[0],
                 totalEstimatedCost: totalEstimatedCost
             });
-
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
         }
 
     } catch (error) {

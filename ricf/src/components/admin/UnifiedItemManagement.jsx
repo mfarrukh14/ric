@@ -1,839 +1,289 @@
 import React, { useState, useEffect } from 'react';
-import { apiUrl } from '../../config/api';
-import { 
-  Plus, 
-  Edit, 
-  Trash2, 
-  ChevronDown, 
-  ChevronRight, 
-  Package, 
-  Pill, 
-  Wrench,
-  FileText,
-  Search,
-  Filter
+import {
+  Plus,
+  Edit,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  Package,
+  X
 } from 'lucide-react';
+import {
+  getItemCategories,
+  createItemCategory,
+  updateItemCategory,
+  deleteItemCategory,
+  getCategoryFields,
+  createCategoryField,
+  updateCategoryField,
+  deleteCategoryField,
+  createFieldOption,
+  updateFieldOption,
+  deleteFieldOption
+} from '../../config/api';
+
+const FIELD_TYPE_LABELS = {
+  text: 'Text',
+  number: 'Number',
+  dropdown: 'Dropdown'
+};
+
+const emptyFieldForm = () => ({
+  label: '',
+  fieldType: 'text',
+  isRequired: true,
+  dependsOnFieldId: '',
+  options: []
+});
 
 const UnifiedItemManagement = () => {
-  const [activeMainCategory, setActiveMainCategory] = useState('pharmaceuticals');
-  const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [expandedNodes, setExpandedNodes] = useState({});
 
-  // Main item categories (top level)
-  const [mainCategories, setMainCategories] = useState([]);
-  
-  // Pharmaceutical data
-  const [drugCategories, setDrugCategories] = useState([]);
-  const [drugNames, setDrugNames] = useState([]);
-  const [strengthUnits, setStrengthUnits] = useState([]);
-  const [dosageForms, setDosageForms] = useState([]);
-  const [preparations, setPreparations] = useState([]);
+  const [expandedCategoryId, setExpandedCategoryId] = useState(null);
+  const [fieldsByCategory, setFieldsByCategory] = useState({});
+  const [fieldsLoading, setFieldsLoading] = useState(false);
 
-  // Equipment data
-  const [equipmentCategories, setEquipmentCategories] = useState([]);
-  const [equipmentTypes, setEquipmentTypes] = useState([]);
+  // Category modal
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
 
-  // Form states
-  const [editingItem, setEditingItem] = useState(null);
-  const [formData, setFormData] = useState({});
-  const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState('');
+  // Field modal
+  const [showFieldModal, setShowFieldModal] = useState(false);
+  const [fieldModalCategoryId, setFieldModalCategoryId] = useState(null);
+  const [editingField, setEditingField] = useState(null);
+  const [fieldForm, setFieldForm] = useState(emptyFieldForm());
+  const [fieldFormError, setFieldFormError] = useState('');
 
   useEffect(() => {
-    loadAllData();
+    loadCategories();
   }, []);
 
-  const loadAllData = async () => {
+  useEffect(() => {
+    if (!success) return;
+    const t = setTimeout(() => setSuccess(''), 3000);
+    return () => clearTimeout(t);
+  }, [success]);
+
+  const loadCategories = async () => {
     setLoading(true);
+    setError('');
     try {
-      const token = localStorage.getItem('token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-
-      // Load main categories
-      const mainCategoriesRes = await fetch(`${apiUrl}/items/categories`, { headers });
-      if (mainCategoriesRes.ok) {
-        const data = await mainCategoriesRes.json();
-        setMainCategories(data);
-      }
-
-      // Load pharmaceutical data
-      const [
-        drugCategoriesRes,
-        strengthUnitsRes,
-        dosageFormsRes,
-        preparationsRes,
-        equipmentCategoriesRes
-      ] = await Promise.all([
-        fetch(`${apiUrl}/item-categorization/drug-categories`, { headers }),
-        fetch(`${apiUrl}/item-categorization/strength-units`, { headers }),
-        fetch(`${apiUrl}/item-categorization/dosage-forms`, { headers }),
-        fetch(`${apiUrl}/item-categorization/preparations`, { headers }),
-        fetch(`${apiUrl}/item-categorization/equipment-categories`, { headers })
-      ]);
-
-      if (drugCategoriesRes.ok) {
-        const data = await drugCategoriesRes.json();
-        setDrugCategories(data);
-        loadAllDrugNames(data);
-      }
-
-      if (strengthUnitsRes.ok) setStrengthUnits(await strengthUnitsRes.json());
-      if (dosageFormsRes.ok) setDosageForms(await dosageFormsRes.json());
-      if (preparationsRes.ok) setPreparations(await preparationsRes.json());
-      
-      if (equipmentCategoriesRes.ok) {
-        const data = await equipmentCategoriesRes.json();
-        setEquipmentCategories(data);
-        loadAllEquipmentTypes(data);
-      }
-
-    } catch (error) {
-      console.error('Error loading data:', error);
-      setError('Failed to load data');
+      const data = await getItemCategories();
+      setCategories(data);
+    } catch (err) {
+      console.error('Error loading categories:', err);
+      setError('Failed to load item categories');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadAllDrugNames = async (categories) => {
+  const loadFieldsForCategory = async (categoryId) => {
+    setFieldsLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const drugNamesPromises = categories.map(category =>
-        fetch(`${apiUrl}/item-categorization/drug-names/${category.id}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }).then(res => res.ok ? res.json() : [])
-      );
-      
-      const allDrugNames = await Promise.all(drugNamesPromises);
-      setDrugNames(allDrugNames.flat());
-    } catch (error) {
-      console.error('Error loading drug names:', error);
+      const fields = await getCategoryFields(categoryId);
+      setFieldsByCategory(prev => ({ ...prev, [categoryId]: fields }));
+    } catch (err) {
+      console.error('Error loading fields:', err);
+      setError('Failed to load fields for this category');
+    } finally {
+      setFieldsLoading(false);
     }
   };
 
-  const loadAllEquipmentTypes = async (categories) => {
-    try {
-      const token = localStorage.getToken('token');
-      const equipmentTypesPromises = categories.map(category =>
-        fetch(`${apiUrl}/item-categorization/equipment-types/${category.id}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }).then(res => res.ok ? res.json() : [])
-      );
-      
-      const allEquipmentTypes = await Promise.all(equipmentTypesPromises);
-      setEquipmentTypes(allEquipmentTypes.flat());
-    } catch (error) {
-      console.error('Error loading equipment types:', error);
+  const toggleCategory = (categoryId) => {
+    if (expandedCategoryId === categoryId) {
+      setExpandedCategoryId(null);
+      return;
+    }
+    setExpandedCategoryId(categoryId);
+    if (!fieldsByCategory[categoryId]) {
+      loadFieldsForCategory(categoryId);
     }
   };
 
-  const handleCreate = async (type, parentId = null) => {
+  // ---- Category CRUD ----
+
+  const openCategoryModal = (category = null) => {
+    setEditingCategory(category);
+    setCategoryForm(category ? { name: category.name, description: category.description || '' } : { name: '', description: '' });
+    setShowCategoryModal(true);
+  };
+
+  const saveCategory = async () => {
+    if (!categoryForm.name.trim()) {
+      setError('Category name is required');
+      return;
+    }
     try {
-      const token = localStorage.getItem('token');
-      let endpoint = `${apiUrl}/item-categorization/admin/${type}`;
-      
-      if (type === 'main-categories') {
-        endpoint = `${apiUrl}/items/categories`;
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          ...formData,
-          parentId
-        })
-      });
-
-      if (response.ok) {
-        setSuccess('Item created successfully');
-        setFormData({});
-        setEditingItem(null);
-        setShowModal(false);
-        loadAllData();
+      if (editingCategory) {
+        await updateItemCategory(editingCategory.id, categoryForm);
+        setSuccess('Category updated successfully');
       } else {
-        const errorData = await response.json();
-        setError(errorData.message || 'Failed to create item');
+        await createItemCategory(categoryForm);
+        setSuccess('Category created successfully');
       }
-    } catch (error) {
-      console.error('Error creating item:', error);
-      setError('Failed to create item');
+      setShowCategoryModal(false);
+      loadCategories();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to save category');
     }
   };
 
-  const handleUpdate = async (type, id) => {
+  const removeCategory = async (category) => {
+    if (!window.confirm(`Delete category "${category.name}"? This also removes its fields.`)) return;
     try {
-      const token = localStorage.getItem('token');
-      let endpoint = `${apiUrl}/item-categorization/admin/${type}/${id}`;
-      
-      if (type === 'main-categories') {
-        endpoint = `${apiUrl}/items/categories/${id}`;
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (response.ok) {
-        setSuccess('Item updated successfully');
-        setFormData({});
-        setEditingItem(null);
-        setShowModal(false);
-        loadAllData();
-      } else {
-        const errorData = await response.json();
-        setError(errorData.message || 'Failed to update item');
-      }
-    } catch (error) {
-      console.error('Error updating item:', error);
-      setError('Failed to update item');
+      await deleteItemCategory(category.id);
+      setSuccess('Category deleted successfully');
+      if (expandedCategoryId === category.id) setExpandedCategoryId(null);
+      loadCategories();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete category');
     }
   };
 
-  const handleDelete = async (type, id) => {
-    if (!window.confirm('Are you sure you want to delete this item?')) return;
+  // ---- Field CRUD ----
 
-    try {
-      const token = localStorage.getItem('token');
-      let endpoint = `${apiUrl}/item-categorization/admin/${type}/${id}`;
-      
-      if (type === 'main-categories') {
-        endpoint = `${apiUrl}/items/categories/${id}`;
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+  const openFieldModal = (categoryId, field = null) => {
+    setFieldModalCategoryId(categoryId);
+    setEditingField(field);
+    setFieldFormError('');
+    if (field) {
+      setFieldForm({
+        label: field.label,
+        fieldType: field.fieldType,
+        isRequired: field.isRequired,
+        dependsOnFieldId: field.dependsOnFieldId || '',
+        options: field.options.map(o => ({ id: o.id, value: o.value, parentOptionId: o.parentOptionId || '' }))
       });
-
-      if (response.ok) {
-        setSuccess('Item deleted successfully');
-        loadAllData();
-      } else {
-        const errorData = await response.json();
-        setError(errorData.message || 'Failed to delete item');
-      }
-    } catch (error) {
-      console.error('Error deleting item:', error);
-      setError('Failed to delete item');
+    } else {
+      setFieldForm(emptyFieldForm());
     }
+    setShowFieldModal(true);
   };
 
-  const toggleNode = (nodeId) => {
-    setExpandedNodes(prev => ({
+  const existingFields = fieldModalCategoryId ? (fieldsByCategory[fieldModalCategoryId] || []) : [];
+  const dropdownFieldsForDependency = existingFields.filter(
+    f => f.fieldType === 'dropdown' && (!editingField || f.id !== editingField.id)
+  );
+  const dependsOnField = fieldForm.dependsOnFieldId
+    ? existingFields.find(f => String(f.id) === String(fieldForm.dependsOnFieldId))
+    : null;
+
+  const addOptionRow = () => {
+    setFieldForm(prev => ({
       ...prev,
-      [nodeId]: !prev[nodeId]
+      options: [...prev.options, { value: '', parentOptionId: dependsOnField?.options?.[0]?.id || '' }]
     }));
   };
 
-  const openModal = (type, item = null, parentId = null) => {
-    setModalType(type);
-    setEditingItem(item);
-    setFormData(item || {});
-    setShowModal(true);
+  const updateOptionRow = (index, patch) => {
+    setFieldForm(prev => ({
+      ...prev,
+      options: prev.options.map((o, i) => (i === index ? { ...o, ...patch } : o))
+    }));
   };
 
-  const getFilteredDrugNames = (categoryId) => {
-    return drugNames.filter(drug => drug.drug_category_id === categoryId);
+  // Changing which field this one depends on invalidates every existing option's
+  // parent mapping (it pointed at the old parent's options), so force reassignment.
+  const handleDependsOnChange = (newDependsOnFieldId) => {
+    setFieldForm(prev => ({
+      ...prev,
+      dependsOnFieldId: newDependsOnFieldId,
+      options: prev.options.map(o => ({ ...o, parentOptionId: '' }))
+    }));
   };
 
-  const getFilteredEquipmentTypes = (categoryId) => {
-    return equipmentTypes.filter(equipment => equipment.equipment_category_id === categoryId);
-  };
-
-  const renderPharmaceuticalTree = () => {
-    const pharmaceuticalCategory = mainCategories.find(cat => 
-      cat.name.toLowerCase().includes('pharmaceutical') || 
-      cat.name.toLowerCase().includes('medicine')
-    );
-
-    if (!pharmaceuticalCategory) {
-      return (
-        <div className="text-center py-8 text-gray-500">
-          <Pill className="mx-auto h-12 w-12 mb-4" />
-          <p>No pharmaceutical category found. Please create one first.</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="space-y-4">
-        {/* Main Pharmaceutical Category */}
-        <div className="bg-white rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Pill className="h-6 w-6 text-blue-500" />
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">{pharmaceuticalCategory.name}</h3>
-                <p className="text-sm text-gray-600">{pharmaceuticalCategory.description}</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => openModal('drug-categories')}
-                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-              >
-                <Plus className="h-4 w-4 inline mr-1" />
-                Add Drug Category
-              </button>
-            </div>
-          </div>
-
-          {/* Drug Categories */}
-          <div className="mt-4 ml-6 space-y-3">
-            {drugCategories.map(drugCategory => (
-              <div key={drugCategory.id} className="border rounded-lg p-3 bg-gray-50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={() => toggleNode(`drug-cat-${drugCategory.id}`)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      {expandedNodes[`drug-cat-${drugCategory.id}`] ? 
-                        <ChevronDown className="h-4 w-4" /> : 
-                        <ChevronRight className="h-4 w-4" />
-                      }
-                    </button>
-                    <div>
-                      <h4 className="font-medium text-gray-900">{drugCategory.name}</h4>
-                      <p className="text-xs text-gray-600">{drugCategory.description}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-1">
-                    <button
-                      onClick={() => openModal('drug-names', null, drugCategory.id)}
-                      className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
-                    >
-                      <Plus className="h-3 w-3 inline mr-1" />
-                      Add Drug
-                    </button>
-                    <button
-                      onClick={() => openModal('drug-categories', drugCategory)}
-                      className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600"
-                    >
-                      <Edit className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete('drug-categories', drugCategory.id)}
-                      className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Drug Names under this category */}
-                {expandedNodes[`drug-cat-${drugCategory.id}`] && (
-                  <div className="mt-3 ml-6 space-y-2">
-                    {getFilteredDrugNames(drugCategory.id).map(drug => (
-                      <div key={drug.id} className="flex items-center justify-between p-2 bg-white border rounded">
-                        <div>
-                          <span className="font-medium text-sm">{drug.name}</span>
-                          <p className="text-xs text-gray-600">{drug.description}</p>
-                        </div>
-                        <div className="flex items-center space-x-1">
-                          <button
-                            onClick={() => openModal('drug-names', drug)}
-                            className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600"
-                          >
-                            <Edit className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete('drug-names', drug.id)}
-                            className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {getFilteredDrugNames(drugCategory.id).length === 0 && (
-                      <p className="text-xs text-gray-500 italic">No drugs in this category</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Supporting Data Section */}
-          <div className="mt-6 border-t pt-4">
-            <h4 className="font-medium text-gray-900 mb-3">Supporting Data</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Strength Units */}
-              <div className="bg-gray-50 p-3 rounded border">
-                <div className="flex items-center justify-between mb-2">
-                  <h5 className="font-medium text-sm">Strength Units ({strengthUnits.length})</h5>
-                  <button
-                    onClick={() => openModal('strength-units')}
-                    className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="space-y-1">
-                  {strengthUnits.slice(0, 3).map(unit => (
-                    <div key={unit.id} className="flex items-center justify-between text-xs">
-                      <span>{unit.name} ({unit.abbreviation})</span>
-                      <div className="flex space-x-1">
-                        <button onClick={() => openModal('strength-units', unit)} className="text-yellow-600 hover:text-yellow-800">
-                          <Edit className="h-3 w-3" />
-                        </button>
-                        <button onClick={() => handleDelete('strength-units', unit.id)} className="text-red-600 hover:text-red-800">
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {strengthUnits.length > 3 && (
-                    <p className="text-xs text-gray-500">... and {strengthUnits.length - 3} more</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Dosage Forms */}
-              <div className="bg-gray-50 p-3 rounded border">
-                <div className="flex items-center justify-between mb-2">
-                  <h5 className="font-medium text-sm">Dosage Forms ({dosageForms.length})</h5>
-                  <button
-                    onClick={() => openModal('dosage-forms')}
-                    className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="space-y-1">
-                  {dosageForms.slice(0, 3).map(form => (
-                    <div key={form.id} className="flex items-center justify-between text-xs">
-                      <span>{form.name}</span>
-                      <div className="flex space-x-1">
-                        <button onClick={() => openModal('dosage-forms', form)} className="text-yellow-600 hover:text-yellow-800">
-                          <Edit className="h-3 w-3" />
-                        </button>
-                        <button onClick={() => handleDelete('dosage-forms', form.id)} className="text-red-600 hover:text-red-800">
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {dosageForms.length > 3 && (
-                    <p className="text-xs text-gray-500">... and {dosageForms.length - 3} more</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Preparations */}
-              <div className="bg-gray-50 p-3 rounded border">
-                <div className="flex items-center justify-between mb-2">
-                  <h5 className="font-medium text-sm">Preparations ({preparations.length})</h5>
-                  <button
-                    onClick={() => openModal('preparations')}
-                    className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="space-y-1">
-                  {preparations.slice(0, 3).map(prep => (
-                    <div key={prep.id} className="flex items-center justify-between text-xs">
-                      <span>{prep.name}</span>
-                      <div className="flex space-x-1">
-                        <button onClick={() => openModal('preparations', prep)} className="text-yellow-600 hover:text-yellow-800">
-                          <Edit className="h-3 w-3" />
-                        </button>
-                        <button onClick={() => handleDelete('preparations', prep.id)} className="text-red-600 hover:text-red-800">
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {preparations.length > 3 && (
-                    <p className="text-xs text-gray-500">... and {preparations.length - 3} more</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderEquipmentTree = () => {
-    const equipmentCategory = mainCategories.find(cat => 
-      cat.name.toLowerCase().includes('equipment') || 
-      cat.name.toLowerCase().includes('machinery')
-    );
-
-    if (!equipmentCategory) {
-      return (
-        <div className="text-center py-8 text-gray-500">
-          <Wrench className="mx-auto h-12 w-12 mb-4" />
-          <p>No equipment category found. Please create one first.</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="space-y-4">
-        {/* Main Equipment Category */}
-        <div className="bg-white rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Wrench className="h-6 w-6 text-orange-500" />
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">{equipmentCategory.name}</h3>
-                <p className="text-sm text-gray-600">{equipmentCategory.description}</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => openModal('equipment-categories')}
-                className="px-3 py-1 bg-orange-600 text-white rounded text-sm hover:bg-orange-700"
-              >
-                <Plus className="h-4 w-4 inline mr-1" />
-                Add Equipment Category
-              </button>
-            </div>
-          </div>
-
-          {/* Equipment Categories */}
-          <div className="mt-4 ml-6 space-y-3">
-            {equipmentCategories.map(eqCategory => (
-              <div key={eqCategory.id} className="border rounded-lg p-3 bg-gray-50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={() => toggleNode(`eq-cat-${eqCategory.id}`)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      {expandedNodes[`eq-cat-${eqCategory.id}`] ? 
-                        <ChevronDown className="h-4 w-4" /> : 
-                        <ChevronRight className="h-4 w-4" />
-                      }
-                    </button>
-                    <div>
-                      <h4 className="font-medium text-gray-900">{eqCategory.name}</h4>
-                      <p className="text-xs text-gray-600">{eqCategory.description}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-1">
-                    <button
-                      onClick={() => openModal('equipment-types', null, eqCategory.id)}
-                      className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
-                    >
-                      <Plus className="h-3 w-3 inline mr-1" />
-                      Add Equipment
-                    </button>
-                    <button
-                      onClick={() => openModal('equipment-categories', eqCategory)}
-                      className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600"
-                    >
-                      <Edit className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete('equipment-categories', eqCategory.id)}
-                      className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Equipment Types under this category */}
-                {expandedNodes[`eq-cat-${eqCategory.id}`] && (
-                  <div className="mt-3 ml-6 space-y-2">
-                    {getFilteredEquipmentTypes(eqCategory.id).map(equipment => (
-                      <div key={equipment.id} className="flex items-center justify-between p-2 bg-white border rounded">
-                        <div>
-                          <span className="font-medium text-sm">{equipment.name}</span>
-                          <p className="text-xs text-gray-600">{equipment.description}</p>
-                        </div>
-                        <div className="flex items-center space-x-1">
-                          <button
-                            onClick={() => openModal('equipment-types', equipment)}
-                            className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600"
-                          >
-                            <Edit className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete('equipment-types', equipment.id)}
-                            className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {getFilteredEquipmentTypes(eqCategory.id).length === 0 && (
-                      <p className="text-xs text-gray-500 italic">No equipment in this category</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderOtherCategories = () => {
-    const otherCategories = mainCategories.filter(cat => 
-      !cat.name.toLowerCase().includes('pharmaceutical') && 
-      !cat.name.toLowerCase().includes('medicine') &&
-      !cat.name.toLowerCase().includes('equipment') &&
-      !cat.name.toLowerCase().includes('machinery')
-    );
-
-    return (
-      <div className="space-y-4">
-        {otherCategories.map(category => (
-          <div key={category.id} className="bg-white rounded-lg border p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <Package className="h-6 w-6 text-gray-500" />
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{category.name}</h3>
-                  <p className="text-sm text-gray-600">{category.description}</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => openModal('main-categories', category)}
-                  className="px-3 py-1 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600"
-                >
-                  <Edit className="h-4 w-4 inline mr-1" />
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDelete('main-categories', category.id)}
-                  className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600"
-                >
-                  <Trash2 className="h-4 w-4 inline mr-1" />
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-        
-        {otherCategories.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
-            <FileText className="mx-auto h-12 w-12 mb-4" />
-            <p>No other categories found.</p>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderModal = () => {
-    if (!showModal) return null;
-
-    const getModalTitle = () => {
-      const titles = {
-        'drug-categories': 'Drug Category',
-        'drug-names': 'Drug Name',
-        'strength-units': 'Strength Unit',
-        'dosage-forms': 'Dosage Form',
-        'preparations': 'Preparation',
-        'equipment-categories': 'Equipment Category',
-        'equipment-types': 'Equipment Type',
-        'main-categories': 'Main Category'
-      };
-      return `${editingItem ? 'Edit' : 'Add'} ${titles[modalType]}`;
-    };
-
-    const getFormFields = () => {
-      switch (modalType) {
-        case 'drug-categories':
-        case 'equipment-categories':
-        case 'dosage-forms':
-        case 'preparations':
-        case 'main-categories':
-          return (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
-                <input
-                  type="text"
-                  value={formData.name || ''}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter name"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                <textarea
-                  value={formData.description || ''}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows="3"
-                  placeholder="Enter description"
-                />
-              </div>
-            </>
-          );
-
-        case 'drug-names':
-          return (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Drug Category *</label>
-                <select
-                  value={formData.drugCategoryId || ''}
-                  onChange={(e) => setFormData({...formData, drugCategoryId: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select Category</option>
-                  {drugCategories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Drug Name *</label>
-                <input
-                  type="text"
-                  value={formData.name || ''}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter drug name"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                <textarea
-                  value={formData.description || ''}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows="2"
-                  placeholder="Enter description"
-                />
-              </div>
-            </>
-          );
-
-        case 'equipment-types':
-          return (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Equipment Category *</label>
-                <select
-                  value={formData.equipmentCategoryId || ''}
-                  onChange={(e) => setFormData({...formData, equipmentCategoryId: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select Category</option>
-                  {equipmentCategories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Equipment Name *</label>
-                <input
-                  type="text"
-                  value={formData.name || ''}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter equipment name"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                <textarea
-                  value={formData.description || ''}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows="2"
-                  placeholder="Enter description"
-                />
-              </div>
-            </>
-          );
-
-        case 'strength-units':
-          return (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Unit Name *</label>
-                <input
-                  type="text"
-                  value={formData.name || ''}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="e.g., Milligrams"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Abbreviation *</label>
-                <input
-                  type="text"
-                  value={formData.abbreviation || ''}
-                  onChange={(e) => setFormData({...formData, abbreviation: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="e.g., mg"
-                />
-              </div>
-            </>
-          );
-
-        default:
-          return null;
+  const removeOptionRow = async (index) => {
+    const option = fieldForm.options[index];
+    if (option.id) {
+      if (!window.confirm('Delete this option?')) return;
+      try {
+        await deleteFieldOption(option.id);
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to delete option (it may already be in use on a demand)');
+        return;
       }
-    };
+    }
+    setFieldForm(prev => ({ ...prev, options: prev.options.filter((_, i) => i !== index) }));
+  };
 
-    return (
-      <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">{getModalTitle()}</h3>
-            <button
-              onClick={() => setShowModal(false)}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              ×
-            </button>
-          </div>
+  const saveField = async () => {
+    setFieldFormError('');
 
-          <div className="space-y-4">
-            {getFormFields()}
-          </div>
+    if (!fieldForm.label.trim()) {
+      setFieldFormError('Field label is required');
+      return;
+    }
+    if (fieldForm.fieldType === 'dropdown') {
+      if (fieldForm.options.length === 0) {
+        setFieldFormError('Dropdown fields require at least one option');
+        return;
+      }
+      if (fieldForm.options.some(o => !o.value.trim())) {
+        setFieldFormError('All options must have a value');
+        return;
+      }
+      if (fieldForm.dependsOnFieldId && fieldForm.options.some(o => !o.parentOptionId)) {
+        setFieldFormError('Every option must specify which parent option it belongs to');
+        return;
+      }
+    }
 
-          <div className="flex items-center justify-end space-x-3 mt-6">
-            <button
-              onClick={() => setShowModal(false)}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => editingItem ? 
-                handleUpdate(modalType, editingItem.id) : 
-                handleCreate(modalType)
-              }
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-            >
-              {editingItem ? 'Update' : 'Create'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    try {
+      if (editingField) {
+        await updateCategoryField(editingField.id, {
+          label: fieldForm.label,
+          isRequired: fieldForm.isRequired,
+          dependsOnFieldId: fieldForm.fieldType === 'dropdown' ? (fieldForm.dependsOnFieldId || null) : null
+        });
+
+        for (const option of fieldForm.options) {
+          if (option.id) {
+            await updateFieldOption(option.id, {
+              value: option.value,
+              parentOptionId: option.parentOptionId || null
+            });
+          } else {
+            await createFieldOption(editingField.id, {
+              value: option.value,
+              parentOptionId: option.parentOptionId || null
+            });
+          }
+        }
+        setSuccess('Field updated successfully');
+      } else {
+        await createCategoryField(fieldModalCategoryId, {
+          label: fieldForm.label,
+          fieldType: fieldForm.fieldType,
+          isRequired: fieldForm.isRequired,
+          dependsOnFieldId: fieldForm.dependsOnFieldId || null,
+          options: fieldForm.fieldType === 'dropdown'
+            ? fieldForm.options.map(o => ({ value: o.value, parentOptionId: o.parentOptionId || null }))
+            : undefined
+        });
+        setSuccess('Field created successfully');
+      }
+      setShowFieldModal(false);
+      loadFieldsForCategory(fieldModalCategoryId);
+    } catch (err) {
+      setFieldFormError(err.response?.data?.message || 'Failed to save field');
+    }
+  };
+
+  const removeField = async (categoryId, field) => {
+    if (!window.confirm(`Delete field "${field.label}"?`)) return;
+    try {
+      await deleteCategoryField(field.id);
+      setSuccess('Field deleted successfully');
+      loadFieldsForCategory(categoryId);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to delete field');
+    }
   };
 
   if (loading) {
@@ -845,94 +295,338 @@ const UnifiedItemManagement = () => {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Unified Item Management</h1>
-        <p className="text-gray-600">Manage all item categories and their hierarchical data in one place</p>
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-1">Unified Item Management</h1>
+          <p className="text-gray-600">Create item categories and define the fields users fill in when requesting items in each one.</p>
+        </div>
+        <button
+          onClick={() => openCategoryModal()}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2 shrink-0"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Add Category</span>
+        </button>
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-          {error}
+        <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')}><X className="h-4 w-4" /></button>
         </div>
       )}
-
       {success && (
         <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
           {success}
         </div>
       )}
 
-      {/* Search and Add Main Category */}
-      <div className="mb-6 flex items-center justify-between">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-          <input
-            type="text"
-            placeholder="Search items..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+      {categories.length === 0 ? (
+        <div className="text-center py-20 text-gray-500 border-2 border-dashed rounded-lg">
+          <Package className="mx-auto h-12 w-12 mb-4 text-gray-300" />
+          <p className="mb-4">No categories yet. Add your first item category to get started.</p>
+          <button
+            onClick={() => openCategoryModal()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center space-x-2"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add Category</span>
+          </button>
         </div>
-        
-        <button
-          onClick={() => openModal('main-categories')}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add Main Category</span>
-        </button>
-      </div>
+      ) : (
+        <div className="space-y-3">
+          {categories.map(category => {
+            const isExpanded = expandedCategoryId === category.id;
+            const fields = fieldsByCategory[category.id] || [];
 
-      {/* Main Category Tabs */}
-      <div className="mb-6 border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => setActiveMainCategory('pharmaceuticals')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeMainCategory === 'pharmaceuticals'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <Pill className="inline h-4 w-4 mr-2" />
-            Pharmaceuticals
-          </button>
-          <button
-            onClick={() => setActiveMainCategory('equipment')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeMainCategory === 'equipment'
-                ? 'border-orange-500 text-orange-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <Wrench className="inline h-4 w-4 mr-2" />
-            Equipment
-          </button>
-          <button
-            onClick={() => setActiveMainCategory('other')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeMainCategory === 'other'
-                ? 'border-gray-500 text-gray-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <Package className="inline h-4 w-4 mr-2" />
-            Other Categories
-          </button>
-        </nav>
-      </div>
+            return (
+              <div key={category.id} className="bg-white rounded-lg border">
+                <div className="flex items-center justify-between p-4">
+                  <button
+                    onClick={() => toggleCategory(category.id)}
+                    className="flex items-center space-x-3 text-left flex-1"
+                  >
+                    {isExpanded ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                    <div>
+                      <h3 className="text-base font-semibold text-gray-900">{category.name}</h3>
+                      {category.description && <p className="text-sm text-gray-500">{category.description}</p>}
+                    </div>
+                  </button>
+                  <div className="flex items-center space-x-1 shrink-0">
+                    <button
+                      onClick={() => openFieldModal(category.id)}
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center space-x-1"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Add Field</span>
+                    </button>
+                    <button
+                      onClick={() => openCategoryModal(category)}
+                      className="p-2 text-yellow-600 hover:bg-yellow-50 rounded"
+                      title="Edit category"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => removeCategory(category)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      title="Delete category"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
 
-      {/* Content based on active tab */}
-      <div className="space-y-6">
-        {activeMainCategory === 'pharmaceuticals' && renderPharmaceuticalTree()}
-        {activeMainCategory === 'equipment' && renderEquipmentTree()}
-        {activeMainCategory === 'other' && renderOtherCategories()}
-      </div>
+                {isExpanded && (
+                  <div className="border-t px-4 py-3 bg-gray-50">
+                    {fieldsLoading && !fieldsByCategory[category.id] ? (
+                      <p className="text-sm text-gray-500">Loading fields...</p>
+                    ) : fields.length === 0 ? (
+                      <p className="text-sm text-gray-500 italic">No fields yet. Click "Add Field" to define what information users must provide for this category.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {fields.map(field => (
+                          <div key={field.id} className="bg-white border rounded p-3">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <div className="flex items-center flex-wrap gap-2">
+                                  <span className="font-medium text-gray-900">{field.label}</span>
+                                  <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">
+                                    {FIELD_TYPE_LABELS[field.fieldType]}
+                                  </span>
+                                  {field.isRequired && (
+                                    <span className="text-xs px-2 py-0.5 bg-red-50 text-red-600 rounded">Required</span>
+                                  )}
+                                  {field.dependsOnFieldId && (
+                                    <span className="text-xs px-2 py-0.5 bg-purple-50 text-purple-600 rounded">
+                                      Depends on: {fields.find(f => f.id === field.dependsOnFieldId)?.label || '...'}
+                                    </span>
+                                  )}
+                                </div>
+                                {field.fieldType === 'dropdown' && (
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {field.options.map(o => (
+                                      <span key={o.id} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+                                        {o.value}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center space-x-1 shrink-0">
+                                <button
+                                  onClick={() => openFieldModal(category.id, field)}
+                                  className="p-1.5 text-yellow-600 hover:bg-yellow-50 rounded"
+                                  title="Edit field"
+                                >
+                                  <Edit className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => removeField(category.id, field)}
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                                  title="Delete field"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Modal */}
-      {renderModal()}
+      {/* Category Modal */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">{editingCategory ? 'Edit Category' : 'Add Category'}</h3>
+              <button onClick={() => setShowCategoryModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                <input
+                  type="text"
+                  value={categoryForm.name}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g. Pharmaceuticals"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <textarea
+                  value={categoryForm.description}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows="3"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end space-x-3 mt-6">
+              <button onClick={() => setShowCategoryModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                Cancel
+              </button>
+              <button onClick={saveCategory} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                {editingCategory ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Field Modal */}
+      {showFieldModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-lg p-6 w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">{editingField ? 'Edit Field' : 'Add Field'}</h3>
+              <button onClick={() => setShowFieldModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {fieldFormError && (
+              <div className="mb-4 p-2 bg-red-100 border border-red-400 text-red-700 rounded text-sm">
+                {fieldFormError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Field Label *</label>
+                <input
+                  type="text"
+                  value={fieldForm.label}
+                  onChange={(e) => setFieldForm({ ...fieldForm, label: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g. Drug Name"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Field Type *</label>
+                <select
+                  value={fieldForm.fieldType}
+                  onChange={(e) => setFieldForm({ ...fieldForm, fieldType: e.target.value, dependsOnFieldId: '', options: [] })}
+                  disabled={!!editingField}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                >
+                  <option value="text">Text</option>
+                  <option value="number">Number</option>
+                  <option value="dropdown">Dropdown</option>
+                </select>
+                {editingField && <p className="text-xs text-gray-500 mt-1">Field type can't be changed after creation.</p>}
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  id="fieldRequired"
+                  type="checkbox"
+                  checked={fieldForm.isRequired}
+                  onChange={(e) => setFieldForm({ ...fieldForm, isRequired: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                />
+                <label htmlFor="fieldRequired" className="ml-2 text-sm text-gray-700">Required when creating a demand</label>
+              </div>
+
+              {fieldForm.fieldType === 'dropdown' && dropdownFieldsForDependency.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Depends on another field? (optional)
+                  </label>
+                  <select
+                    value={fieldForm.dependsOnFieldId}
+                    onChange={(e) => handleDependsOnChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">None - independent dropdown</option>
+                    {dropdownFieldsForDependency.map(f => (
+                      <option key={f.id} value={f.id}>{f.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {dependsOnField
+                      ? `Each option below must belong to one of ${dependsOnField.label}'s options. Changing this resets existing options' parent mapping.`
+                      : 'If set, each option below only shows up once the matching parent option is selected (like Drug Name depending on Drug Category).'}
+                  </p>
+                </div>
+              )}
+
+              {fieldForm.fieldType === 'dropdown' && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">Options * (at least 1 required)</label>
+                    <button
+                      type="button"
+                      onClick={addOptionRow}
+                      className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 flex items-center space-x-1"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Add Option</span>
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {fieldForm.options.map((option, index) => (
+                      <div key={index} className="flex items-center space-x-2">
+                        <input
+                          type="text"
+                          value={option.value}
+                          onChange={(e) => updateOptionRow(index, { value: e.target.value })}
+                          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm"
+                          placeholder="Option value"
+                        />
+                        {dependsOnField && (
+                          <select
+                            value={option.parentOptionId}
+                            onChange={(e) => updateOptionRow(index, { parentOptionId: e.target.value })}
+                            className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm"
+                          >
+                            <option value="">Belongs to...</option>
+                            {dependsOnField.options.map(po => (
+                              <option key={po.id} value={po.id}>{po.value}</option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeOptionRow(index)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    {fieldForm.options.length === 0 && (
+                      <p className="text-xs text-gray-500 italic">No options added yet.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 mt-6">
+              <button onClick={() => setShowFieldModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                Cancel
+              </button>
+              <button onClick={saveField} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                {editingField ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

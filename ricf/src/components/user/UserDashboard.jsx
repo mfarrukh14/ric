@@ -93,6 +93,7 @@ export default function UserDashboard() {
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
       case 'pending_hod_approval': return 'bg-orange-100 text-orange-800';
+      case 'pending_store_hod_approval': return 'bg-orange-100 text-orange-800';
       case 'hod_rejected': return 'bg-red-100 text-red-800';
       case 'available': return 'bg-green-100 text-green-800';
       case 'not_available': return 'bg-red-100 text-red-800';
@@ -104,8 +105,9 @@ export default function UserDashboard() {
     switch (status) {
       case 'pending': return 'PENDING STORE REVIEW';
       case 'pending_hod_approval': return 'PENDING HOD APPROVAL';
+      case 'pending_store_hod_approval': return 'PENDING STORE HOD APPROVAL';
       case 'hod_rejected': return 'REJECTED BY HOD';
-      case 'available': return 'AVAILABLE';
+      case 'available': return 'STOCK ALLOTTED';
       case 'not_available': return 'NOT AVAILABLE';
       default: return status?.replace('_', ' ').toUpperCase() || 'UNKNOWN';
     }

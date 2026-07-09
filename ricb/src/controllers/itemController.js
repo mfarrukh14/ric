@@ -1,14 +1,22 @@
 const { getDatabase } = require('../config/database');
 
-// Get all item categories
+// Get all item categories, including how many custom fields each has configured
+// (fieldCount) so callers like the demand creation form can hide categories an
+// admin hasn't finished setting up yet.
 const getItemCategories = async (req, res) => {
     const db = getDatabase();
     try {
         const categories = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM item_categories ORDER BY name', (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
+            db.all(
+                `SELECT ic.*,
+                        (SELECT COUNT(*) FROM category_fields cf WHERE cf.category_id = ic.id) AS field_count
+                 FROM item_categories ic
+                 ORDER BY ic.name`,
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
         });
         res.json(categories);
     } catch (error) {
@@ -130,6 +138,38 @@ const deleteItemCategory = async (req, res) => {
     }
 
     try {
+        const fields = await new Promise((resolve, reject) => {
+            db.all('SELECT id FROM category_fields WHERE category_id = ?', [id], (err, rows) => {
+                if (err) reject(err); else resolve(rows || []);
+            });
+        });
+
+        if (fields.length > 0) {
+            const fieldIds = fields.map(f => f.id);
+            const placeholders = fieldIds.map(() => '?').join(',');
+            const usage = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT COUNT(*) AS count FROM demand_item_field_values WHERE field_id IN (${placeholders})`,
+                    fieldIds,
+                    (err, row) => { if (err) reject(err); else resolve(row); }
+                );
+            });
+            if (usage && Number(usage.count) > 0) {
+                return res.status(400).json({ message: 'This category has fields that have been used on submitted demands and cannot be deleted' });
+            }
+
+            await new Promise((resolve, reject) => {
+                db.run(`DELETE FROM category_field_options WHERE field_id IN (${placeholders})`, fieldIds, (err) => {
+                    if (err) reject(err); else resolve();
+                });
+            });
+            await new Promise((resolve, reject) => {
+                db.run('DELETE FROM category_fields WHERE category_id = ?', [id], (err) => {
+                    if (err) reject(err); else resolve();
+                });
+            });
+        }
+
         await new Promise((resolve, reject) => {
             db.run(
                 'DELETE FROM item_categories WHERE id = ?',

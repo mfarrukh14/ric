@@ -1,5 +1,11 @@
 const { getDatabase } = require('../config/database');
 const auditLogger = require('../utils/auditLogger');
+const {
+    getCategoryFieldDefinitions,
+    getFieldValuesByItemIds,
+    resolveSubmittedFieldValues,
+    formatItemFields
+} = require('../utils/itemFieldFormatter');
 
 // Create a new demand with multiple items
 const createDemand = async (req, res) => {
@@ -12,58 +18,45 @@ const createDemand = async (req, res) => {
         return res.status(400).json({ message: 'Description, required date and at least one item are required' });
     }
 
-    // Validate each item based on category type
+    // Validate each item, and validate its category's custom fields (if any).
+    // Previous/current year costs are intentionally NOT collected here - store
+    // fills those in during fulfillment, once real stock/pricing is known.
+    // fieldDefsByItem is reused below so we don't re-query the definitions on insert.
+    const fieldDefsByItem = [];
     for (const item of items) {
         // Basic validation for all items
-        if (!item.categoryId || !item.quantity || !item.unit || 
-            (!item.prevYearCost && item.prevYearCost !== 0) || (!item.currentYearCost && item.currentYearCost !== 0)) {
-            return res.status(400).json({ message: 'Each item must have category, quantity, unit, and both year costs' });
+        if (!item.categoryId || !item.quantity || !item.unit) {
+            return res.status(400).json({ message: 'Each item must have category, quantity, and unit' });
         }
-        if (item.quantity <= 0 || item.prevYearCost < 0 || item.currentYearCost < 0) {
-            return res.status(400).json({ message: 'Quantity must be positive and costs cannot be negative' });
+        if (item.quantity <= 0) {
+            return res.status(400).json({ message: 'Quantity must be positive' });
         }
 
-        // Category-specific validation
-        // Get category info to determine validation rules
-        const categoryInfo = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT name FROM item_categories WHERE id = ?',
-                [item.categoryId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
+        const fieldDefs = await getCategoryFieldDefinitions(db, item.categoryId);
+
+        if (fieldDefs.length > 0) {
+            const fieldValues = item.fieldValues || {};
+            for (const field of fieldDefs) {
+                const raw = fieldValues[field.id];
+                const hasValue = raw !== undefined && raw !== null && raw !== '';
+                if (field.isRequired && !hasValue) {
+                    return res.status(400).json({ message: `${field.label} is required` });
                 }
-            );
-        });
+                if (hasValue && field.fieldType === 'dropdown') {
+                    const option = field.options.find(o => String(o.id) === String(raw));
+                    if (!option) {
+                        return res.status(400).json({ message: `Invalid selection for ${field.label}` });
+                    }
+                    if (field.dependsOnFieldId && String(option.parentOptionId) !== String(fieldValues[field.dependsOnFieldId])) {
+                        return res.status(400).json({ message: `${field.label} selection does not match the selected parent option` });
+                    }
+                }
+            }
+        } else if (!item.itemNameId) {
+            return res.status(400).json({ message: 'Item name is required' });
+        }
 
-        const categoryName = categoryInfo?.name?.toLowerCase() || '';
-        const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
-        const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
-
-        // Pharmaceutical items validation
-        if (isPharmaCategory) {
-            if (!item.drugCategoryId || !item.drugNameId || !item.strengthValue || !item.strengthUnitId || !item.dosageFormId) {
-                return res.status(400).json({ 
-                    message: 'Pharmaceutical items must have drug category, drug name, strength, strength unit, and dosage form' 
-                });
-            }
-        }
-        // Equipment items validation
-        else if (isEquipmentCategory) {
-            if (!item.equipmentCategoryId || !item.equipmentTypeId) {
-                return res.status(400).json({ 
-                    message: 'Equipment items must have equipment category and equipment type' 
-                });
-            }
-        }
-        // General items validation
-        else {
-            if (!item.itemNameId) {
-                return res.status(400).json({ 
-                    message: 'General items must have item name' 
-                });
-            }
-        }
+        fieldDefsByItem.push(fieldDefs);
     }
 
     // Validate user is eligible for demand creation
@@ -72,66 +65,33 @@ const createDemand = async (req, res) => {
     }
 
     try {
-        // Calculate total estimated cost (using current year cost)
-        const totalEstimatedCost = items.reduce((sum, item) => sum + parseFloat(item.currentYearCost), 0);
-        
-        // Get item name for the first item for backward compatibility
-        const firstItem = items[0];
-        let itemNameData = null;
-        
-        // Get category info for the first item
-        const firstItemCategory = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT name FROM item_categories WHERE id = ?',
-                [firstItem.categoryId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        // Total estimated cost starts at 0 - costs aren't collected at creation time,
+        // store fills them in (prev/current year cost) during fulfillment.
+        const totalEstimatedCost = items.reduce((sum, item) => sum + (parseFloat(item.currentYearCost) || 0), 0);
 
-        const categoryName = firstItemCategory?.name?.toLowerCase() || '';
-        const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
-        const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
+        // Resolve a display name for every item (used for demand_items.item_name, and for
+        // the first item, the legacy demands.item_name column).
+        const resolvedItems = [];
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const fieldDefs = fieldDefsByItem[i];
 
-        // Get the appropriate name based on item type
-        if (isPharmaCategory && firstItem.drugNameId) {
-            itemNameData = await new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT name FROM drug_names WHERE id = ?',
-                    [firstItem.drugNameId],
-                    (err, row) => {
+            if (fieldDefs.length > 0) {
+                const resolvedFields = resolveSubmittedFieldValues(fieldDefs, item.fieldValues || {});
+                const formatted = formatItemFields(resolvedFields);
+                resolvedItems.push({ item, itemName: formatted.name || 'Unknown Item' });
+            } else {
+                const itemNameData = await new Promise((resolve, reject) => {
+                    db.get('SELECT name FROM item_names WHERE id = ?', [item.itemNameId], (err, row) => {
                         if (err) reject(err);
                         else resolve(row);
-                    }
-                );
-            });
-        } else if (isEquipmentCategory && firstItem.equipmentTypeId) {
-            itemNameData = await new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT name FROM equipment_types WHERE id = ?',
-                    [firstItem.equipmentTypeId],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
-        } else if (firstItem.itemNameId) {
-            itemNameData = await new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT name FROM item_names WHERE id = ?',
-                    [firstItem.itemNameId],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
+                    });
+                });
+                resolvedItems.push({ item, itemName: itemNameData?.name || 'Unknown Item' });
+            }
         }
 
-        if (!itemNameData) {
+        if (!resolvedItems[0] || !resolvedItems[0].itemName || resolvedItems[0].itemName === 'Unknown Item') {
             return res.status(400).json({ message: 'Invalid item name selected for first item' });
         }
 
@@ -175,7 +135,7 @@ const createDemand = async (req, res) => {
             db.run(
                 `INSERT INTO demands (item_name, quantity, estimated_cost, description, urgency, required_by, created_by, status, hod_status)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [itemNameData.name, firstItem.quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId, initialStatus, hodStatus],
+                [resolvedItems[0].itemName, items[0].quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId, initialStatus, hodStatus],
                 function(err) {
                     if (err) reject(err);
                     else resolve({ id: this.lastID });
@@ -185,100 +145,59 @@ const createDemand = async (req, res) => {
 
         const demandId = demandResult.id;
 
-        // Insert all items into demand_items table with new fields
-        for (const item of items) {
-            // Get the actual item name based on item type
-            let itemName = 'Unknown Item';
-            
-            // Get category info for this item
-            const itemCategory = await new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT name FROM item_categories WHERE id = ?',
-                    [item.categoryId],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
+        // Insert all items into demand_items table, then their custom field values (if any)
+        for (let i = 0; i < resolvedItems.length; i++) {
+            const { item, itemName } = resolvedItems[i];
+            const fieldDefs = fieldDefsByItem[i];
 
-            const categoryName = itemCategory?.name?.toLowerCase() || '';
-            const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
-            const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
-
-            // Get the appropriate name based on item type
-            if (isPharmaCategory && item.drugNameId) {
-                const drugNameData = await new Promise((resolve, reject) => {
-                    db.get(
-                        'SELECT name FROM drug_names WHERE id = ?',
-                        [item.drugNameId],
-                        (err, row) => {
-                            if (err) reject(err);
-                            else resolve(row);
-                        }
-                    );
-                });
-                itemName = drugNameData?.name || 'Unknown Drug';
-            } else if (isEquipmentCategory && item.equipmentTypeId) {
-                const equipmentNameData = await new Promise((resolve, reject) => {
-                    db.get(
-                        'SELECT name FROM equipment_types WHERE id = ?',
-                        [item.equipmentTypeId],
-                        (err, row) => {
-                            if (err) reject(err);
-                            else resolve(row);
-                        }
-                    );
-                });
-                itemName = equipmentNameData?.name || 'Unknown Equipment';
-            } else if (item.itemNameId) {
-                const itemNameData = await new Promise((resolve, reject) => {
-                    db.get(
-                        'SELECT name FROM item_names WHERE id = ?',
-                        [item.itemNameId],
-                        (err, row) => {
-                            if (err) reject(err);
-                            else resolve(row);
-                        }
-                    );
-                });
-                itemName = itemNameData?.name || 'Unknown Item';
-            }
-
-            await new Promise((resolve, reject) => {
+            const demandItemResult = await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, remarks, unit, 
-                     category_id, item_name_id, prev_year_cost, current_year_cost, specifications,
-                     drug_category_id, drug_name_id, strength_value, strength_unit_id, dosage_form_id, 
-                     preparation_id, equipment_category_id, equipment_type_id) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, remarks, unit,
+                     category_id, item_name_id, prev_year_cost, current_year_cost, specifications)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
-                        demandId, 
-                        itemName, 
-                        item.quantity, 
-                        item.currentYearCost, // Use current year cost as estimated cost
-                        item.remarks || null, 
+                        demandId,
+                        itemName,
+                        item.quantity,
+                        parseFloat(item.currentYearCost) || 0, // Use current year cost as estimated cost
+                        item.remarks || null,
                         item.unit,
                         item.categoryId,
-                        item.itemNameId,
-                        item.prevYearCost,
-                        item.currentYearCost,
-                        item.specifications || null,
-                        item.drugCategoryId || null,
-                        item.drugNameId || null,
-                        item.strengthValue || null,
-                        item.strengthUnitId || null,
-                        item.dosageFormId || null,
-                        item.preparationId || null,
-                        item.equipmentCategoryId || null,
-                        item.equipmentTypeId || null
+                        item.itemNameId || null,
+                        parseFloat(item.prevYearCost) || 0,
+                        parseFloat(item.currentYearCost) || 0,
+                        item.specifications || null
                     ],
-                    (err) => {
+                    function(err) {
                         if (err) reject(err);
-                        else resolve();
+                        else resolve({ id: this.lastID });
                     }
                 );
             });
+
+            const fieldValues = item.fieldValues || {};
+            for (const field of fieldDefs) {
+                const raw = fieldValues[field.id];
+                if (raw === undefined || raw === null || raw === '') continue;
+
+                if (field.fieldType === 'dropdown') {
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                            [demandItemResult.id, field.id, raw],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+                } else {
+                    await new Promise((resolve, reject) => {
+                        db.run(
+                            'INSERT INTO demand_item_field_values (demand_item_id, field_id, value_text) VALUES (?, ?, ?)',
+                            [demandItemResult.id, field.id, String(raw)],
+                            (err) => err ? reject(err) : resolve()
+                        );
+                    });
+                }
+            }
         }
 
         // Log demand creation
@@ -475,31 +394,16 @@ const getDemandWithItems = async (req, res) => {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
-        // Get items for the demand with category names and detailed categorization
+        // Get items for the demand along with their generic custom field values
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT di.*, 
+                `SELECT di.*,
                         ic.name as category_name,
-                        in_t.name as item_name_full,
-                        dc.name as drug_category_name,
-                        dn.name as drug_name,
-                        su.name as strength_unit_name,
-                        su.abbreviation as strength_unit_abbr,
-                        df.name as dosage_form_name,
-                        p.name as preparation_name,
-                        ec.name as equipment_category_name,
-                        et.name as equipment_type_name
+                        in_t.name as item_name_full
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
-                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
-                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
-                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
-                 LEFT JOIN preparations p ON di.preparation_id = p.id
-                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
-                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
-                 WHERE di.demand_id = ? 
+                 WHERE di.demand_id = ?
                  ORDER BY di.id`,
                 [id],
                 (err, rows) => {
@@ -509,7 +413,16 @@ const getDemandWithItems = async (req, res) => {
             );
         });
 
-        demand.items = items;
+        const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
+        demand.items = items.map(item => {
+            const formatted = formatItemFields(fieldValuesByItem[item.id] || []);
+            return {
+                ...item,
+                custom_fields: formatted.fields,
+                custom_field_description: formatted.description
+            };
+        });
+
         res.json(demand);
     } catch (error) {
         console.error('Error fetching demand with items:', error);
@@ -677,30 +590,16 @@ const getDemandItemsPaginated = async (req, res) => {
             );
         });
 
-        // Get paginated items with all detailed information
+        // Get paginated items with category info
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT di.*, 
+                `SELECT di.*,
                         ic.name as category_name,
-                        in_t.name as item_name_full,
-                        dc.name as drug_category_name,
-                        dn.name as drug_name,
-                        su.name as strength_unit_name,
-                        df.name as dosage_form_name,
-                        p.name as preparation_name,
-                        ec.name as equipment_category_name,
-                        et.name as equipment_type_name
+                        in_t.name as item_name_full
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
-                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
-                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
-                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
-                 LEFT JOIN preparations p ON di.preparation_id = p.id
-                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
-                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
-                 WHERE di.demand_id = ? 
+                 WHERE di.demand_id = ?
                  ORDER BY di.id ASC
                  LIMIT ? OFFSET ?`,
                 [id, limit, offset],
@@ -711,44 +610,21 @@ const getDemandItemsPaginated = async (req, res) => {
             );
         });
 
-        // Format items for frontend with detailed information based on category
+        // Format items for frontend, attaching each item's generic custom field values
+        const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
         const formattedItems = items.map(item => {
-            const categoryName = item.category_name?.toLowerCase() || '';
-            const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
-            const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
-            
-            let formattedItem = {
+            const formatted = formatItemFields(fieldValuesByItem[item.id] || []);
+            return {
                 id: item.id,
-                name: item.item_name || item.item_name_full || item.drug_name || item.equipment_type_name || 'Unknown Item',
+                name: item.item_name || item.item_name_full || formatted.name || 'Unknown Item',
                 category: item.category_name || 'Unknown Category',
                 quantity: item.quantity,
                 unit: item.unit,
                 specifications: item.specifications,
                 estimated_cost: item.current_year_cost,
                 prev_year_cost: item.prev_year_cost,
-                item_type: isPharmaCategory ? 'pharmaceutical' : isEquipmentCategory ? 'equipment' : 'general'
+                custom_fields: formatted.fields
             };
-
-            // Add pharmaceutical-specific details
-            if (isPharmaCategory) {
-                formattedItem.pharmaceutical_details = {
-                    drug_category: item.drug_category_name,
-                    drug_name: item.drug_name,
-                    strength: item.strength_value ? `${item.strength_value} ${item.strength_unit_name || ''}`.trim() : null,
-                    dosage_form: item.dosage_form_name,
-                    preparation: item.preparation_name
-                };
-            }
-
-            // Add equipment-specific details
-            if (isEquipmentCategory) {
-                formattedItem.equipment_details = {
-                    equipment_category: item.equipment_category_name,
-                    equipment_type: item.equipment_type_name
-                };
-            }
-
-            return formattedItem;
         });
 
         res.json({
@@ -795,31 +671,16 @@ const generateDemandExcelReport = async (req, res) => {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
-        // Get demand items with detailed categorization (pharma/equipment) for accurate Excel export
+        // Get demand items with category info
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT di.*, 
+                `SELECT di.*,
                         ic.name as category_name,
-                        in_t.name as item_name_full,
-                        dc.name as drug_category_name,
-                        dn.name as drug_name,
-                        su.name as strength_unit_name,
-                        su.abbreviation as strength_unit_abbr,
-                        df.name as dosage_form_name,
-                        p.name as preparation_name,
-                        ec.name as equipment_category_name,
-                        et.name as equipment_type_name
+                        in_t.name as item_name_full
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
-                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
-                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
-                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
-                 LEFT JOIN preparations p ON di.preparation_id = p.id
-                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
-                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
-                 WHERE di.demand_id = ? 
+                 WHERE di.demand_id = ?
                  ORDER BY di.id ASC`,
                 [id],
                 (err, rows) => {
@@ -831,7 +692,9 @@ const generateDemandExcelReport = async (req, res) => {
 
         // Use the Excel report generator
         const { generateDemandReport } = require('../utils/excelReportGenerator');
-        
+
+        const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
+
         const reportData = {
             demand: {
                 id: demand.id,
@@ -844,15 +707,9 @@ const generateDemandExcelReport = async (req, res) => {
                 created_at: demand.created_at
             },
             items: items.map(item => {
-                const categoryNameLower = (item.category_name || '').toLowerCase();
-                const isPharma = categoryNameLower.includes('pharmaceutical') || categoryNameLower.includes('medicine') || categoryNameLower.includes('drug');
-                const isEquipment = categoryNameLower.includes('equipment') || categoryNameLower.includes('machinery') || categoryNameLower.includes('instrument');
-
-                // Build strength string if available
-                const strength = item.strength_value ? `${item.strength_value} ${item.strength_unit_abbr || item.strength_unit_name || ''}`.trim() : '';
-
+                const formatted = formatItemFields(fieldValuesByItem[item.id] || []);
                 return {
-                    name: item.item_name_full || item.item_name || item.drug_name || item.equipment_type_name,
+                    name: item.item_name_full || item.item_name || formatted.name,
                     category: item.category_name,
                     quantity: item.quantity,
                     unit: item.unit,
@@ -860,14 +717,10 @@ const generateDemandExcelReport = async (req, res) => {
                     // Costs: fall back to legacy estimated_cost if specific year costs absent
                     previous_year_cost: item.previous_year_cost || item.prev_year_cost || 0,
                     current_year_cost: item.current_year_cost || item.estimated_cost || 0,
-                    // Extra fields used by excel generator heuristics for pharma/equipment layout
-                    drug_category: isPharma ? item.drug_category_name : undefined,
-                    drug_name: isPharma ? item.drug_name : undefined,
-                    strength: isPharma ? strength : undefined,
-                    dosage_form: isPharma ? item.dosage_form_name : undefined,
-                    preparation: isPharma ? item.preparation_name : undefined,
-                    equipment_category: isEquipment ? item.equipment_category_name : undefined,
-                    equipment_type: isEquipment ? item.equipment_type_name : undefined,
+                    // Generic category custom fields (e.g. Drug Name, Strength, Equipment Type)
+                    custom_fields: formatted.fields,
+                    consumption_amount: item.consumption_amount,
+                    consumption_type: item.consumption_type
                 };
             })
         };

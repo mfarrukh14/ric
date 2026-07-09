@@ -1,4 +1,5 @@
 const { getDatabase } = require('../config/database');
+const { getFieldValuesByItemIds, formatItemFields } = require('../utils/itemFieldFormatter');
 
 // Get demands for vetting committee
 const getVettingDemands = async (req, res) => {
@@ -230,28 +231,14 @@ const getTenderForVetting = async (req, res) => {
         }
 
         // Get demand items for this tender
-        const items = await new Promise((resolve, reject) => {
+        const rawItems = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT di.*, 
+                `SELECT di.*,
                         ic.name as category_name,
-                        in_t.name as item_name_full,
-                        dc.name as drug_category_name,
-                        dn.name as drug_name,
-                        su.name as strength_unit_name,
-                        df.name as dosage_form_name,
-                        p.name as preparation_name,
-                        ec.name as equipment_category_name,
-                        et.name as equipment_type_name
+                        in_t.name as item_name_full
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
-                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
-                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
-                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
-                 LEFT JOIN preparations p ON di.preparation_id = p.id
-                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
-                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
                  WHERE di.demand_id = ?
                  ORDER BY di.id`,
                 [tender.demand_id],
@@ -260,6 +247,16 @@ const getTenderForVetting = async (req, res) => {
                     else resolve(rows);
                 }
             );
+        });
+
+        const fieldValuesByItem = await getFieldValuesByItemIds(db, rawItems.map(item => item.id));
+        const items = rawItems.map(item => {
+            const formatted = formatItemFields(fieldValuesByItem[item.id] || []);
+            return {
+                ...item,
+                custom_fields: formatted.fields,
+                custom_field_description: formatted.description
+            };
         });
 
         // Get evaluation criteria
@@ -511,15 +508,7 @@ const updateTenderItems = async (req, res) => {
 
         const demandId = tender.demand_id;
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Delete existing demand items for this demand
             await new Promise((resolve, reject) => {
                 db.run(
@@ -570,25 +559,7 @@ const updateTenderItems = async (req, res) => {
                 );
             });
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             res.json({ message: 'Tender items updated successfully' });
-
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve, reject) => {
-                db.run('ROLLBACK', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-            throw error;
         }
 
     } catch (error) {

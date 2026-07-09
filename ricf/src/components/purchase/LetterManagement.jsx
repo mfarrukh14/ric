@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://10.10.10.35:5000';
+const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const LetterManagement = () => {
     const [activeLetterTab, setActiveLetterTab] = useState('send-intent');

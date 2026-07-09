@@ -1,92 +1,67 @@
 import * as XLSX from 'xlsx';
 
+// Render an item's generic category custom fields (e.g. Drug Name, Strength,
+// Equipment Type) as one "Label: value" string, falling back to specifications.
+const formatItemDetails = (item) => {
+  if (Array.isArray(item.custom_fields) && item.custom_fields.length > 0) {
+    return item.custom_fields.map(f => `${f.label}: ${f.value}`).join(', ');
+  }
+  return item.custom_field_description || item.specifications || '';
+};
+
+// The consumption amount/type store actually entered during fulfillment (e.g.
+// "12 (yearly)") - previously this column showed a bogus quantity/12 guess
+// that ignored what was actually entered.
+const formatConsumption = (item) => {
+  const amount = item.consumption_amount;
+  if (amount === undefined || amount === null || amount === '') return '';
+  return `${amount} (${item.consumption_type || 'yearly'})`;
+};
+
 export const generateDemandReport = (demand, items) => {
   // Create a new workbook
   const workbook = XLSX.utils.book_new();
 
   // Extract organization and report info
   const organizationName = demand.departmentName?.toUpperCase() || 'RAWALPINDI INSTITUTE OF CARDIOLOGY, RAWALPINDI';
-  
-  // Determine the main category type and set appropriate title
-  const categoryTypes = items.map(item => item.category_name?.toLowerCase() || '');
-  const isPrimarilyPharmaceutical = categoryTypes.some(cat => 
-    cat.includes('pharmaceutical') || cat.includes('medicine') || cat.includes('drug')
-  );
-  const isPrimarilyEquipment = categoryTypes.some(cat => 
-    cat.includes('equipment') || cat.includes('machinery') || cat.includes('instrument')
-  );
-  
+
   // Generate current and next fiscal year
   const currentYear = new Date().getFullYear();
   const fiscalYear = `${currentYear}-${(currentYear + 1).toString().slice(-2)}`;
-  
-  // Set appropriate report title based on category
-  let reportTitle;
-  if (isPrimarilyPharmaceutical) {
-    reportTitle = `ANNUAL TENDER OF MEDICINE & DRUGS FY ${fiscalYear}`;
-  } else if (isPrimarilyEquipment) {
-    reportTitle = `ANNUAL TENDER OF MEDICAL EQUIPMENT & INSTRUMENTS FY ${fiscalYear}`;
-  } else {
-    reportTitle = `ANNUAL TENDER OF SUPPLIES & MATERIALS FY ${fiscalYear}`;
-  }
+
+  // Report title: name it after the category when every item shares one,
+  // otherwise use a generic title.
+  const categoryNames = [...new Set(items.map(item => item.category_name).filter(Boolean))];
+  const reportTitle = categoryNames.length === 1
+    ? `ANNUAL TENDER OF ${categoryNames[0].toUpperCase()} FY ${fiscalYear}`
+    : `ANNUAL TENDER OF SUPPLIES & MATERIALS FY ${fiscalYear}`;
 
   // Prepare data for Excel with padding (1 row and 1 column)
   const reportData = [];
-  
+
   // Add padding row
   reportData.push([]);
-  
+
   // Header rows with left padding (will be centered via styling)
   reportData.push(['', organizationName]);
   reportData.push(['', reportTitle]);
   reportData.push(['']); // Empty row with padding
-  
-  // Set appropriate table headers based on category type
-  let tableHeaders;
-  if (isPrimarilyPharmaceutical) {
-    tableHeaders = [
-      '', // Left padding column
-      'S. No',
-      'Generic Name',
-      'Strength',
-      'Preparation',
-      'Dosage Form / Unit',
-      `Qty ${currentYear-1}-${currentYear.toString().slice(-2)}`,
-      'Monthly Consumption',
-      `Qty Req. ${currentYear}-${(currentYear+1).toString().slice(-2)}`,
-      'Estimated Unit Rate',
-      'Total Estimated Cost'
-    ];
-  } else if (isPrimarilyEquipment) {
-    tableHeaders = [
-      '', // Left padding column
-      'S. No',
-      'Equipment Name',
-      'Model/Specification',
-      'Category',
-      'Unit',
-      `Qty ${currentYear-1}-${currentYear.toString().slice(-2)}`,
-      'Monthly Requirement',
-      `Qty Req. ${currentYear}-${(currentYear+1).toString().slice(-2)}`,
-      'Estimated Unit Rate',
-      'Total Estimated Cost'
-    ];
-  } else {
-    tableHeaders = [
-      '', // Left padding column
-      'S. No',
-      'Item Name',
-      'Specification',
-      'Category',
-      'Unit',
-      `Qty ${currentYear-1}-${currentYear.toString().slice(-2)}`,
-      'Monthly Consumption',
-      `Qty Req. ${currentYear}-${(currentYear+1).toString().slice(-2)}`,
-      'Estimated Unit Rate',
-      'Total Estimated Cost'
-    ];
-  }
-  
+
+  // Table headers - generic, works for any category's custom fields
+  const tableHeaders = [
+    '', // Left padding column
+    'S. No',
+    'Item Name',
+    'Details',
+    'Category',
+    'Unit',
+    `Qty ${currentYear-1}-${currentYear.toString().slice(-2)}`,
+    'Consumption',
+    `Qty Req. ${currentYear}-${(currentYear+1).toString().slice(-2)}`,
+    'Estimated Unit Rate',
+    'Total Estimated Cost'
+  ];
+
   reportData.push(tableHeaders);
 
   // Group items by category
@@ -109,84 +84,25 @@ export const generateDemandReport = (demand, items) => {
     reportData.push(['', categoryName.toUpperCase()]);
     
     // Add items in this category
-    categoryItems.forEach((item, index) => {
-      const monthlyConsumption = item.prev_year_cost ? Math.round((item.quantity || 0) / 12) : 0;
+    categoryItems.forEach((item) => {
       const totalEstimatedCost = (item.quantity || 0) * (item.current_year_cost || 0);
-      
-      // Build item data based on item type
-      let itemData;
-      
-      if (isPrimarilyPharmaceutical) {
-        // For pharmaceutical items
-        const genericName = item.drug_name || item.item_name_full || item.item_name || '';
-        // Use strength_value + unit if available, otherwise fall back to specifications
-        const strength = item.strength_value && item.strength_unit_abbr ? 
-          `${item.strength_value} ${item.strength_unit_abbr}` : 
-          (item.strength_value && item.strength_unit_name ?
-            `${item.strength_value} ${item.strength_unit_name}` :
-            (item.specifications || ''));
-        // Use preparation_name if available, otherwise extract from specifications or leave empty
-        const preparation = item.preparation_name || '';
-        // Use dosage_form_name if available, otherwise fall back to unit
-        const dosageForm = item.dosage_form_name || item.unit || '';
-        
-        itemData = [
-          '', // Left padding column
-          serialNumber,
-          genericName,
-          strength,
-          preparation,
-          dosageForm,
-          item.prev_year_cost || 0,
-          monthlyConsumption,
-          item.quantity || 0,
-          item.current_year_cost || 0,
-          totalEstimatedCost
-        ];
-      } else if (isPrimarilyEquipment) {
-        // For equipment items
-        const equipmentName = item.equipment_type_name || item.item_name_full || item.item_name || '';
-        const specification = item.specifications || '';
-        const category = item.equipment_category_name || item.category_name || '';
-        const unit = item.unit || 'Unit';
-        
-        itemData = [
-          '', // Left padding column
-          serialNumber,
-          equipmentName,
-          specification,
-          category,
-          unit,
-          item.prev_year_cost || 0,
-          monthlyConsumption,
-          item.quantity || 0,
-          item.current_year_cost || 0,
-          totalEstimatedCost
-        ];
-      } else {
-        // For general items
-        const itemName = item.item_name_full || item.item_name || '';
-        const specification = item.specifications || '';
-        const category = item.category_name || '';
-        const unit = item.unit || 'Unit';
-        
-        itemData = [
-          '', // Left padding column
-          serialNumber,
-          itemName,
-          specification,
-          category,
-          unit,
-          item.prev_year_cost || 0,
-          monthlyConsumption,
-          item.quantity || 0,
-          item.current_year_cost || 0,
-          totalEstimatedCost
-        ];
-      }
+
+      const itemData = [
+        '', // Left padding column
+        serialNumber,
+        item.item_name_full || item.item_name || '',
+        formatItemDetails(item),
+        item.category_name || '',
+        item.unit || 'Unit',
+        item.prev_year_cost || 0,
+        formatConsumption(item),
+        item.quantity || 0,
+        item.current_year_cost || 0,
+        totalEstimatedCost
+      ];
 
       reportData.push(itemData);
-      
+
       serialNumber++;
     });
   });
@@ -409,163 +325,67 @@ export const generateTenderReport = (tenderData) => {
   // Header rows with left padding (will be centered via styling)
   reportData.push(['', 'RAWALPINDI INSTITUTE OF CARDIOLOGY, RAWALPINDI']);
   
-  // Determine appropriate tender title based on content
+  // Determine tender title (generic - names the category when items share one)
   const items = tenderData.items || [];
-  const categoryTypes = items.map(item => item.category_name?.toLowerCase() || '');
-  const isPrimarilyPharmaceutical = categoryTypes.some(cat => 
-    cat.includes('pharmaceutical') || cat.includes('medicine') || cat.includes('drug')
-  );
-  const isPrimarilyEquipment = categoryTypes.some(cat => 
-    cat.includes('equipment') || cat.includes('machinery') || cat.includes('instrument')
-  );
-  
-  let tenderTitle;
-  if (isPrimarilyPharmaceutical) {
-    tenderTitle = `TENDER DOCUMENT - MEDICINE & DRUGS`;
-  } else if (isPrimarilyEquipment) {
-    tenderTitle = `TENDER DOCUMENT - MEDICAL EQUIPMENT & INSTRUMENTS`;
-  } else {
-    tenderTitle = `TENDER DOCUMENT - ${tenderData.title || 'SUPPLIES & MATERIALS'}`;
-  }
-  
+  const categoryNames = [...new Set(items.map(item => item.category_name).filter(Boolean))];
+  const tenderTitle = categoryNames.length === 1
+    ? `TENDER DOCUMENT - ${categoryNames[0].toUpperCase()}`
+    : `TENDER DOCUMENT - ${tenderData.title || 'SUPPLIES & MATERIALS'}`;
+
   reportData.push(['', tenderTitle]);
   reportData.push(['']); // Empty row with padding
-  
+
   // Tender details section
   reportData.push(['', 'TENDER INFORMATION']);
   reportData.push(['', 'Tender ID:', tenderData.id || 'N/A']);
   reportData.push(['', 'Opening Date:', tenderData.openingDate || 'TBD']);
   reportData.push(['', 'Submission Deadline:', tenderData.submissionDeadline || 'TBD']);
   reportData.push(['']); // Empty row
-  
-  // Items table headers with padding - dynamic based on content type
-  let tableHeaders;
-  if (isPrimarilyPharmaceutical) {
-    tableHeaders = [
-      '', // Left padding column
-      'S. No',
-      'Generic Name',
-      'Strength',
-      'Dosage Form',
-      'Quantity Required',
-      'Estimated Rate (PKR)',
-      'Total Estimated Cost (PKR)'
-    ];
-  } else if (isPrimarilyEquipment) {
-    tableHeaders = [
-      '', // Left padding column
-      'S. No',
-      'Equipment Name',
-      'Model/Specification',
-      'Unit',
-      'Quantity Required',
-      'Estimated Rate (PKR)',
-      'Total Estimated Cost (PKR)'
-    ];
-  } else {
-    tableHeaders = [
-      '', // Left padding column
-      'S. No',
-      'Item Description',
-      'Specification',
-      'Unit',
-      'Quantity Required',
-      'Estimated Rate (PKR)',
-      'Total Estimated Cost (PKR)'
-    ];
-  }
-  
+
+  // Items table headers - generic, works for any category's custom fields
+  const tableHeaders = [
+    '', // Left padding column
+    'S. No',
+    'Item Description',
+    'Details',
+    'Unit',
+    'Quantity Required',
+    'Estimated Rate (PKR)',
+    'Total Estimated Cost (PKR)'
+  ];
+
   reportData.push(tableHeaders);
 
-  // Add items data with appropriate formatting
-  tenderData.items?.forEach((item, index) => {
-    let itemRow;
-    
-    if (isPrimarilyPharmaceutical) {
-      const genericName = item.drug_name || item.item_name_full || item.item_name || item.description || 'N/A';
-      const strength = item.strength_value && item.strength_unit_name ? 
-        `${item.strength_value} ${item.strength_unit_name}` : '';
-      const dosageForm = item.dosage_form_name || item.unit || 'Unit';
-      
-      itemRow = [
-        '', // Left padding column
-        index + 1,
-        genericName,
-        strength,
-        dosageForm,
-        item.quantity || 0,
-        item.estimatedRate || 0,
-        (item.quantity || 0) * (item.estimatedRate || 0)
-      ];
-    } else if (isPrimarilyEquipment) {
-      const equipmentName = item.equipment_type_name || item.item_name_full || item.item_name || item.description || 'N/A';
-      const specification = item.specifications || '';
-      const unit = item.unit || 'Unit';
-      
-      itemRow = [
-        '', // Left padding column
-        index + 1,
-        equipmentName,
-        specification,
-        unit,
-        item.quantity || 0,
-        item.estimatedRate || 0,
-        (item.quantity || 0) * (item.estimatedRate || 0)
-      ];
-    } else {
-      itemRow = [
-        '', // Left padding column
-        index + 1,
-        item.description || item.item_name_full || item.item_name || 'N/A',
-        item.specifications || '',
-        item.unit || 'Unit',
-        item.quantity || 0,
-        item.estimatedRate || 0,
-        (item.quantity || 0) * (item.estimatedRate || 0)
-      ];
-    }
-    
+  // Add items data
+  items.forEach((item, index) => {
+    const itemRow = [
+      '', // Left padding column
+      index + 1,
+      item.description || item.item_name_full || item.item_name || 'N/A',
+      formatItemDetails(item),
+      item.unit || 'Unit',
+      item.quantity || 0,
+      item.estimatedRate || 0,
+      (item.quantity || 0) * (item.estimatedRate || 0)
+    ];
+
     reportData.push(itemRow);
   });
 
   // Create worksheet
   const worksheet = XLSX.utils.aoa_to_sheet(reportData);
   
-  // Set column widths based on table type
-  if (isPrimarilyPharmaceutical) {
-    worksheet['!cols'] = [
-      { wch: 3 },   // Padding column
-      { wch: 8 },   // S. No
-      { wch: 30 },  // Generic Name
-      { wch: 15 },  // Strength
-      { wch: 15 },  // Dosage Form
-      { wch: 18 },  // Quantity Required
-      { wch: 20 },  // Estimated Rate
-      { wch: 25 }   // Total Estimated Cost
-    ];
-  } else if (isPrimarilyEquipment) {
-    worksheet['!cols'] = [
-      { wch: 3 },   // Padding column
-      { wch: 8 },   // S. No
-      { wch: 25 },  // Equipment Name
-      { wch: 20 },  // Model/Specification
-      { wch: 12 },  // Unit
-      { wch: 18 },  // Quantity Required
-      { wch: 20 },  // Estimated Rate
-      { wch: 25 }   // Total Estimated Cost
-    ];
-  } else {
-    worksheet['!cols'] = [
-      { wch: 3 },   // Padding column
-      { wch: 8 },   // S. No
-      { wch: 30 },  // Item Description
-      { wch: 20 },  // Specification
-      { wch: 12 },  // Unit
-      { wch: 18 },  // Quantity Required
-      { wch: 20 },  // Estimated Rate
-      { wch: 25 }   // Total Estimated Cost
-    ];
-  }
+  // Set column widths
+  worksheet['!cols'] = [
+    { wch: 3 },   // Padding column
+    { wch: 8 },   // S. No
+    { wch: 30 },  // Item Description
+    { wch: 25 },  // Details
+    { wch: 12 },  // Unit
+    { wch: 18 },  // Quantity Required
+    { wch: 20 },  // Estimated Rate
+    { wch: 25 }   // Total Estimated Cost
+  ];
 
   // Get the range of the worksheet
   const range = XLSX.utils.decode_range(worksheet['!ref']);

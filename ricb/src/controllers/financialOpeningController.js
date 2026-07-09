@@ -557,15 +557,7 @@ const awardTenderManually = async (req, res) => {
         const userId = req.user.id;
         const db = getDatabase();
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Update tender status to awarded
             await new Promise((resolve, reject) => {
                 db.run(
@@ -662,29 +654,11 @@ const awardTenderManually = async (req, res) => {
                 }
             }
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             res.json({
                 message: 'Tender awarded successfully',
                 orders_created: selectedBids.length,
                 awarded_at: new Date().toISOString()
             });
-
-        } catch (error) {
-            // Rollback transaction
-            await new Promise((resolve, reject) => {
-                db.run('ROLLBACK', (err) => {
-                    if (err) console.error('Rollback error:', err);
-                    resolve();
-                });
-            });
-            throw error;
         }
 
     } catch (error) {

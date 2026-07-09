@@ -4,6 +4,36 @@ import { apiUrl } from '../../config/api';
 import CostAnalysisChart from './CostAnalysisChart';
 import { generateDemandReport } from '../../utils/excelReportGenerator';
 
+// Shared availability logic: derives fulfillment status, how much store can
+// actually supply, and the reorder shortfall purely from actual stock/
+// consumption numbers - never assumes "available" by default. Zero stock in
+// hand is always "not available".
+//
+// - availableQuantity: how much of THIS demand's request store can fulfill
+//   right now - capped by both what's in stock and what was requested. Never
+//   exceeds stock in hand (this used to be a copy of the reorder shortfall,
+//   which could show a bogus "available" figure higher than stock on hand).
+// - calculatedRequiredQty: the reorder shortfall for restocking purposes
+//   (how far consumption exceeds stock in hand) - used to size the tender/
+//   purchase quantity, unrelated to availableQuantity.
+const computeAutoFields = (stockInHand, consumptionAmount, requestedQuantity) => {
+    const stock = parseInt(stockInHand || 0);
+    const consumption = parseInt(consumptionAmount || 0);
+    const requested = parseInt(requestedQuantity || 0);
+    const shortfall = consumption > stock ? consumption - stock : 0;
+    const availableQuantity = Math.min(stock, requested);
+
+    let status;
+    if (stock === 0) {
+        status = 'not_available';
+    } else {
+        const comparisonValue = consumption === 0 ? requested : consumption;
+        status = stock >= comparisonValue ? 'available' : 'partial';
+    }
+
+    return { calculatedRequiredQty: shortfall, availableQuantity, status };
+};
+
 const FulfillmentPage = () => {
     const { demandId } = useParams();
     const navigate = useNavigate();
@@ -86,8 +116,32 @@ const FulfillmentPage = () => {
             });
 
             setItems(processedItems);
-            initializeItemStatuses(processedItems);
-            
+
+            // Best-effort: look up real stock-on-hand from the hospital inventory
+            // system so the store user isn't starting from a blind "0" - the value
+            // stays fully editable either way.
+            let hmsStockByName = {};
+            try {
+                const namesToLookup = [...new Set(processedItems.map(i => i.itemName).filter(Boolean))];
+                if (namesToLookup.length > 0) {
+                    const stockResponse = await fetch(`${apiUrl}/hms-stock/lookup`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ itemNames: namesToLookup })
+                    });
+                    if (stockResponse.ok) {
+                        hmsStockByName = await stockResponse.json();
+                    }
+                }
+            } catch (stockError) {
+                console.warn('HMS stock lookup unavailable, continuing without auto-fill:', stockError.message);
+            }
+
+            initializeItemStatuses(processedItems, hmsStockByName);
+
         } catch (error) {
             console.error('Error fetching demand:', error);
             setError(error.message);
@@ -96,30 +150,68 @@ const FulfillmentPage = () => {
         }
     };
 
-    const initializeItemStatuses = (itemsData) => {
-        const initialStatuses = itemsData.map(item => ({
-            itemId: item.id,
-            itemName: item.itemName,
-            requestedQuantity: parseInt(item.quantity),
-            availableQuantity: parseInt(item.quantity),
-            status: 'available',
-            remarks: '',
-            specifications: item.specifications || '',
-            estimatedCost: parseFloat(item.estimated_cost || 0),
-            unit: item.unit || 'pcs',
-            stockInHand: parseInt(item.stock_in_hand || 0),
-            consumptionType: item.consumption_type || 'monthly',
-            consumptionAmount: parseInt(item.consumption_amount || 0),
-            calculatedRequiredQty: parseInt(item.calculated_required_qty || item.quantity),
-            storeEstimatedCost: parseFloat(item.store_estimated_cost || item.estimated_cost || 0),
-            removalReason: item.removal_reason || '',
-            isRemoved: item.is_removed || false,
-            categoryId: item.categoryId,
-            categoryName: item.categoryName,
-            itemNameId: item.itemNameId,
-            prevYearCost: parseFloat(item.prev_year_cost || 0),
-            currentYearCost: parseFloat(item.current_year_cost || item.estimated_cost || 0)
-        }));
+    const initializeItemStatuses = (itemsData, hmsStockByName = {}) => {
+        const initialStatuses = itemsData.map(item => {
+            const persistedStock = parseInt(item.stock_in_hand || 0);
+            const hmsMatch = hmsStockByName[item.itemName];
+            // Only auto-fill from HMS when store hasn't already entered a stock
+            // value for this item (e.g. re-opening a partially reviewed demand).
+            const hasPersistedStock = persistedStock > 0;
+            const useHmsStock = !hasPersistedStock && hmsMatch && hmsMatch.found;
+            const stockInHand = useHmsStock ? parseInt(hmsMatch.totalStock || 0) : persistedStock;
+            const stockSource = useHmsStock ? 'hms' : (hasPersistedStock ? 'persisted' : 'manual');
+
+            const consumptionAmount = parseInt(item.consumption_amount || 0);
+            const requestedQuantity = parseInt(item.quantity);
+
+            // If this item was already reviewed in a previous session, keep that
+            // decision. Otherwise derive status/qty from actual stock - never
+            // default to "available".
+            const hasBeenReviewed = item.store_status && item.store_status !== 'pending';
+            let status;
+            let calculatedRequiredQty;
+            let availableQuantity;
+            if (hasBeenReviewed) {
+                status = item.store_status;
+                calculatedRequiredQty = item.calculated_required_qty != null
+                    ? parseInt(item.calculated_required_qty)
+                    : requestedQuantity;
+                availableQuantity = item.store_available_quantity != null
+                    ? parseInt(item.store_available_quantity)
+                    : Math.min(stockInHand, requestedQuantity);
+            } else {
+                const auto = computeAutoFields(stockInHand, consumptionAmount, requestedQuantity);
+                status = auto.status;
+                calculatedRequiredQty = auto.calculatedRequiredQty;
+                availableQuantity = auto.availableQuantity;
+            }
+
+            return {
+                itemId: item.id,
+                itemName: item.itemName,
+                requestedQuantity,
+                availableQuantity,
+                status,
+                remarks: '',
+                specifications: item.specifications || '',
+                estimatedCost: parseFloat(item.estimated_cost || 0),
+                unit: item.unit || 'pcs',
+                stockInHand,
+                stockSource,
+                hmsMatchedName: useHmsStock ? hmsMatch.matchedItemName : null,
+                consumptionType: item.consumption_type || 'yearly',
+                consumptionAmount,
+                calculatedRequiredQty,
+                storeEstimatedCost: parseFloat(item.store_estimated_cost || item.estimated_cost || 0),
+                removalReason: item.removal_reason || '',
+                isRemoved: item.is_removed || false,
+                categoryId: item.categoryId,
+                categoryName: item.categoryName,
+                itemNameId: item.itemNameId,
+                prevYearCost: parseFloat(item.prev_year_cost || 0),
+                currentYearCost: parseFloat(item.current_year_cost || item.estimated_cost || 0)
+            };
+        });
 
         setItemStatuses(initialStatuses);
     };
@@ -142,37 +234,18 @@ const FulfillmentPage = () => {
             if (status.itemId === currentItem.id) {
                 const updated = { ...status, [field]: value };
 
-                // Auto-calculate required quantity when stock or consumption changes
-                if (field === 'stockInHand' || field === 'consumptionAmount' || field === 'consumptionType') {
-                    const stockInHand = parseInt(updated.stockInHand || 0);
-                    const consumptionAmount = parseInt(updated.consumptionAmount || 0);
-                    const requestedQty = updated.requestedQuantity;
-                    
-                    let shortfall = 0;
-                    if (consumptionAmount > stockInHand) {
-                        shortfall = consumptionAmount - stockInHand;
-                    }
-                    
-                    if (field !== 'calculatedRequiredQty') {
-                        updated.calculatedRequiredQty = shortfall;
-                    }
-                    
-                    updated.availableQuantity = updated.calculatedRequiredQty;
+                if (field === 'stockInHand') {
+                    updated.stockSource = 'manual';
+                    updated.hmsMatchedName = null;
+                }
 
-                    // Auto-adjust status based on stock availability
-                    if (stockInHand === 0) {
-                        updated.status = 'not_available';
-                    } else {
-                        // If consumption is 0, compare with requested quantity
-                        // Otherwise, compare with consumption amount
-                        const comparisonValue = consumptionAmount === 0 ? requestedQty : consumptionAmount;
-                        
-                        if (stockInHand >= comparisonValue) {
-                            updated.status = 'available';
-                        } else {
-                            updated.status = 'partial';
-                        }
-                    }
+                // Auto-calculate required quantity, real store availability, and
+                // status when stock or consumption changes
+                if (field === 'stockInHand' || field === 'consumptionAmount' || field === 'consumptionType') {
+                    const auto = computeAutoFields(updated.stockInHand, updated.consumptionAmount, updated.requestedQuantity);
+                    updated.calculatedRequiredQty = auto.calculatedRequiredQty;
+                    updated.availableQuantity = auto.availableQuantity;
+                    updated.status = auto.status;
                 }
 
                 // Sync available quantity when calculated required quantity changes
@@ -212,7 +285,7 @@ const FulfillmentPage = () => {
                     ...status,
                     isRemoved: isRemoved,
                     removalReason: reason,
-                    availableQuantity: isRemoved ? 0 : status.calculatedRequiredQty,
+                    availableQuantity: isRemoved ? 0 : status.requestedQuantity,
                     status: isRemoved ? 'not_available' : 'available'
                 };
             }
@@ -345,25 +418,51 @@ const FulfillmentPage = () => {
             }
 
             const result = await response_data.json();
-            
-            // Generate Excel report after successful submission
+            const baseMessage = result.redirectsToHod === false
+                ? 'All items were in stock - demand fulfilled directly and the requester has been notified. No HOD approval needed.'
+                : 'Fulfillment submitted successfully! Sent to HOD for approval.';
+
+            // Generate Excel report after successful submission. Merge in what the
+            // store user actually just entered (stock/consumption/costs/status) -
+            // `items` alone is what was fetched before this review and doesn't
+            // reflect those edits.
+            const reportItems = items.map((item) => {
+                const s = itemStatuses.find((st) => st.itemId === item.id);
+                if (!s) return item;
+                return {
+                    ...item,
+                    quantity: s.requestedQuantity,
+                    unit: s.unit || item.unit,
+                    specifications: s.specifications ?? item.specifications,
+                    prev_year_cost: s.prevYearCost,
+                    current_year_cost: s.currentYearCost,
+                    estimated_cost: s.storeEstimatedCost,
+                    store_available_quantity: s.availableQuantity,
+                    store_status: s.status,
+                    stock_in_hand: s.stockInHand,
+                    consumption_type: s.consumptionType,
+                    consumption_amount: s.consumptionAmount,
+                    calculated_required_qty: s.calculatedRequiredQty
+                };
+            });
+
             try {
-                const reportFilename = generateDemandReport(demand, items);
+                const reportFilename = generateDemandReport(demand, reportItems);
                 console.log('Excel report generated:', reportFilename);
-                
+
                 // Show success message with report info
-                navigate('/dashboard', { 
-                    state: { 
-                        message: `Fulfillment submitted successfully! Excel report "${reportFilename}" has been downloaded.`,
+                navigate('/dashboard', {
+                    state: {
+                        message: `${baseMessage} Excel report "${reportFilename}" has been downloaded.`,
                         type: 'success'
                     }
                 });
             } catch (reportError) {
                 console.error('Error generating report:', reportError);
                 // Still navigate with success, but mention report issue
-                navigate('/dashboard', { 
-                    state: { 
-                        message: 'Fulfillment submitted successfully! (Report generation failed)',
+                navigate('/dashboard', {
+                    state: {
+                        message: `${baseMessage} (Report generation failed)`,
                         type: 'success'
                     }
                 });
@@ -973,8 +1072,21 @@ const FulfillmentPage = () => {
                                                     required
                                                 />
                                                 <div className="text-xs text-gray-500 mt-1">{currentItem.unit}</div>
+                                                {currentItemStatus.stockSource === 'hms' ? (
+                                                    <div className="text-xs text-green-600 mt-1">
+                                                        Auto-filled from inventory system{currentItemStatus.hmsMatchedName ? ` (matched "${currentItemStatus.hmsMatchedName}")` : ''} — still editable
+                                                    </div>
+                                                ) : currentItemStatus.stockSource === 'persisted' ? (
+                                                    <div className="text-xs text-gray-400 mt-1">
+                                                        Previously entered value
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-xs text-gray-400 mt-1">
+                                                        Not found in inventory system — enter manually
+                                                    </div>
+                                                )}
                                             </div>
-                                            
+
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">
                                                     Consumption Type *

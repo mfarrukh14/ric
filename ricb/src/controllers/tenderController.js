@@ -3,6 +3,7 @@ const pdfService = require('../utils/pdfService');
 const EmailService = require('../utils/emailService');
 const path = require('path');
 const fs = require('fs');
+const { getFieldValuesByItemIds, formatItemFields } = require('../utils/itemFieldFormatter');
 
 // Initialize email service
 const emailService = new EmailService();
@@ -154,14 +155,6 @@ const processExpiredTenders = async (req, res) => {
         for (const tender of expiredTenders) {
             try {
                 console.log(`Processing tender ${tender.id} for demand ${tender.demand_id}`);
-                
-                // Begin transaction for this tender
-                await new Promise((resolve, reject) => {
-                    db.run('BEGIN TRANSACTION', (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
 
                 // Get all bids for this tender, ordered by cost (lowest first)
                 const bids = await new Promise((resolve, reject) => {
@@ -285,21 +278,9 @@ const processExpiredTenders = async (req, res) => {
                     }
                 }
 
-                // Commit transaction
-                await new Promise((resolve, reject) => {
-                    db.run('COMMIT', (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
-
                 processedCount++;
 
             } catch (error) {
-                // Rollback transaction on error
-                await new Promise((resolve) => {
-                    db.run('ROLLBACK', () => resolve());
-                });
                 console.error(`Error processing tender ${tender.id}:`, error);
                 // Continue with next tender
             }
@@ -474,6 +455,16 @@ const createTenderWithCriteria = async (req, res) => {
             return res.status(400).json({ message: 'Demand ID and bidding end time are required' });
         }
 
+        // Parse into a real Date so the driver binds it as a proper SQL datetime
+        // parameter instead of a raw string - MSSQL's implicit string->datetime
+        // conversion can reject perfectly valid ISO strings (e.g. without
+        // seconds) with "Conversion failed when converting date and/or time
+        // from character string."
+        const biddingEndDate = new Date(biddingEndTime);
+        if (isNaN(biddingEndDate.getTime())) {
+            return res.status(400).json({ message: 'Invalid bidding end time' });
+        }
+
         // Check if tender already exists for this demand
         const existingTender = await new Promise((resolve, reject) => {
             db.get(
@@ -502,15 +493,7 @@ const createTenderWithCriteria = async (req, res) => {
             itemsListPath = req.files.itemsList[0].path;
         }
 
-        // Start transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Generate unique tender number
             const tenderNumber = await generateTenderNumber();
             
@@ -524,7 +507,7 @@ const createTenderWithCriteria = async (req, res) => {
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         demandId,
-                        biddingEndTime,
+                        biddingEndDate,
                         minimumSuppliers || 3,
                         tenderDocumentPath,
                         itemsListPath,
@@ -598,14 +581,6 @@ const createTenderWithCriteria = async (req, res) => {
                 );
             });
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             // Get complete tender data
             const completeData = await new Promise((resolve, reject) => {
                 db.get(
@@ -632,13 +607,6 @@ const createTenderWithCriteria = async (req, res) => {
                     evaluationCriteriaCount: parsedCriteria.length
                 }
             });
-
-        } catch (transactionError) {
-            // Rollback on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw transactionError;
         }
 
     } catch (error) {
@@ -676,30 +644,16 @@ const getTenderWithCriteria = async (req, res) => {
             return res.status(404).json({ message: 'Tender not found or not active' });
         }
 
-        // Get demand items for this tender (only unfulfilled items) with detailed information
+        // Get demand items for this tender (only unfulfilled items) with category info
         const items = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT di.*, 
+                `SELECT di.*,
                         ic.name as category_name,
-                        in_t.name as item_name_full,
-                        dc.name as drug_category_name,
-                        dn.name as drug_name,
-                        su.name as strength_unit_name,
-                        df.name as dosage_form_name,
-                        p.name as preparation_name,
-                        ec.name as equipment_category_name,
-                        et.name as equipment_type_name
+                        in_t.name as item_name_full
                  FROM demand_items di
                  LEFT JOIN item_categories ic ON di.category_id = ic.id
                  LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 LEFT JOIN drug_categories dc ON di.drug_category_id = dc.id
-                 LEFT JOIN drug_names dn ON di.drug_name_id = dn.id
-                 LEFT JOIN strength_units su ON di.strength_unit_id = su.id
-                 LEFT JOIN dosage_forms df ON di.dosage_form_id = df.id
-                 LEFT JOIN preparations p ON di.preparation_id = p.id
-                 LEFT JOIN equipment_categories ec ON di.equipment_category_id = ec.id
-                 LEFT JOIN equipment_types et ON di.equipment_type_id = et.id
-                 WHERE di.demand_id = ? 
+                 WHERE di.demand_id = ?
                  AND (di.store_fulfilled IS NULL OR di.store_fulfilled = 0)
                  AND (di.is_removed IS NULL OR di.is_removed = 0)
                  ORDER BY di.id`,
@@ -711,43 +665,20 @@ const getTenderWithCriteria = async (req, res) => {
             );
         });
 
-        // Format items with detailed information
+        // Format items, attaching each item's generic custom field values
+        const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
         const formattedItems = items.map(item => {
-            const categoryName = item.category_name?.toLowerCase() || '';
-            const isPharmaCategory = categoryName.includes('pharmaceutical') || categoryName.includes('medicine') || categoryName.includes('drug');
-            const isEquipmentCategory = categoryName.includes('equipment') || categoryName.includes('machinery');
-            
-            let formattedItem = {
+            const formatted = formatItemFields(fieldValuesByItem[item.id] || []);
+            return {
                 id: item.id,
-                item_name: item.item_name || item.item_name_full || item.drug_name || item.equipment_type_name || 'Unknown Item',
+                item_name: item.item_name || item.item_name_full || formatted.name || 'Unknown Item',
                 category: item.category_name || 'Unknown Category',
                 quantity: item.quantity,
                 unit: item.unit,
                 specifications: item.specifications,
                 estimated_cost: item.current_year_cost,
-                item_type: isPharmaCategory ? 'pharmaceutical' : isEquipmentCategory ? 'equipment' : 'general'
+                custom_fields: formatted.fields
             };
-
-            // Add pharmaceutical-specific details
-            if (isPharmaCategory) {
-                formattedItem.pharmaceutical_details = {
-                    drug_category: item.drug_category_name,
-                    drug_name: item.drug_name,
-                    strength: item.strength_value ? `${item.strength_value} ${item.strength_unit_name || ''}`.trim() : null,
-                    dosage_form: item.dosage_form_name,
-                    preparation: item.preparation_name
-                };
-            }
-
-            // Add equipment-specific details
-            if (isEquipmentCategory) {
-                formattedItem.equipment_details = {
-                    equipment_category: item.equipment_category_name,
-                    equipment_type: item.equipment_type_name
-                };
-            }
-
-            return formattedItem;
         });
 
         // Get evaluation criteria

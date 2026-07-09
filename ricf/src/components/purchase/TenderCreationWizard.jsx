@@ -418,11 +418,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                   <div className="flex-1">
                     <div className="flex items-center space-x-2 mb-2">
                       <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        item.item_type === 'pharmaceutical' ? 'bg-green-100 text-green-800' :
-                        item.item_type === 'equipment' ? 'bg-blue-100 text-blue-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
                         {item.category}
                       </span>
                     </div>
@@ -448,62 +444,17 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                       )}
                     </div>
 
-                    {/* Pharmaceutical specific details */}
-                    {item.item_type === 'pharmaceutical' && item.pharmaceutical_details && (
+                    {/* Category-specific custom fields (e.g. Drug Name, Strength, Equipment Type) */}
+                    {Array.isArray(item.custom_fields) && item.custom_fields.length > 0 && (
                       <div className="bg-green-50 rounded-lg p-3 mb-2">
-                        <h5 className="text-xs font-semibold text-green-800 mb-2">Pharmaceutical Details</h5>
+                        <h5 className="text-xs font-semibold text-green-800 mb-2">{item.category} Details</h5>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                          {item.pharmaceutical_details.drug_category && (
-                            <div>
-                              <span className="font-medium text-green-700">Drug Category:</span>
-                              <p className="text-green-600">{item.pharmaceutical_details.drug_category}</p>
+                          {item.custom_fields.map((field, idx) => (
+                            <div key={idx}>
+                              <span className="font-medium text-green-700">{field.label}:</span>
+                              <p className="text-green-600">{field.value}</p>
                             </div>
-                          )}
-                          {item.pharmaceutical_details.drug_name && (
-                            <div>
-                              <span className="font-medium text-green-700">Drug Name:</span>
-                              <p className="text-green-600">{item.pharmaceutical_details.drug_name}</p>
-                            </div>
-                          )}
-                          {item.pharmaceutical_details.strength && (
-                            <div>
-                              <span className="font-medium text-green-700">Strength:</span>
-                              <p className="text-green-600">{item.pharmaceutical_details.strength}</p>
-                            </div>
-                          )}
-                          {item.pharmaceutical_details.dosage_form && (
-                            <div>
-                              <span className="font-medium text-green-700">Dosage Form:</span>
-                              <p className="text-green-600">{item.pharmaceutical_details.dosage_form}</p>
-                            </div>
-                          )}
-                          {item.pharmaceutical_details.preparation && (
-                            <div>
-                              <span className="font-medium text-green-700">Preparation:</span>
-                              <p className="text-green-600">{item.pharmaceutical_details.preparation}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Equipment specific details */}
-                    {item.item_type === 'equipment' && item.equipment_details && (
-                      <div className="bg-blue-50 rounded-lg p-3 mb-2">
-                        <h5 className="text-xs font-semibold text-blue-800 mb-2">Equipment Details</h5>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          {item.equipment_details.equipment_category && (
-                            <div>
-                              <span className="font-medium text-blue-700">Equipment Category:</span>
-                              <p className="text-blue-600">{item.equipment_details.equipment_category}</p>
-                            </div>
-                          )}
-                          {item.equipment_details.equipment_type && (
-                            <div>
-                              <span className="font-medium text-blue-700">Equipment Type:</span>
-                              <p className="text-blue-600">{item.equipment_details.equipment_type}</p>
-                            </div>
-                          )}
+                          ))}
                         </div>
                       </div>
                     )}

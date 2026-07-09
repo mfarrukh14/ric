@@ -27,6 +27,7 @@ const EPROC_TABLES = [
     'item_categories', 'item_names',
     'drug_categories', 'drug_names', 'strength_units', 'dosage_forms', 'preparations',
     'equipment_categories', 'equipment_types',
+    'category_fields', 'category_field_options', 'demand_item_field_values',
     'system_configurations', 'audit_logs',
     'technical_evaluations', 'temporary_approved_pools',
     'purchase_department_grievances'
@@ -114,6 +115,15 @@ END TRY BEGIN CATCH END CATCH`;
     }
 
     // ── SQLite function replacements ──────────────────────────────────
+    // datetime('now', '+N minutes'/'-N hours'/etc) → DATEADD(..., GETDATE())
+    // Computed entirely server-side so it's always compared against the same
+    // clock as GETDATE() - mixing this with a JS-computed UTC timestamp caused
+    // expiry comparisons to be off by the server's UTC offset (GETDATE() is
+    // local time despite drivers formatting it with a misleading 'Z' suffix).
+    s = s.replace(
+        /datetime\(\s*'now'\s*,\s*'([+-]?\d+)\s+(second|minute|hour|day)s?'\s*\)/gi,
+        (match, amount, unit) => `DATEADD(${unit.toUpperCase()}, ${parseInt(amount, 10)}, GETDATE())`
+    );
     s = s.replace(/datetime\(\s*'now'\s*,\s*'localtime'\s*\)/gi, 'GETDATE()');
     s = s.replace(/datetime\(\s*'now'\s*\)/gi, 'GETDATE()');
     // datetime(column) in comparisons → just column

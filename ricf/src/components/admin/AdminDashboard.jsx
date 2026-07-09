@@ -702,11 +702,6 @@ const AdminDashboard = () => {
                 <DemandManagement />
             )}
 
-            {/* Category Management Tab */}
-            {activeTab === 'categorization' && (
-                <ItemCategorizationAdmin />
-            )}
-
             {/* 2FA Setup Modal */}
             {show2FASetup && (
                 <TwoFactorSetup onClose={() => setShow2FASetup(false)} />

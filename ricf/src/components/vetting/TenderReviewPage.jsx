@@ -161,11 +161,10 @@ const TenderReviewPage = () => {
     };
 
     const getItemDisplayName = (item) => {
-        return item.custom_item_name || 
-               item.item_name_full || 
-               item.item_name || 
-               item.drug_name || 
-               item.equipment_type_name || 
+        return item.custom_item_name ||
+               item.item_name_full ||
+               item.item_name ||
+               item.custom_field_description ||
                'Unnamed Item';
     };
 

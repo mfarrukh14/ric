@@ -197,10 +197,19 @@ const updateDemandItemsStatus = async (req, res) => {
 };
 
 // Update item statuses and handle fulfillment logic
-// NEW WORKFLOW: Store submits fulfillment -> HOD approval -> Purchase department (if needed)
+// WORKFLOW: Store submits fulfillment -> if every item is fully in stock, the
+// demand is closed out immediately and the creator is notified directly ("stock
+// allotted") - no HOD approval needed. Otherwise it goes to Store HOD approval,
+// then Purchase department if still needed.
+//
+// Note: this does NOT wrap the sequence in an explicit SQL transaction. The
+// mssql adapter hands out a different pooled connection per query, so a raw
+// BEGIN TRANSACTION/COMMIT here would run on different connections and SQL
+// Server would reject it ("mismatching number of BEGIN and COMMIT statements") -
+// that used to make this whole endpoint fail on every submission.
 const updateItemStatuses = async (req, res) => {
     const db = getDatabase();
-    
+
     try {
         const { id } = req.params;
         const { itemUpdates, response } = req.body;
@@ -211,15 +220,9 @@ const updateItemStatuses = async (req, res) => {
             return res.status(400).json({ message: 'Item updates and response are required' });
         }
 
-        // Start transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+        {
+            let anyItemNeedsTender = false;
 
-        try {
             // Update each item's store status
             for (const update of itemUpdates) {
                 const updateItemQuery = `
@@ -309,9 +312,10 @@ const updateItemStatuses = async (req, res) => {
 
                 // Update the original item with calculated values
                 if (shouldGoToTender && finalRequiredQty > 0) {
+                    anyItemNeedsTender = true;
                     // Update item to go to tender with calculated required quantity
                     await new Promise((resolve, reject) => {
-                        db.run(`UPDATE demand_items 
+                        db.run(`UPDATE demand_items
                                 SET quantity = ?,
                                     store_fulfilled = 0,
                                     store_status = 'not_available'
@@ -326,7 +330,7 @@ const updateItemStatuses = async (req, res) => {
                 } else {
                     // Mark as fulfilled by store - no tender needed
                     await new Promise((resolve, reject) => {
-                        db.run(`UPDATE demand_items 
+                        db.run(`UPDATE demand_items
                                 SET store_fulfilled = 1,
                                     store_status = 'available'
                                 WHERE id = ?`, [
@@ -339,51 +343,64 @@ const updateItemStatuses = async (req, res) => {
                 }
             }
 
-            // After store processing, send to STORE HOD for approval before going to purchase
-            // Reset hod_status to NULL since this is a new approval stage (Store HOD, not original department HOD)
-            const demandStatus = 'pending_store_hod_approval';
+            let demandStatus;
+            let updateDemandQuery;
+            let updateDemandParams;
 
-            // Update demand status and store response, reset HOD approval fields for Store HOD stage
-            const updateDemandQuery = `
-                UPDATE demands 
-                SET status = ?, 
-                    store_response = ?, 
-                    store_response_by = ?, 
-                    store_response_at = datetime('now'),
-                    hod_status = NULL,
-                    hod_response_by = NULL,
-                    hod_response_at = NULL,
-                    hod_rejection_reason = NULL
-                WHERE id = ?
-            `;
+            if (!anyItemNeedsTender) {
+                // Everything requested was fully in stock - no HOD approval or
+                // purchase involvement needed. Close the demand out immediately
+                // and let the creator know their stock was allotted directly.
+                demandStatus = 'available';
+                updateDemandQuery = `
+                    UPDATE demands
+                    SET status = ?,
+                        store_response = ?,
+                        store_response_by = ?,
+                        store_response_at = datetime('now')
+                    WHERE id = ?
+                `;
+                updateDemandParams = [demandStatus, response, userId, id];
+            } else {
+                // At least one item needs to go to purchase - send to STORE HOD
+                // for approval first. Reset hod_status to NULL since this is a new
+                // approval stage (Store HOD, not the original department HOD).
+                demandStatus = 'pending_store_hod_approval';
+                updateDemandQuery = `
+                    UPDATE demands
+                    SET status = ?,
+                        store_response = ?,
+                        store_response_by = ?,
+                        store_response_at = datetime('now'),
+                        hod_status = NULL,
+                        hod_response_by = NULL,
+                        hod_response_at = NULL,
+                        hod_rejection_reason = NULL
+                    WHERE id = ?
+                `;
+                updateDemandParams = [demandStatus, response, userId, id];
+            }
 
             await new Promise((resolve, reject) => {
-                db.run(updateDemandQuery, [demandStatus, response, userId, id], (err) => {
+                db.run(updateDemandQuery, updateDemandParams, (err) => {
                     if (err) reject(err);
                     else resolve();
                 });
             });
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            res.json({ 
-                message: 'Fulfillment updated successfully. Sent to HOD for approval.', 
-                status: demandStatus,
-                redirectsToHod: true
-            });
-
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
+            res.json(
+                anyItemNeedsTender
+                    ? {
+                        message: 'Fulfillment updated successfully. Sent to HOD for approval.',
+                        status: demandStatus,
+                        redirectsToHod: true
+                    }
+                    : {
+                        message: 'All items were in stock - demand fulfilled directly, no HOD approval needed.',
+                        status: demandStatus,
+                        redirectsToHod: false
+                    }
+            );
         }
 
     } catch (error) {

@@ -409,15 +409,7 @@ const updateGrievanceStatus = async (req, res) => {
             return res.status(404).json({ message: 'Grievance not found' });
         }
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Update grievance status
             await new Promise((resolve, reject) => {
                 db.run(
@@ -472,28 +464,13 @@ const updateGrievanceStatus = async (req, res) => {
                 console.log(`Grievance ${grievanceId} rejected - keeping technical evaluation as rejected`);
             }
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            res.json({ 
+            res.json({
                 message: 'Grievance status updated successfully',
-                technicalEvaluationUpdated: status === 'resolved' && resolution && 
-                    (resolution.toLowerCase().includes('approved') || 
+                technicalEvaluationUpdated: status === 'resolved' && resolution &&
+                    (resolution.toLowerCase().includes('approved') ||
                      resolution.toLowerCase().includes('favor') ||
                      resolution.toLowerCase().includes('accepted'))
             });
-
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
         }
 
     } catch (error) {
@@ -909,15 +886,7 @@ const scheduleBulkGrievanceMeeting = async (req, res) => {
             details: meetingDetails
         };
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Update all pending grievances with meeting details
             for (const grievance of pendingGrievances) {
                 await new Promise((resolve, reject) => {
@@ -937,14 +906,6 @@ const scheduleBulkGrievanceMeeting = async (req, res) => {
                     );
                 });
             }
-
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
 
             // Get grievance letter attachment if provided
             let grievanceLetterPath = null;
@@ -995,13 +956,6 @@ const scheduleBulkGrievanceMeeting = async (req, res) => {
                 affectedGrievances: pendingGrievances.length,
                 notifiedSuppliers: uniqueSuppliers.size
             });
-
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
         }
 
     } catch (error) {

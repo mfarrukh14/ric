@@ -304,6 +304,30 @@ const PurchaseDepartment = () => {
         }
     };
 
+    const submitForFinanceApproval = async (tender) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiUrl}/demands/purchase/tenders/${tender.id}/submit-for-finance-approval`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                toast.success('Tender submitted for Finance and MS HOD approval');
+                fetchManagableTenders();
+            } else {
+                const errorData = await response.json();
+                toast.error(errorData.message || 'Failed to submit tender for approval');
+            }
+        } catch (error) {
+            console.error('Error submitting tender for finance approval:', error);
+            toast.error('Failed to submit tender for approval');
+        }
+    };
+
     const handleTimeExtension = (tender) => {
         setSelectedTenderForExtension(tender);
         setTimeExtensionForm({
@@ -2381,10 +2405,10 @@ const PurchaseDepartment = () => {
                                                     </div>
                                                     <div className="text-sm text-gray-500">
                                                         Status: <span className={`font-medium ${
-                                                            tender.status === 'hod_approved' ? 'text-green-600' :
-                                                            tender.status === 'active' ? 'text-blue-600' :
+                                                            tender.tender_status === 'active' ? 'text-blue-600' :
+                                                            tender.tender_status === 'vetting_approved' ? 'text-green-600' :
                                                             'text-gray-600'
-                                                        }`}>{tender.status}</span>
+                                                        }`}>{tender.tender_status?.replace(/_/g, ' ')}</span>
                                                     </div>
                                                     <div className="text-sm text-gray-500">
                                                         Created: {new Date(tender.created_at).toLocaleDateString()}
@@ -2453,10 +2477,19 @@ const PurchaseDepartment = () => {
                                                         <span className="text-sm text-gray-400">No extensions</span>
                                                     )}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-y-2">
+                                                    {tender.tender_status === 'vetting_approved' && (
+                                                        <button
+                                                            onClick={() => submitForFinanceApproval(tender)}
+                                                            className="w-full inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                                                        >
+                                                            <i className="fas fa-paper-plane mr-1"></i>
+                                                            Submit for Finance/MS Approval
+                                                        </button>
+                                                    )}
                                                     <button
                                                         onClick={() => handleTimeExtension(tender)}
-                                                        className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                                        className="w-full inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                                                     >
                                                         <i className="fas fa-clock mr-1"></i>
                                                         Manage Time

@@ -187,7 +187,7 @@ const loginSupplier = async (req, res) => {
 // Send email OTP for verification
 const sendEmailOTP = async (req, res) => {
     const { supplierId } = req.body;
-    
+
     if (!supplierId) {
         return res.status(400).json({ error: 'Supplier ID is required' });
     }
@@ -195,29 +195,55 @@ const sendEmailOTP = async (req, res) => {
     const db = getDatabase();
 
     try {
-        // Get supplier email
+        // Get supplier email + company name (business_name may not be saved yet
+        // this early in registration, so fall back to the username)
         const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT business_email FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
+            db.get(
+                `SELECT s.business_email, s.username, bp.business_name
+                 FROM suppliers s
+                 LEFT JOIN supplier_business_profile bp ON bp.supplier_id = s.id
+                 WHERE s.id = ?`,
+                [supplierId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
         });
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
+        const companyName = supplier.business_name || supplier.username;
+
         // Generate OTP
         const otp = generateOTP();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-        // Store OTP in database
+        // Invalidate any previous unverified email OTP for this supplier so a
+        // resend always supersedes the old code rather than leaving it valid
+        // alongside the new one.
         await new Promise((resolve, reject) => {
             db.run(
-                `INSERT OR REPLACE INTO supplier_otp_verifications 
-                 (supplier_id, email, otp_code, otp_type, expires_at, verified) 
-                 VALUES (?, ?, ?, 'email_verification', ?, 0)`,
-                [supplierId, supplier.business_email, otp, expiresAt.toISOString()],
+                `DELETE FROM supplier_otp_verifications
+                 WHERE supplier_id = ? AND otp_type = 'email_verification' AND verified = 0`,
+                [supplierId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+
+        // Store OTP in database - expiry computed by the DB's own clock
+        // (datetime('now', ...) -> GETDATE()-based) so it's never compared
+        // against a different clock/timezone than the verification check below.
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO supplier_otp_verifications
+                 (supplier_id, email, otp_code, otp_type, expires_at, verified)
+                 VALUES (?, ?, ?, 'email_verification', datetime('now', '+2 minutes'), 0)`,
+                [supplierId, supplier.business_email, otp],
                 (err) => {
                     if (err) reject(err);
                     else resolve();
@@ -226,7 +252,7 @@ const sendEmailOTP = async (req, res) => {
         });
 
         // Send OTP email
-        await sendOTPEmail(supplier.business_email, otp);
+        await sendOTPEmail(supplier.business_email, otp, companyName);
 
         res.json({ message: 'OTP sent successfully' });
 
@@ -1169,15 +1195,7 @@ const submitBid = async (req, res) => {
             }
         }
 
-        // Begin transaction
-        await new Promise((resolve, reject) => {
-            db.run('BEGIN TRANSACTION', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        try {
+        {
             // Insert main bid record
             const bidResult = await new Promise((resolve, reject) => {
                 db.run(
@@ -1235,14 +1253,6 @@ const submitBid = async (req, res) => {
 
             console.log('✅ All bid items inserted successfully');
 
-            // Commit transaction
-            await new Promise((resolve, reject) => {
-                db.run('COMMIT', (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
             console.log('🎉 Bid submission completed successfully');
 
             // Return success response
@@ -1258,13 +1268,6 @@ const submitBid = async (req, res) => {
                     items_count: itemsData.length
                 }
             });
-
-        } catch (error) {
-            // Rollback transaction on error
-            await new Promise((resolve) => {
-                db.run('ROLLBACK', () => resolve());
-            });
-            throw error;
         }
 
     } catch (error) {
