@@ -8,12 +8,28 @@ import {
     createUser,
     deleteDepartment,
     deleteCommittee,
-    deleteUser
+    deleteUser,
+    updateHodStatus,
+    updateEprocStatus,
+    getItemCategories,
+    getAllItemNames,
+    createItemCategory,
+    createItemName,
+    updateItemCategory,
+    updateItemName,
+    deleteItemCategory,
+    deleteItemName,
+    getItemNamesByCategory
 } from '../../config/api';
 import Modal from '../modals/Modal';
 import UserListModal from '../modals/UserListModal';
 import DemandManagement from './DemandManagement';
-import { UserPlus, Trash2, Eye, Package } from 'lucide-react';
+import GrievanceDeadlineManagement from './GrievanceDeadlineManagement';
+import SecurityManagement from './SecurityManagement';
+import UnifiedItemManagement from './UnifiedItemManagement';
+import AuditManagement from './AuditManagement';
+import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
+import { UserPlus, Trash2, Eye, Package, Clock, Settings, Shield } from 'lucide-react';
 
 const glassTableClass = `
   w-full table-auto bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg
@@ -25,18 +41,26 @@ const AdminDashboard = () => {
     const [departments, setDepartments] = useState([]);
     const [committees, setCommittees] = useState([]);
     const [users, setUsers] = useState([]);
-    const [activeTab, setActiveTab] = useState('management'); // management or demands
+    const [itemCategories, setItemCategories] = useState([]);
+    const [itemNames, setItemNames] = useState([]);
+    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances, security
     const [showDepartmentModal, setShowDepartmentModal] = useState(false);
     const [showCommitteeModal, setShowCommitteeModal] = useState(false);
     const [showUserModal, setShowUserModal] = useState(false);
     const [showUserListModal, setShowUserListModal] = useState(false);
+    const [showCategoryModal, setShowCategoryModal] = useState(false);
+    const [showItemNameModal, setShowItemNameModal] = useState(false);
+    const [show2FASetup, setShow2FASetup] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState({ id: null, type: '' });
     const [searchTerm, setSearchTerm] = useState('');
 
     const [newName, setNewName] = useState('');
     const [newUser, setNewUser] = useState({
-        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false
+        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false
     });
+    const [newCategory, setNewCategory] = useState({ name: '', description: '' });
+    const [newItemName, setNewItemName] = useState({ categoryId: '', name: '', description: '' });
+    const [editingItem, setEditingItem] = useState(null);
     const [error, setError] = useState('');
     const [createdCredentials, setCreatedCredentials] = useState(null);
 
@@ -44,12 +68,18 @@ const AdminDashboard = () => {
 
     const fetchAll = async () => {
         try {
-            const [d, c, u] = await Promise.all([
-                listDepartments(), listCommittees(), listUsers()
+            const [d, c, u, ic, in_] = await Promise.all([
+                listDepartments(), 
+                listCommittees(), 
+                listUsers(), 
+                getItemCategories(), 
+                getAllItemNames()
             ]);
             setDepartments(d);
             setCommittees(c);
             setUsers(u);
+            setItemCategories(ic);
+            setItemNames(in_);
         } catch (e) {
             setError(e.error || 'Failed to load data');
         }
@@ -92,15 +122,158 @@ const AdminDashboard = () => {
             const { credentials } = await createUser(newUser);
             setCreatedCredentials(credentials);
             setShowUserModal(false);
-            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false });
+            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false });
             fetchAll();
         } catch {
             setError('Error creating user');
         }
     };
 
+    const handleToggleHod = async (userId, isHod) => {
+        try {
+            await updateHodStatus(userId, isHod);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Error updating HOD status');
+        }
+    };
+
+    const handleToggleEproc = async (userId, isEprocUser) => {
+        try {
+            await updateEprocStatus(userId, isEprocUser);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Error updating eProcurement status');
+        }
+    };
+
+    // Item Management Handlers
+    const handleCreateCategory = async (e) => {
+        e.preventDefault();
+        if (!newCategory.name.trim()) {
+            setError('Category name is required');
+            return;
+        }
+        try {
+            await createItemCategory(newCategory);
+            setNewCategory({ name: '', description: '' });
+            setShowCategoryModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to create category');
+        }
+    };
+
+    const handleEditCategory = (category) => {
+        setEditingItem(category);
+        setNewCategory({ name: category.name, description: category.description || '' });
+        setShowCategoryModal(true);
+    };
+
+    const handleUpdateCategory = async (e) => {
+        e.preventDefault();
+        if (!newCategory.name.trim()) {
+            setError('Category name is required');
+            return;
+        }
+        try {
+            await updateItemCategory(editingItem.id, newCategory);
+            setNewCategory({ name: '', description: '' });
+            setEditingItem(null);
+            setShowCategoryModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to update category');
+        }
+    };
+
+    const handleDeleteCategory = async (categoryId) => {
+        if (window.confirm('Are you sure you want to delete this category? This will also delete all associated item names.')) {
+            try {
+                await deleteItemCategory(categoryId);
+                fetchAll();
+            } catch (error) {
+                setError(error.error || 'Failed to delete category');
+            }
+        }
+    };
+
+    const handleCreateItemName = async (e) => {
+        e.preventDefault();
+        if (!newItemName.categoryId || !newItemName.name.trim()) {
+            setError('Category and item name are required');
+            return;
+        }
+        try {
+            await createItemName(newItemName);
+            setNewItemName({ categoryId: '', name: '', description: '' });
+            setShowItemNameModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to create item name');
+        }
+    };
+
+    const handleEditItemName = (item) => {
+        setEditingItem(item);
+        setNewItemName({ 
+            categoryId: item.category_id, 
+            name: item.name, 
+            description: item.description || '' 
+        });
+        setShowItemNameModal(true);
+    };
+
+    const handleUpdateItemName = async (e) => {
+        e.preventDefault();
+        if (!newItemName.categoryId || !newItemName.name.trim()) {
+            setError('Category and item name are required');
+            return;
+        }
+        try {
+            await updateItemName(editingItem.id, newItemName);
+            setNewItemName({ categoryId: '', name: '', description: '' });
+            setEditingItem(null);
+            setShowItemNameModal(false);
+            fetchAll();
+        } catch (error) {
+            setError(error.error || 'Failed to update item name');
+        }
+    };
+
+    const handleDeleteItemName = async (itemId) => {
+        if (window.confirm('Are you sure you want to delete this item name?')) {
+            try {
+                await deleteItemName(itemId);
+                fetchAll();
+            } catch (error) {
+                setError(error.error || 'Failed to delete item name');
+            }
+        }
+    };
+
+    const handleCloseCategoryModal = () => {
+        setShowCategoryModal(false);
+        setEditingItem(null);
+        setNewCategory({ name: '', description: '' });
+        setError('');
+    };
+
+    const handleCloseItemNameModal = () => {
+        setShowItemNameModal(false);
+        setEditingItem(null);
+        setNewItemName({ categoryId: '', name: '', description: '' });
+        setError('');
+    };
+
     const getUsersFor = (id, type) =>
         users.filter(u => type === 'department' ? u.department_id === id : u.committee_id === id);
+
+    // Check if a department already has an HOD
+    const departmentHasHod = (departmentId) => {
+        if (!departmentId) return false;
+        return users.some(u => u.department_id === parseInt(departmentId) && u.is_hod === 1);
+    };
 
     // Users filtered by selected group and search term
     const filteredUsers = selectedGroup.id
@@ -120,7 +293,9 @@ const AdminDashboard = () => {
         }
     }; return (
         <div className="container mx-auto px-4 py-8 space-y-6">
-            <h1 className="text-3xl font-bold text-black">Admin Dashboard</h1>
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold text-black">Admin Dashboard</h1>
+            </div>
 
             {error && (
                 <div className="bg-red-100 border border-red-400 text-red-700 p-4 rounded flex justify-between">
@@ -150,6 +325,16 @@ const AdminDashboard = () => {
                     <span>User Management</span>
                 </button>
                 <button
+                    onClick={() => setActiveTab('items')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'items'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Package size={20} />
+                    <span>Unified Item Management</span>
+                </button>
+                <button
                     onClick={() => setActiveTab('demands')}
                     className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'demands'
                             ? 'bg-white bg-opacity-30 text-black font-medium'
@@ -158,6 +343,38 @@ const AdminDashboard = () => {
                 >
                     <Package size={20} />
                     <span>Demand Management</span>                </button>
+                <button
+                    onClick={() => setActiveTab('grievances')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'grievances'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Clock size={20} />
+                    <span>Grievance Settings</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('security')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'security'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <span>Security Settings</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('audit')}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'audit'
+                            ? 'bg-white bg-opacity-30 text-black font-medium'
+                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
+                        }`}
+                >
+                    <Shield size={20} />
+                    <span>Audit Trail</span>
+                </button>
             </div>
 
             {/* Tab Content */}
@@ -243,9 +460,24 @@ const AdminDashboard = () => {
                 </div>
             )}
 
+            {/* Unified Item Management Tab */}
+            {activeTab === 'items' && (
+                <UnifiedItemManagement />
+            )}
+
             {/* Demand Management Tab */}
             {activeTab === 'demands' && (
                 <DemandManagement />
+            )}
+
+            {/* Grievance Settings Tab */}
+            {activeTab === 'grievances' && (
+                <GrievanceDeadlineManagement />
+            )}
+
+            {/* Security Settings Tab */}
+            {activeTab === 'security' && (
+                <SecurityManagement />
             )}
 
             {/* User List Modal */}
@@ -255,6 +487,8 @@ const AdminDashboard = () => {
                 title={getUserListTitle()}
                 users={filteredUsers}
                 onDelete={handleDelete}
+                onToggleHod={handleToggleHod}
+                onToggleEproc={handleToggleEproc}
                 searchTerm={searchTerm}
                 onSearchChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -306,7 +540,16 @@ const AdminDashboard = () => {
                     />
                     <select
                         value={newUser.departmentId}
-                        onChange={e => setNewUser(u => ({ ...u, departmentId: e.target.value, committeeId: '' }))}
+                        onChange={e => {
+                            const departmentId = e.target.value;
+                            const hasHod = departmentHasHod(departmentId);
+                            setNewUser(u => ({ 
+                                ...u, 
+                                departmentId, 
+                                committeeId: '', 
+                                isHod: hasHod ? false : u.isHod // Reset isHod if department already has one
+                            }));
+                        }}
                         className="w-full p-2 mb-3 border rounded"
                     >
                         <option value="">Select Department</option>
@@ -317,7 +560,7 @@ const AdminDashboard = () => {
                     <div className="text-center my-2 text-gray-600">OR</div>
                     <select
                         value={newUser.committeeId}
-                        onChange={e => setNewUser(u => ({ ...u, committeeId: e.target.value, departmentId: '' }))}
+                        onChange={e => setNewUser(u => ({ ...u, committeeId: e.target.value, departmentId: '', isHod: false }))}
                         className="w-full p-2 mb-3 border rounded"
                     >
                         <option value="">Select Committee</option>
@@ -338,13 +581,130 @@ const AdminDashboard = () => {
                         />
                         <span>Eligible for demand creation</span>
                     </label>
+                    <label className="flex items-center space-x-2 mb-4">
+                        <input
+                            type="checkbox"
+                            checked={!newUser.isFinanceUser}
+                            onChange={e =>
+                                setNewUser(u => ({
+                                    ...u,
+                                    isFinanceUser: !e.target.checked
+                                }))
+                            } className="form-checkbox h-5 w-5 text-green-600"
+                        />
+                        <span>eProcurement User</span>
+                        <span className="text-xs text-gray-500">(Uncheck for Finance-only access)</span>
+                    </label>
+                    {newUser.departmentId && !departmentHasHod(newUser.departmentId) && (
+                        <label className="flex items-center space-x-2 mb-4">
+                            <input
+                                type="checkbox"
+                                checked={newUser.isHod}
+                                onChange={e =>
+                                    setNewUser(u => ({
+                                        ...u,
+                                        isHod: e.target.checked
+                                    }))
+                                } className="form-checkbox h-5 w-5 text-indigo-600"
+                            />
+                            <span>Head of Department (HOD)</span>
+                        </label>
+                    )}
+                    {newUser.departmentId && departmentHasHod(newUser.departmentId) && (
+                        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                            <p className="text-sm text-yellow-800">
+                                <strong>Note:</strong> This department already has a Head of Department (HOD). 
+                                Only one HOD is allowed per department.
+                            </p>
+                        </div>
+                    )}
                     <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Add User</button>
+                </form>
+            </Modal>
+
+            {/* Category Modal */}
+            <Modal 
+                show={showCategoryModal} 
+                onClose={handleCloseCategoryModal} 
+                title={editingItem ? "Edit Category" : "Add Category"}
+            >
+                {error && <div className="mb-4 text-red-600">{error}</div>}
+                <form onSubmit={editingItem ? handleUpdateCategory : handleCreateCategory}>
+                    <input
+                        type="text"
+                        placeholder="Category Name"
+                        value={newCategory.name}
+                        onChange={e => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full p-2 border rounded mb-3"
+                        required
+                    />
+                    <textarea
+                        placeholder="Description (optional)"
+                        value={newCategory.description}
+                        onChange={e => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
+                        className="w-full p-2 border rounded mb-4"
+                        rows="3"
+                    />
+                    <button 
+                        type="submit" 
+                        className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700"
+                    >
+                        {editingItem ? 'Update Category' : 'Create Category'}
+                    </button>
+                </form>
+            </Modal>
+
+            {/* Item Name Modal */}
+            <Modal 
+                show={showItemNameModal} 
+                onClose={handleCloseItemNameModal} 
+                title={editingItem ? "Edit Item Name" : "Add Item Name"}
+            >
+                {error && <div className="mb-4 text-red-600">{error}</div>}
+                <form onSubmit={editingItem ? handleUpdateItemName : handleCreateItemName}>
+                    <select
+                        value={newItemName.categoryId}
+                        onChange={e => setNewItemName(prev => ({ ...prev, categoryId: e.target.value }))}
+                        className="w-full p-2 border rounded mb-3"
+                        required
+                    >
+                        <option value="">Select Category</option>
+                        {itemCategories.map(category => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="text"
+                        placeholder="Item Name"
+                        value={newItemName.name}
+                        onChange={e => setNewItemName(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full p-2 border rounded mb-3"
+                        required
+                    />
+                    <textarea
+                        placeholder="Description (optional)"
+                        value={newItemName.description}
+                        onChange={e => setNewItemName(prev => ({ ...prev, description: e.target.value }))}
+                        className="w-full p-2 border rounded mb-4"
+                        rows="3"
+                    />
+                    <button 
+                        type="submit" 
+                        className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700"
+                    >
+                        {editingItem ? 'Update Item Name' : 'Create Item Name'}
+                    </button>
                 </form>
             </Modal>
 
             {/* Demand Management Tab */}
             {activeTab === 'demands' && (
                 <DemandManagement />
+            )}
+
+            {/* 2FA Setup Modal */}
+            {show2FASetup && (
+                <TwoFactorSetup onClose={() => setShow2FASetup(false)} />
             )}
         </div>
     );

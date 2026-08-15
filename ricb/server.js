@@ -1,34 +1,143 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-require('./src/config/database'); // Initialize database
+const { connectDatabase, ensureDatabaseConnection } = require('./src/config/database');
+const auditCleanupService = require('./src/services/auditCleanupService');
+
 const authRoutes = require('./src/routes/auth');
 const adminRoutes = require('./src/routes/admin');
 const demandRoutes = require('./src/routes/demands');
 const supplierRoutes = require('./src/routes/suppliers');
-const { startTenderScheduler } = require('./src/utils/scheduler');
+const supplierAwardRoutes = require('./src/routes/supplierAwards');
+const technicalEvaluationRoutes = require('./src/routes/technicalEvaluation');
+const grievanceRoutes = require('./src/routes/grievanceRoutes');
+const purchaseGrievanceRoutes = require('./src/routes/purchaseGrievances');
+const financialOpeningRoutes = require('./src/routes/financialOpening');
+const financialGrievanceRoutes = require('./src/routes/financialGrievance');
+const preBidMeetingRoutes = require('./src/routes/preBidMeeting');
+const letterRoutes = require('./src/routes/letters');
+const itemRoutes = require('./src/routes/items');
+const twoFactorRoutes = require('./src/routes/twoFactor');
+const twoFactorEnforcementRoutes = require('./src/routes/twoFactorEnforcement');
+const supplierTwoFactorRoutes = require('./src/routes/supplierTwoFactor');
+const itemCategorizationRoutes = require('./src/routes/itemCategorization');
+const auditRoutes = require('./src/routes/audit');
+const technicalReportsRoutes = require('./src/routes/technicalReports');
+const testEmailRoutes = require('./src/routes/testEmail');
+const debugRoutes = require('./src/routes/debugRoutes');
+const vettingRoutes = require('./src/routes/vetting');
+const demandMergeRoutes = require('./src/routes/demandMerge');
+const marketSurveyRoutes = require('./src/routes/marketSurvey');
+const purchaseOrderRoutes = require('./src/routes/purchaseOrders');
+const hmsStockRoutes = require('./src/routes/hmsStock');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = 5000;
+const HOST = process.env.HOST || '0.0.0.0';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Allow all origins, methods, and headers
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*"); // Allow everyone
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// If the database isn't connected yet, kick off a background reconnect
+// attempt on every request (i.e. every browser refresh) without ever
+// delaying or failing the request itself.
+app.use((req, res, next) => {
+  ensureDatabaseConnection();
+  next();
+});
+
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/demands', demandRoutes);
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/supplier-awards', supplierAwardRoutes);
+app.use('/api/technical-evaluation', technicalEvaluationRoutes);
+app.use('/api/grievances', grievanceRoutes);
+app.use('/api/purchase-grievances', purchaseGrievanceRoutes);
+app.use('/api/financial-opening', financialOpeningRoutes);
+app.use('/api/financial-grievance', financialGrievanceRoutes);
+app.use('/api/pre-bid-meetings', preBidMeetingRoutes);
+app.use('/api/letters', letterRoutes);
+app.use('/api/items', itemRoutes);
+app.use('/api/2fa', twoFactorRoutes);
+app.use('/api/2fa-enforcement', twoFactorEnforcementRoutes);
+app.use('/api/supplier-2fa', supplierTwoFactorRoutes);
+app.use('/api/item-categorization', itemCategorizationRoutes);
+app.use('/api/audit', auditRoutes);
+app.use('/api/technical-reports', technicalReportsRoutes);
+app.use('/api/test-email', testEmailRoutes);
+app.use('/api/debug', debugRoutes);
+app.use('/api/vetting', vettingRoutes);
+app.use('/api/demand-merge', demandMergeRoutes);
+app.use('/api/market-survey', marketSurveyRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
+app.use('/api/hms-stock', hmsStockRoutes);
 
 // Test route
 app.get('/', (req, res) => {
-    res.json({ message: 'Server is running' });
+  res.json({ message: 'Server is running' });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+// Tender expiry processing
+const { markExpiredTendersForOpening } = require('./src/controllers/tenderController');
+setInterval(async () => {
+  try {
+    console.log('Checking for expired tenders...');
+    await markExpiredTendersForOpening();
+  } catch (error) {
+    console.error('Error in automatic tender processing:', error);
+  }
+}, 60000);
+console.log('Automatic tender expiry processing started (checks every minute)');
+
+// Connect DB and start server
+connectDatabase()
+  .then(() => {
+    // Ensure required upload directories exist
+    const fs = require('fs');
+    const path = require('path');
     
-    // Start the tender auto-award scheduler
-    startTenderScheduler();
-});
+    const uploadDirs = [
+      'uploads',
+      'uploads/knockout-documents',
+      'uploads/grievance-minutes',
+      'uploads/market-survey',
+      'tender-documents',
+      'meeting-minutes',
+      'reports',
+      'reports/technical',
+      'grievance-letters',
+      'audit_logs'
+    ];
+    
+    uploadDirs.forEach(dir => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        console.log(`Created directory: ${dir}`);
+      }
+    });
+    
+    // Initialize audit cleanup service with 365 days retention
+    auditCleanupService.initialize(365);
+    
+    app.listen(PORT, HOST, () => {
+      console.log(`Server is running on http://${HOST}:${PORT}`);
+    });
+  });
+// Note: connectDatabase() never rejects - a failed initial connection just
+// leaves the DB disconnected and the server starts anyway; the request
+// middleware above keeps retrying in the background.

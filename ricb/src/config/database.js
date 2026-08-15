@@ -1,24 +1,63 @@
-const sqlite3 = require('sqlite3').verbose();
+const { connect: mssqlConnect, getAdapter } = require('./mssqlAdapter');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
-const dbPath = path.resolve(__dirname, '../../database.sqlite');
-
 let db = null;
+let dbConnected = false;
+let connecting = null;
 
-const connectDatabase = () => {
-    return new Promise((resolve, reject) => {
-        db = new sqlite3.Database(dbPath, (err) => {
-            if (err) {
-                console.error('Error connecting to database:', err);
-                reject(err);
-            } else {
-                console.log('Connected to SQLite database');
-                initializeDatabase().then(() => resolve(db)).catch(reject);
-            }
-        });
-    });
+const getMssqlConfig = () => ({
+    server: process.env.MSSQL_HOST || '58.65.158.107',
+    port: parseInt(process.env.MSSQL_PORT || '9194', 10),
+    database: process.env.MSSQL_DATABASE || 'HMS',
+    user: process.env.MSSQL_USER || 'sa',
+    password: process.env.MSSQL_PASSWORD || 'Pakistan123',
+    options: {
+        encrypt: false,
+        trustServerCertificate: true,
+        enableArithAbort: true,
+    },
+    pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+    connectionTimeout: 5000,
+    requestTimeout: 5000,
+});
+
+// Attempts a connection but never throws/rejects - the caller (server startup,
+// or the per-request retry hook) should be able to proceed regardless of
+// whether the DB is reachable. Guarded so overlapping attempts (e.g. several
+// requests refreshing at once) share a single in-flight connect.
+const connectDatabase = async () => {
+    if (dbConnected) return db;
+    if (connecting) return connecting;
+
+    connecting = (async () => {
+        try {
+            db = await mssqlConnect(getMssqlConfig());
+            dbConnected = true;
+            console.log('Connected to SQL Server (HMS) database');
+            await initializeDatabase();
+        } catch (err) {
+            dbConnected = false;
+            db = null;
+            console.warn('Database unreachable, will keep serving and retry later:', err.message);
+        } finally {
+            connecting = null;
+        }
+        return db;
+    })();
+
+    return connecting;
+};
+
+const isDatabaseConnected = () => dbConnected;
+
+// Fire-and-forget reconnect attempt - safe to call from a request middleware
+// on every page load without ever delaying or failing that request.
+const ensureDatabaseConnection = () => {
+    if (!dbConnected && !connecting) {
+        connectDatabase().catch(() => {});
+    }
 };
 
 const getDatabase = () => {
@@ -28,12 +67,74 @@ const getDatabase = () => {
     return db;
 };
 
+
 const generateCredentials = () => {
     // Generate random username (6 characters)
     const username = crypto.randomBytes(3).toString('hex');
     // Generate random password (8 characters)
     const password = crypto.randomBytes(4).toString('hex');
     return { username, password };
+};
+
+const generateUserBasedCredentials = async (name) => {
+    const db = getDatabase();
+    
+    // Split name into words and get the second word if available, otherwise use the first word
+    const words = name.trim().split(/\s+/);
+    const nameToUse = words.length > 1 ? words[1] : words[0];
+    
+    // Clean the name: remove spaces, special characters, and convert to lowercase
+    const cleanName = nameToUse.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    // Generate a random 2-digit number
+    const randomNumber = Math.floor(Math.random() * 90) + 10; // 10-99
+    
+    // Create base username
+    const baseUsername = `${cleanName}${randomNumber}.ric`;
+    
+    // Check if username already exists and generate a unique one
+    let username = baseUsername;
+    let counter = 1;
+    
+    while (await checkUsernameExists(username)) {
+        username = `${cleanName}${randomNumber + counter}.ric`;
+        counter++;
+        
+        // If we've tried too many combinations, use a random approach
+        if (counter > 100) {
+            const randomSuffix = Math.floor(Math.random() * 9000) + 1000; // 1000-9999
+            username = `${cleanName}${randomSuffix}.ric`;
+            
+            // Final check - if still exists, use timestamp
+            if (await checkUsernameExists(username)) {
+                username = `${cleanName}${Date.now().toString().slice(-4)}.ric`;
+            }
+            break;
+        }
+    }
+    
+    // Generate random password (8 characters)
+    const password = crypto.randomBytes(4).toString('hex');
+    
+    return { username, password };
+};
+
+const checkUsernameExists = async (username) => {
+    const db = getDatabase();
+    
+    return new Promise((resolve, reject) => {
+        db.get(
+            'SELECT username FROM users WHERE username = ?',
+            [username],
+            (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(!!row); // Convert to boolean
+                }
+            }
+        );
+    });
 };
 
 const initializeDatabase = async () => {
@@ -89,12 +190,11 @@ const initializeDatabase = async () => {
                 description TEXT NOT NULL,
                 urgency TEXT NOT NULL DEFAULT 'normal',
                 required_by DATE NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, vetting, vetting_approved, purchase_review, approved, rejected, bidding_open, bidding_closed, awarded
+                status TEXT NOT NULL DEFAULT 'pending', -- pending, available, not_available, purchase_pending, purchase_approved, purchase_rejected, approved, rejected, bidding_open, bidding_closed, awarded
                 store_response TEXT,
                 store_response_at DATETIME,
                 store_response_by INTEGER,
-                vetting_status TEXT DEFAULT 'pending', -- pending, approved, rejected
-                vetting_rejection_reason TEXT,                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
+                purchase_status TEXT DEFAULT 'pending', -- pending, approved, rejected
                 purchase_rejection_reason TEXT,
                 purchase_response TEXT,
                 purchase_response_by INTEGER,
@@ -117,21 +217,301 @@ const initializeDatabase = async () => {
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS suppliers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_name TEXT NOT NULL,
-                company_email TEXT UNIQUE NOT NULL,
+                username TEXT UNIQUE NOT NULL,
+                business_email TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL,
-                company_statement TEXT NOT NULL,
-                company_mission TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected
-                professional_tax_cert TEXT, -- file path
-                ntn_document TEXT, -- file path
-                drug_sale_license TEXT, -- file path
-                pec_document TEXT, -- file path
-                gst_document TEXT, -- file path
+                email_verified INTEGER DEFAULT 0,
+                registration_step INTEGER DEFAULT 0, -- 0: pending initial OTP, 1-6: registration steps
+                status TEXT NOT NULL DEFAULT 'draft', -- draft, pending, approved, rejected
                 rejection_reason TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 approved_at DATETIME,
                 rejected_at DATETIME
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_business_profile table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_business_profile (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER UNIQUE NOT NULL,
+                business_entity_type TEXT,
+                business_category TEXT,
+                business_industry TEXT,
+                description TEXT,
+                iban_number TEXT,
+                business_name TEXT,
+                contact_person_name TEXT,
+                origin_classification TEXT, -- local, international
+                origin_country TEXT,
+                date_of_incorporation DATE,
+                website_url TEXT,
+                business_mobile_number TEXT,
+                business_fax_number TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_registration_bodies table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_registration_bodies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                registration_body TEXT NOT NULL,
+                registration_number TEXT NOT NULL,
+                registration_date DATE NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_documents table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                document_type TEXT NOT NULL, -- professional_tax_cert, ntn_document, drug_sale_license, pec_document, gst_document
+                file_path TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_addresses table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_addresses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                address_type TEXT NOT NULL, -- head_office, branch, warehouse, etc.
+                address_line_1 TEXT NOT NULL,
+                address_line_2 TEXT,
+                city TEXT NOT NULL,
+                state_province TEXT NOT NULL,
+                postal_code TEXT NOT NULL,
+                country TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_ppra_registrations table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_ppra_registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                ppra_type TEXT NOT NULL,
+                registration_number TEXT NOT NULL,
+                registration_date DATE NOT NULL,
+                expiry_date DATE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_past_experience table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_past_experience (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                project_title TEXT NOT NULL,
+                client_name TEXT NOT NULL,
+                work_type TEXT NOT NULL,
+                project_value TEXT,
+                duration TEXT,
+                start_date DATE,
+                end_date DATE,
+                status TEXT DEFAULT 'Completed',
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_client_references table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_client_references (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                contact_name TEXT NOT NULL,
+                organization TEXT NOT NULL,
+                position TEXT,
+                phone TEXT,
+                email TEXT,
+                relationship TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_work_proof_images table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_work_proof_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                image_url TEXT NOT NULL,
+                description TEXT,
+                project_reference TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_resubmission_feedback table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_resubmission_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER NOT NULL,
+                evaluator_id INTEGER NOT NULL,
+                evaluator_name TEXT NOT NULL,
+                failed_criteria TEXT NOT NULL, -- JSON string of failed criteria
+                overall_comment TEXT,
+                requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 1,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                FOREIGN KEY (evaluator_id) REFERENCES users (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_otp_verifications table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_otp_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier_id INTEGER,
+                email TEXT NOT NULL,
+                otp_code TEXT NOT NULL,
+                otp_type TEXT NOT NULL, -- registration, email_verification
+                expires_at DATETIME NOT NULL,
+                verified INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_bids table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_bids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                total_cost DECIMAL(10,2) NOT NULL,
+                proposed_quantity INTEGER NOT NULL,
+                delivery_days INTEGER NOT NULL,
+                bid_comments TEXT,
+                technical_bid_document TEXT, -- file path
+                financial_bid_document TEXT, -- file path
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_bid_items table (for item-specific bid data)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_bid_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bid_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                required_quantity INTEGER NOT NULL,
+                proposed_quantity INTEGER NOT NULL,
+                unit_price DECIMAL(10,2) NOT NULL,
+                total_cost DECIMAL(10,2) NOT NULL,
+                unit TEXT DEFAULT 'pieces',
+                manufacturer_brand TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
+                UNIQUE(bid_id, item_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supply_orders table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supply_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT UNIQUE NOT NULL,
+                demand_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                tender_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                unit_price DECIMAL(10,2) NOT NULL,
+                total_amount DECIMAL(10,2) NOT NULL,
+                delivery_date DATE NOT NULL,
+                order_status TEXT DEFAULT 'pending', -- pending, confirmed, delivered, cancelled
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+      // Create demand_items table (for multiple items per demand)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demand_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                demand_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                estimated_cost DECIMAL(10,2) NOT NULL,
+                remarks TEXT,
+                specifications TEXT,
+                unit TEXT DEFAULT 'pieces',
+                store_available_quantity INTEGER DEFAULT 0,
+                store_status TEXT DEFAULT 'pending', -- pending, available, partial, not_available
+                store_fulfilled INTEGER DEFAULT 0, -- 0 = not fulfilled by store, 1 = fulfilled by store
+                store_response_at DATETIME,
+                store_response_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
+                FOREIGN KEY (store_response_by) REFERENCES users (id) ON DELETE SET NULL
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
@@ -152,13 +532,13 @@ const initializeDatabase = async () => {
                 if (err) reject(err);
                 else resolve();
             });
-        });        // Create demand evaluations table (tracks vetting committee and purchase department evaluations)
+        });        // Create demand evaluations table (tracks purchase department evaluations)
         await new Promise((resolve, reject) => {
             db.run(`CREATE TABLE IF NOT EXISTS demand_evaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 demand_id INTEGER NOT NULL,
                 evaluator_id INTEGER NOT NULL,
-                committee_type TEXT NOT NULL, -- 'vetting' or 'purchase'
+                committee_type TEXT NOT NULL, -- 'purchase'
                 status TEXT NOT NULL, -- approved, rejected
                 comments TEXT,
                 updated_demand_data TEXT, -- JSON string of updated demand fields
@@ -182,62 +562,488 @@ const initializeDatabase = async () => {
                 awarded_supplier_id INTEGER,
                 awarded_bid_amount DECIMAL(10,2),
                 awarded_at DATETIME,
+                technical_evaluation_completed_at DATETIME,
+                technical_evaluation_completed_by INTEGER,
+                evaluation_remarks TEXT,
+                tender_document_path TEXT, -- path to uploaded tender document PDF
+                items_list_path TEXT, -- path to uploaded items list Excel/CSV
                 created_by INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
                 FOREIGN KEY (awarded_supplier_id) REFERENCES suppliers (id) ON DELETE SET NULL,
+                FOREIGN KEY (technical_evaluation_completed_by) REFERENCES users (id) ON DELETE SET NULL,
                 FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE CASCADE,
                 UNIQUE(demand_id)
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
             });
-        });        // Create supplier bids table (confidential bids from suppliers)
+        });        // Create grievance_applications table
         await new Promise((resolve, reject) => {
-            db.run(`CREATE TABLE IF NOT EXISTS supplier_bids (
+            db.run(`CREATE TABLE IF NOT EXISTS grievance_applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tender_id INTEGER NOT NULL,
-                supplier_id INTEGER NOT NULL,
-                bid_amount DECIMAL(10,2),
-                proposed_quantity INTEGER NOT NULL,
-                delivery_days INTEGER NOT NULL,
-                total_cost DECIMAL(10,2),
-                bid_comments TEXT,
-                bid_status TEXT DEFAULT 'submitted', -- submitted, won, lost
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
-                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
-                UNIQUE(tender_id, supplier_id)
-            )`, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });// Create supply orders table (awarded contracts)
-        await new Promise((resolve, reject) => {
-            db.run(`CREATE TABLE IF NOT EXISTS supply_orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_number TEXT UNIQUE NOT NULL,
-                demand_id INTEGER NOT NULL,
+                technical_evaluation_id INTEGER NOT NULL,
                 supplier_id INTEGER NOT NULL,
                 tender_id INTEGER NOT NULL,
-                bid_id INTEGER NOT NULL,
-                item_name TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                unit_price DECIMAL(10,2) NOT NULL,
-                total_amount DECIMAL(10,2) NOT NULL,
-                delivery_date DATE NOT NULL,
-                order_status TEXT DEFAULT 'pending', -- pending, delivered, cancelled
-                pdf_path TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (demand_id) REFERENCES demands (id) ON DELETE CASCADE,
-                FOREIGN KEY (supplier_id) REFERENCES suppliers (id) ON DELETE CASCADE,
-                FOREIGN KEY (tender_id) REFERENCES demand_tenders (id) ON DELETE CASCADE,
-                FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE
+                item_id INTEGER NOT NULL,
+                grievance_reason TEXT NOT NULL,
+                supporting_documents TEXT,
+                requested_action TEXT NOT NULL,
+                additional_comments TEXT,
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'under_review', 'meeting_scheduled', 'resolved', 'rejected')),
+                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_by INTEGER,
+                reviewed_at DATETIME,
+                meeting_scheduled_date DATETIME,
+                meeting_details TEXT,
+                resolution TEXT,
+                FOREIGN KEY (technical_evaluation_id) REFERENCES technical_evaluations(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (reviewed_by) REFERENCES users(id),
+                UNIQUE(technical_evaluation_id, supplier_id)
             )`, (err) => {
                 if (err) reject(err);
                 else resolve();
             });
         });
+
+        // Create financial_openings table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_openings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                scheduled_opening_time DATETIME NOT NULL,
+                scheduled_by INTEGER NOT NULL,
+                status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'opened', 'cancelled')),
+                opened_at DATETIME,
+                opened_by INTEGER,
+                results TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (scheduled_by) REFERENCES users(id),
+                FOREIGN KEY (opened_by) REFERENCES users(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create financial_grievances table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_grievances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                meeting_datetime DATETIME NOT NULL,
+                meeting_location TEXT NOT NULL,
+                custom_message TEXT,
+                grievance_start_date DATETIME NOT NULL,
+                grievance_end_date DATETIME NOT NULL,
+                initiated_by INTEGER NOT NULL,
+                status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+                emails_sent INTEGER DEFAULT 0,
+                total_recipients INTEGER DEFAULT 0,
+                meeting_held_at DATETIME,
+                meeting_minutes_file TEXT,
+                completed_by INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (initiated_by) REFERENCES users(id),
+                FOREIGN KEY (completed_by) REFERENCES users(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create financial_grievance_emails table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_grievance_emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                grievance_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                email_address TEXT NOT NULL,
+                status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'bounced')),
+                error_message TEXT,
+                sent_at DATETIME,
+                opened_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (grievance_id) REFERENCES financial_grievances(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create financial_opening_reports table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS financial_opening_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                report_file_path TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                file_size INTEGER,
+                generated_by INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (generated_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create pre_bid_meetings table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS pre_bid_meetings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                meeting_date DATE NOT NULL,
+                meeting_time TIME NOT NULL,
+                location TEXT NOT NULL,
+                agenda TEXT,
+                description TEXT,
+                scheduled_by INTEGER NOT NULL,
+                scheduled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+                minutes_file_path TEXT,
+                minutes_original_name TEXT,
+                completed_by INTEGER,
+                completed_at DATETIME,
+                cancellation_reason TEXT,
+                cancelled_by INTEGER,
+                cancelled_at DATETIME,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (scheduled_by) REFERENCES users(id),
+                FOREIGN KEY (completed_by) REFERENCES users(id),
+                FOREIGN KEY (cancelled_by) REFERENCES users(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_letters table for letter of intent and letter of award
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_letters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                letter_type TEXT NOT NULL CHECK (letter_type IN ('intent', 'award')),
+                letter_title TEXT NOT NULL,
+                letter_content TEXT,
+                letter_file_path TEXT,
+                letter_original_name TEXT,
+                sent_to TEXT NOT NULL, -- 'all' or 'selected'
+                sent_by INTEGER NOT NULL,
+                sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                total_recipients INTEGER DEFAULT 0,
+                successful_sends INTEGER DEFAULT 0,
+                failed_sends INTEGER DEFAULT 0,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (sent_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create letter_recipients table to track which suppliers received which letters
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS letter_recipients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                letter_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                supplier_email TEXT NOT NULL,
+                supplier_name TEXT NOT NULL,
+                email_status TEXT DEFAULT 'pending' CHECK (email_status IN ('pending', 'sent', 'failed', 'bounced')),
+                sent_at DATETIME,
+                error_message TEXT,
+                opened_at DATETIME,
+                downloaded_at DATETIME,
+                FOREIGN KEY (letter_id) REFERENCES tender_letters(id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                UNIQUE(letter_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_awards table to track awarded bids for supplier dashboard
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_awards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                award_letter_id INTEGER,
+                award_amount DECIMAL(10,2),
+                awarded_items TEXT, -- JSON string of awarded items
+                award_status TEXT DEFAULT 'awarded' CHECK (award_status IN ('awarded', 'contract_signed', 'completed', 'cancelled')),
+                awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                contract_signed_at DATETIME,
+                completion_date DATE,
+                notes TEXT,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                FOREIGN KEY (award_letter_id) REFERENCES tender_letters(id),
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create system_configurations table for admin settings
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS system_configurations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_key TEXT UNIQUE NOT NULL,
+                config_value TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create grievance_deadlines table to track individual tender deadlines
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS grievance_deadlines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                deadline_start DATETIME NOT NULL,
+                deadline_end DATETIME NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                UNIQUE(tender_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create audit_logs table for comprehensive audit trail
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                user_role TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create indexes for audit_logs table for better performance
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_evaluation_criteria table for knockout clauses
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_evaluation_criteria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                criteria_title TEXT NOT NULL,
+                criteria_description TEXT NOT NULL,
+                is_knockout BOOLEAN DEFAULT 1, -- 1 for knockout, 0 for scoring
+                minimum_requirement TEXT,
+                weightage DECIMAL(5,2) DEFAULT 0, -- for scoring criteria
+                created_by INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_status_history table to track tender workflow
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_status_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                status TEXT NOT NULL, -- pending, approved, rejected, published
+                comments TEXT,
+                changed_by INTEGER NOT NULL,
+                changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (changed_by) REFERENCES users(id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_tender_views table to track supplier interactions
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS supplier_tender_views (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                criteria_acknowledged BOOLEAN DEFAULT 0,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                UNIQUE(tender_id, supplier_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create tender_vetting_evaluations table to track vetting committee approval
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS tender_vetting_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                committee_member_id INTEGER NOT NULL,
+                decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject')),
+                comments TEXT,
+                evaluated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                FOREIGN KEY (committee_member_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(tender_id, committee_member_id)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create item_categories table for dropdown categories
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS item_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create item_names table for dropdown item names
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS item_names (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES item_categories (id) ON DELETE CASCADE,
+                UNIQUE(category_id, name)
+            )`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Create supplier_otp_verification table for email and SMS verification
+        await new Promise((resolve, reject) => {
+            // First check if table exists and drop it to recreate with new structure
+            db.run(`DROP TABLE IF EXISTS supplier_otp_verification`, (err) => {
+                if (err) {
+                    console.log('Note: supplier_otp_verification table did not exist, creating new one');
+                }
+                
+                // Create the table with new SMS structure
+                db.run(`CREATE TABLE IF NOT EXISTS supplier_otp_verification (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    phone_number TEXT NOT NULL,
+                    email_otp_code TEXT NOT NULL,
+                    sms_otp_code TEXT NOT NULL,
+                    registration_data TEXT NOT NULL,
+                    file_paths TEXT,
+                    expires_at DATETIME NOT NULL,
+                    email_verified INTEGER DEFAULT 0,
+                    sms_verified INTEGER DEFAULT 0,
+                    is_completed INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    email_verified_at DATETIME,
+                    sms_verified_at DATETIME,
+                    completed_at DATETIME
+                )`, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        });
+
+        // Create indexes for supplier_otp_verification table
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email ON supplier_otp_verification(email)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_phone ON supplier_otp_verification(phone_number)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email_code ON supplier_otp_verification(email_otp_code)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_sms_code ON supplier_otp_verification(sms_otp_code)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_expires ON supplier_otp_verification(expires_at)`, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Run database migrations
+        await runMigrations();
 
         // Check if superadmin exists
         const row = await new Promise((resolve, reject) => {
@@ -260,9 +1066,110 @@ const initializeDatabase = async () => {
                     }
                 );
             });
-        }        // Check if Evaluation Committee exists
+        }
+
+        // Initialize default item categories
+        const defaultCategories = [
+            { name: 'Medical Equipment', description: 'Medical and healthcare equipment' },
+            { name: 'Office Supplies', description: 'General office and administrative supplies' },
+            { name: 'Laboratory Supplies', description: 'Laboratory equipment and consumables' },
+            { name: 'Pharmaceuticals', description: 'Medicines and pharmaceutical products' },
+            { name: 'IT Equipment', description: 'Information technology hardware and software' },
+            { name: 'Maintenance Supplies', description: 'Maintenance and repair supplies' }
+        ];
+
+        for (const category of defaultCategories) {
+            const existingCategory = await new Promise((resolve, reject) => {
+                db.get("SELECT * FROM item_categories WHERE name = ?", [category.name], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (!existingCategory) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'INSERT INTO item_categories (name, description) VALUES (?, ?)',
+                        [category.name, category.description],
+                        (err) => {
+                            if (err) reject(err);
+                            else {
+                                console.log(`Default category '${category.name}' created successfully`);
+                                resolve();
+                            }
+                        }
+                    );
+                });
+            }
+        }
+
+        // Initialize default item names for each category
+        const defaultItems = {
+            'Medical Equipment': [
+                'Stethoscope', 'Blood Pressure Monitor', 'Thermometer', 'Pulse Oximeter', 
+                'ECG Machine', 'X-ray Film', 'Surgical Gloves', 'Face Masks'
+            ],
+            'Office Supplies': [
+                'A4 Paper', 'Pens', 'Pencils', 'Folders', 'Stapler', 'Paper Clips', 
+                'Notebooks', 'Envelopes', 'Printer Cartridges'
+            ],
+            'Laboratory Supplies': [
+                'Test Tubes', 'Petri Dishes', 'Microscope Slides', 'Pipettes', 
+                'Beakers', 'Reagents', 'Lab Coats', 'Safety Goggles'
+            ],
+            'Pharmaceuticals': [
+                'Paracetamol', 'Antibiotics', 'Insulin', 'Vaccines', 'Syringes', 
+                'IV Fluids', 'Bandages', 'Antiseptic Solution'
+            ],
+            'IT Equipment': [
+                'Computers', 'Laptops', 'Printers', 'Keyboards', 'Mouse', 
+                'Monitors', 'Network Cables', 'Software Licenses'
+            ],
+            'Maintenance Supplies': [
+                'Cleaning Chemicals', 'Tools', 'Spare Parts', 'Electrical Items', 
+                'Plumbing Supplies', 'Paint', 'Brushes', 'Safety Equipment'
+            ]
+        };
+
+        for (const [categoryName, items] of Object.entries(defaultItems)) {
+            // Get category ID
+            const category = await new Promise((resolve, reject) => {
+                db.get("SELECT id FROM item_categories WHERE name = ?", [categoryName], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (category) {
+                for (const itemName of items) {
+                    const existingItem = await new Promise((resolve, reject) => {
+                        db.get("SELECT * FROM item_names WHERE category_id = ? AND name = ?", 
+                               [category.id, itemName], (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        });
+                    });
+
+                    if (!existingItem) {
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                'INSERT INTO item_names (category_id, name) VALUES (?, ?)',
+                                [category.id, itemName],
+                                (err) => {
+                                    if (err) reject(err);
+                                    else resolve();
+                                }
+                            );
+                        });
+                    }
+                }
+                console.log(`Default items for '${categoryName}' category initialized`);
+            }
+        }
+
+        // Check if Supplier Evaluation Committee exists
         const committeeRow = await new Promise((resolve, reject) => {
-            db.get("SELECT * FROM committees WHERE name = 'Evaluation Committee'", (err, row) => {
+            db.get("SELECT * FROM committees WHERE name = 'Supplier Evaluation Committee'", (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
@@ -272,11 +1179,155 @@ const initializeDatabase = async () => {
             await new Promise((resolve, reject) => {
                 db.run(
                     'INSERT INTO committees (name) VALUES (?)',
-                    ['Evaluation Committee'],
+                    ['Supplier Evaluation Committee'],
                     (err) => {
                         if (err) reject(err);
                         else {
-                            console.log('Evaluation Committee created successfully');
+                            console.log('Supplier Evaluation Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Purchase Department exists
+        const purchaseDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'Purchase'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!purchaseDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['Purchase'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Purchase Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+        
+        // Check if Store Department exists
+        const storeDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'Store'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!storeDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['Store'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Store Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Finance Department exists
+        const financeDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'Finance'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!financeDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['Finance'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Finance Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if MS Department exists
+        const msDeptRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM departments WHERE name = 'MS'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!msDeptRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO departments (name) VALUES (?)',
+                    ['MS'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('MS Department created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Grievance Committee exists
+        const grievanceCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Grievance Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!grievanceCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Grievance Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Grievance Committee created successfully');
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        // Check if Technical Evaluation Committee exists
+        const technicalCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Technical Evaluation Committee'", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!technicalCommitteeRow) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Technical Evaluation Committee'],
+                    (err) => {
+                        if (err) reject(err);
+                        else {
+                            console.log('Technical Evaluation Committee created successfully');
                             resolve();
                         }
                     }
@@ -308,42 +1359,2272 @@ const initializeDatabase = async () => {
             });
         }
 
-        // Check if Purchase Department exists
-        const purchaseDeptRow = await new Promise((resolve, reject) => {
-            db.get("SELECT * FROM departments WHERE name = 'Purchase'", (err, row) => {
+        // Check if Market Survey Committee exists
+        const marketSurveyCommitteeRow = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM committees WHERE name = 'Market Survey Committee'", (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
         });
 
-        if (!purchaseDeptRow) {
+        if (!marketSurveyCommitteeRow) {
             await new Promise((resolve, reject) => {
                 db.run(
-                    'INSERT INTO departments (name) VALUES (?)',
-                    ['Purchase'],
+                    'INSERT INTO committees (name) VALUES (?)',
+                    ['Market Survey Committee'],
                     (err) => {
                         if (err) reject(err);
                         else {
-                            console.log('Purchase Department created successfully');
+                            console.log('Market Survey Committee created successfully');
                             resolve();
                         }
                     }
                 );
             });
         }
+
+        // Initialize default system configurations
+        const defaultConfigs = [
+            {
+                key: 'grievance_deadline_hours',
+                value: '72',
+                description: 'Number of hours suppliers have to submit grievance after technical evaluation (min: 1 hour, max: 720 hours/30 days)'
+            }
+        ];
+
+        for (const config of defaultConfigs) {
+            const existingConfig = await new Promise((resolve, reject) => {
+                db.get("SELECT * FROM system_configurations WHERE config_key = ?", [config.key], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+
+            if (!existingConfig) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        'INSERT INTO system_configurations (config_key, config_value, description) VALUES (?, ?, ?)',
+                        [config.key, config.value, config.description],
+                        (err) => {
+                            if (err) reject(err);
+                            else {
+                                console.log(`Default configuration '${config.key}' created successfully`);
+                                resolve();
+                            }
+                        }
+                    );
+                });
+            }
+        }
     } catch (err) {
         console.error('Error initializing database:', err);
-        throw err;
     }
 };
 
-// Initialize the database connection
-connectDatabase().catch(err => {
-    console.error('Failed to initialize database:', err);
-    process.exit(1);
+// Database migrations
+const runMigrations = async () => {
+    try {
+        console.log('Running database migrations...');
+        
+        // Migration 1: Add store_fulfilled column to demand_items table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demand_items)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                // Check if store_fulfilled column exists
+                const hasStoreFulfilledColumn = columns.some(col => col.name === 'store_fulfilled');
+                
+                if (!hasStoreFulfilledColumn) {
+                    console.log('Adding store_fulfilled column to demand_items table...');
+                    db.run("ALTER TABLE demand_items ADD COLUMN store_fulfilled INTEGER DEFAULT 0", (err) => {
+                        if (err) {
+                            console.error('Error adding store_fulfilled column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added store_fulfilled column');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('store_fulfilled column already exists');
+                    resolve();
+                }
+            });
+        });        // Migration 2: Create supplier_bid_items table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_bid_items'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating supplier_bid_items table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_bid_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bid_id INTEGER NOT NULL,
+                        item_id INTEGER NOT NULL,
+                        item_name TEXT NOT NULL,
+                        required_quantity INTEGER NOT NULL,
+                        proposed_quantity INTEGER NOT NULL,
+                        unit_price DECIMAL(10,2) NOT NULL,
+                        total_cost DECIMAL(10,2) NOT NULL,
+                        unit TEXT DEFAULT 'pieces',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids (id) ON DELETE CASCADE,
+                        FOREIGN KEY (item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
+                        UNIQUE(bid_id, item_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating supplier_bid_items table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created supplier_bid_items table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('supplier_bid_items table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 3: Create financial_openings table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='financial_openings'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating financial_openings table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS financial_openings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        scheduled_opening_time DATETIME NOT NULL,
+                        scheduled_by INTEGER NOT NULL,
+                        status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'opened', 'cancelled')),
+                        opened_at DATETIME,
+                        opened_by INTEGER,
+                        results TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (scheduled_by) REFERENCES users(id),
+                        FOREIGN KEY (opened_by) REFERENCES users(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating financial_openings table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created financial_openings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('financial_openings table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 4: Create system_configurations table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='system_configurations'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating system_configurations table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS system_configurations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        config_key TEXT UNIQUE NOT NULL,
+                        config_value TEXT NOT NULL,
+                        description TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating system_configurations table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created system_configurations table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('system_configurations table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 5: Create grievance_deadlines table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='grievance_deadlines'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating grievance_deadlines table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS grievance_deadlines (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        deadline_start DATETIME NOT NULL,
+                        deadline_end DATETIME NOT NULL,
+                        is_active INTEGER DEFAULT 1,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating grievance_deadlines table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created grievance_deadlines table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('grievance_deadlines table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 5a: Create pre_bid_meetings table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='pre_bid_meetings'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating pre_bid_meetings table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS pre_bid_meetings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        meeting_date DATE NOT NULL,
+                        meeting_time TIME NOT NULL,
+                        location TEXT NOT NULL,
+                        agenda TEXT,
+                        description TEXT,
+                        scheduled_by INTEGER NOT NULL,
+                        scheduled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+                        minutes_file_path TEXT,
+                        minutes_original_name TEXT,
+                        completed_by INTEGER,
+                        completed_at DATETIME,
+                        cancellation_reason TEXT,
+                        cancelled_by INTEGER,
+                        cancelled_at DATETIME,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (scheduled_by) REFERENCES users(id),
+                        FOREIGN KEY (completed_by) REFERENCES users(id),
+                        FOREIGN KEY (cancelled_by) REFERENCES users(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating pre_bid_meetings table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created pre_bid_meetings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('pre_bid_meetings table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 4: Add new columns to demand_items table for categories and fiscal year costs
+        await new Promise((resolve, reject) => {
+            // Check if new columns exist
+            db.get("PRAGMA table_info(demand_items)", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                // Get all columns
+                db.all("PRAGMA table_info(demand_items)", [], (err, columns) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    
+                    const columnNames = columns.map(col => col.name);
+                    const hasNewColumns = columnNames.includes('category_id') && 
+                                          columnNames.includes('item_name_id') && 
+                                          columnNames.includes('prev_year_cost') && 
+                                          columnNames.includes('current_year_cost');
+                    
+                    if (!hasNewColumns) {
+                        console.log('Adding new columns to demand_items table...');
+                        
+                        // Add columns one by one
+                        const addColumn = (columnDef) => {
+                            return new Promise((resolveCol, rejectCol) => {
+                                db.run(`ALTER TABLE demand_items ADD COLUMN ${columnDef}`, (err) => {
+                                    if (err && !err.message.includes('duplicate column name')) {
+                                        rejectCol(err);
+                                    } else {
+                                        resolveCol();
+                                    }
+                                });
+                            });
+                        };
+                        
+                        Promise.all([
+                            addColumn('category_id INTEGER'),
+                            addColumn('item_name_id INTEGER'),
+                            addColumn('prev_year_cost DECIMAL(10,2) DEFAULT 0'),
+                            addColumn('current_year_cost DECIMAL(10,2) DEFAULT 0'),
+                            addColumn('stock_in_hand INTEGER DEFAULT 0'),
+                            addColumn('consumption_type TEXT DEFAULT "monthly"'),
+                            addColumn('consumption_amount INTEGER DEFAULT 0'),
+                            addColumn('calculated_required_qty INTEGER DEFAULT 0'),
+                            addColumn('store_estimated_cost DECIMAL(10,2) DEFAULT 0'),
+                            addColumn('removal_reason TEXT'),
+                            addColumn('is_removed INTEGER DEFAULT 0')
+                        ]).then(() => {
+                            console.log('Successfully added new columns to demand_items table');
+                            resolve();
+                        }).catch((err) => {
+                            console.error('Error adding columns to demand_items table:', err);
+                            reject(err);
+                        });
+                    } else {
+                        console.log('demand_items table already has new columns');
+                        resolve();
+                    }
+                });
+            });
+        });
+
+        // Migration 6: Add 2FA columns to users table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(users)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const has2FAColumns = columnNames.includes('two_factor_secret') && 
+                                      columnNames.includes('two_factor_enabled') && 
+                                      columnNames.includes('backup_codes');
+                
+                if (!has2FAColumns) {
+                    console.log('Adding 2FA columns to users table...');
+                    
+                    const addColumn = (columnDef) => {
+                        return new Promise((resolveCol, rejectCol) => {
+                            db.run(`ALTER TABLE users ADD COLUMN ${columnDef}`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    rejectCol(err);
+                                } else {
+                                    resolveCol();
+                                }
+                            });
+                        });
+                    };
+                    
+                    Promise.all([
+                        addColumn('two_factor_secret TEXT'),
+                        addColumn('two_factor_enabled INTEGER DEFAULT 0'),
+                        addColumn('backup_codes TEXT')
+                    ]).then(() => {
+                        console.log('Successfully added 2FA columns to users table');
+                        resolve();
+                    }).catch((err) => {
+                        console.error('Error adding 2FA columns to users table:', err);
+                        reject(err);
+                    });
+                } else {
+                    console.log('users table already has 2FA columns');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 7: Create supplier_otp_verification table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_otp_verification'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating supplier_otp_verification table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_otp_verification (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        email TEXT NOT NULL,
+                        phone_number TEXT NOT NULL,
+                        email_otp_code TEXT NOT NULL,
+                        sms_otp_code TEXT NOT NULL,
+                        registration_data TEXT NOT NULL,
+                        file_paths TEXT,
+                        expires_at DATETIME NOT NULL,
+                        email_verified INTEGER DEFAULT 0,
+                        sms_verified INTEGER DEFAULT 0,
+                        is_completed INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        email_verified_at DATETIME,
+                        sms_verified_at DATETIME,
+                        completed_at DATETIME
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating supplier_otp_verification table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created supplier_otp_verification table');
+                            
+                            // Create indexes after table creation
+                            Promise.all([
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email ON supplier_otp_verification(email)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_phone ON supplier_otp_verification(phone_number)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_email_code ON supplier_otp_verification(email_otp_code)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_sms_code ON supplier_otp_verification(sms_otp_code)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_otp_expires ON supplier_otp_verification(expires_at)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                })
+                            ]).then(() => {
+                                console.log('Successfully created indexes for supplier_otp_verification table');
+                                resolve();
+                            }).catch(reject);
+                        }
+                    });
+                } else {
+                    // Table exists, check if it has the new SMS columns
+                    db.all("PRAGMA table_info(supplier_otp_verification)", [], (err, columns) => {
+                        if (err) {
+                            reject(err);
+                            return;
+                        }
+                        
+                        const columnNames = columns.map(col => col.name);
+                        const hasSMSColumns = columnNames.includes('phone_number') && 
+                                             columnNames.includes('email_otp_code') && 
+                                             columnNames.includes('sms_otp_code') &&
+                                             columnNames.includes('email_verified') &&
+                                             columnNames.includes('sms_verified');
+                        
+                        if (!hasSMSColumns) {
+                            console.log('Updating supplier_otp_verification table for SMS support...');
+                            
+                            // Drop and recreate table to add SMS support
+                            db.run(`DROP TABLE IF EXISTS supplier_otp_verification`, (err) => {
+                                if (err) {
+                                    reject(err);
+                                    return;
+                                }
+                                
+                                // Recreate with new structure
+                                db.run(`CREATE TABLE supplier_otp_verification (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    email TEXT NOT NULL,
+                                    phone_number TEXT NOT NULL,
+                                    email_otp_code TEXT NOT NULL,
+                                    sms_otp_code TEXT NOT NULL,
+                                    registration_data TEXT NOT NULL,
+                                    file_paths TEXT,
+                                    expires_at DATETIME NOT NULL,
+                                    email_verified INTEGER DEFAULT 0,
+                                    sms_verified INTEGER DEFAULT 0,
+                                    is_completed INTEGER DEFAULT 0,
+                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                    email_verified_at DATETIME,
+                                    sms_verified_at DATETIME,
+                                    completed_at DATETIME
+                                )`, (err) => {
+                                    if (err) {
+                                        reject(err);
+                                    } else {
+                                        console.log('Successfully updated supplier_otp_verification table');
+                                        resolve();
+                                    }
+                                });
+                            });
+
+                            // (Knockout clause migrations moved out of callback scope below)
+                        } else {
+                            console.log('supplier_otp_verification table already has SMS columns');
+                            resolve();
+                        }
+                    });
+                }
+            });
+        });
+
+        // Migration 8: Add contact_person_name to supplier_business_profile table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(supplier_business_profile)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasContactPersonName = columnNames.includes('contact_person_name');
+                
+                if (!hasContactPersonName) {
+                    console.log('Adding contact_person_name column to supplier_business_profile table...');
+                    db.run("ALTER TABLE supplier_business_profile ADD COLUMN contact_person_name TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding contact_person_name column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added contact_person_name column');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('contact_person_name column already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration X1: Create supplier_knockout_acknowledgments table (supplier checks knockout clauses before bid)
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_knockout_acknowledgments'", [], (err, row) => {
+                if (err) { reject(err); return; }
+                if (!row) {
+                    console.log('Creating supplier_knockout_acknowledgments table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_knockout_acknowledgments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        acknowledged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        all_clauses_checked INTEGER DEFAULT 0,
+                        checklist JSON,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                        UNIQUE(tender_id, supplier_id)
+                    )`, (err2) => {
+                        if (err2) { console.error('Error creating supplier_knockout_acknowledgments table:', err2); reject(err2); }
+                        else { console.log('Successfully created supplier_knockout_acknowledgments table'); resolve(); }
+                    });
+                } else { console.log('supplier_knockout_acknowledgments table already exists'); resolve(); }
+            });
+        });
+
+        // Migration 8a: Add tender opening columns and Purchase HOD approval fields to demand_tenders
+        await new Promise((resolve, reject) => {
+            console.log('Adding tender opening columns and Purchase HOD approval fields to demand_tenders table...');
+            
+            db.all("PRAGMA table_info(demand_tenders)", [], (err, columns) => {
+                if (err) { 
+                    console.error('Error reading demand_tenders schema:', err); 
+                    resolve(); 
+                    return; 
+                }
+                
+                const columnNames = columns.map(c => c.name);
+                const additions = [];
+                
+                if (!columnNames.includes('opened_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN opened_by INTEGER');
+                }
+                if (!columnNames.includes('opened_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN opened_at DATETIME');
+                }
+                if (!columnNames.includes('tender_number')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN tender_number TEXT');
+                }
+                if (!columnNames.includes('purchase_hod_response_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN purchase_hod_response_by INTEGER');
+                }
+                if (!columnNames.includes('purchase_hod_response_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN purchase_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('finance_hod_response_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_response_by INTEGER');
+                }
+                if (!columnNames.includes('finance_hod_response_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('finance_hod_status')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN finance_hod_status TEXT DEFAULT \'pending\'');
+                }
+                if (!columnNames.includes('ms_hod_response_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_response_by INTEGER');
+                }
+                if (!columnNames.includes('ms_hod_response_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_response_at DATETIME');
+                }
+                if (!columnNames.includes('ms_hod_status')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN ms_hod_status TEXT DEFAULT \'pending\'');
+                }
+                if (!columnNames.includes('published_at')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN published_at DATETIME');
+                }
+                if (!columnNames.includes('published_by')) {
+                    additions.push('ALTER TABLE demand_tenders ADD COLUMN published_by INTEGER');
+                }
+                
+                if (additions.length === 0) { 
+                    console.log('Tender opening columns, tender_number, Purchase HOD, Finance HOD, MS HOD approval fields, and publishing fields already exist in demand_tenders table');
+                    resolve(); 
+                    return; 
+                }
+                
+                const runNext = () => {
+                    if (additions.length === 0) { 
+                        console.log('Successfully added tender opening columns, tender_number, Purchase HOD, Finance HOD, MS HOD approval fields, and publishing fields to demand_tenders table');
+                        
+                        // Populate tender_number for existing tenders
+                        db.all('SELECT id, created_at FROM demand_tenders WHERE tender_number IS NULL', [], (err, rows) => {
+                            if (err) {
+                                console.error('Error fetching tenders without tender_number:', err);
+                                resolve();
+                                return;
+                            }
+                            
+                            if (rows.length === 0) {
+                                console.log('All tenders already have tender_number assigned');
+                                
+                                // Create unique index for tender_number if no tenders to populate
+                                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_number_unique ON demand_tenders(tender_number)', (indexErr) => {
+                                    if (indexErr) {
+                                        console.error('Error creating unique index for tender_number:', indexErr);
+                                    } else {
+                                        console.log('Created unique index for tender_number');
+                                    }
+                                    resolve();
+                                });
+                                return;
+                            }
+                            
+                            console.log(`Populating tender_number for ${rows.length} existing tenders...`);
+                            
+                            let processed = 0;
+                            rows.forEach((tender, index) => {
+                                const date = new Date(tender.created_at);
+                                const year = date.getFullYear();
+                                const month = String(date.getMonth() + 1).padStart(2, '0');
+                                const day = String(date.getDate()).padStart(2, '0');
+                                const sequentialNumber = String(index + 1).padStart(3, '0');
+                                const tenderNumber = `RIC-${day}${month}${year}-${sequentialNumber}`;
+                                
+                                db.run('UPDATE demand_tenders SET tender_number = ? WHERE id = ?', [tenderNumber, tender.id], (updateErr) => {
+                                    if (updateErr) {
+                                        console.error(`Error updating tender_number for tender ${tender.id}:`, updateErr);
+                                    } else {
+                                        console.log(`Updated tender ${tender.id} with number ${tenderNumber}`);
+                                    }
+                                    
+                                    processed++;
+                                    if (processed === rows.length) {
+                                        console.log('Finished populating tender_number for existing tenders');
+                                        
+                                        // Create unique index for tender_number
+                                        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_number_unique ON demand_tenders(tender_number)', (indexErr) => {
+                                            if (indexErr) {
+                                                console.error('Error creating unique index for tender_number:', indexErr);
+                                            } else {
+                                                console.log('Created unique index for tender_number');
+                                            }
+                                            resolve();
+                                        });
+                                    }
+                                });
+                            });
+                        });
+                        return; 
+                    }
+                    const stmt = additions.shift();
+                    db.run(stmt, (alterErr) => {
+                        if (alterErr && !alterErr.message.includes('duplicate column name')) {
+                            console.error('Error adding column to demand_tenders:', alterErr);
+                        } else {
+                            console.log('Added column to demand_tenders:', stmt);
+                        }
+                        runNext();
+                    });
+                };
+                runNext();
+            });
+        });
+
+        // Migration X2: Ensure technical_evaluations table exists with extended columns (knockout + scoring)
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='technical_evaluations'", [], (err, row) => {
+                if (err) { console.error('Error checking technical_evaluations existence:', err); resolve(); return; }
+                if (!row) {
+                    console.log('technical_evaluations table not found; creating with full schema...');
+                    db.run(`CREATE TABLE IF NOT EXISTS technical_evaluations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        item_id INTEGER NOT NULL,
+                        bid_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('approved','rejected')),
+                        rejection_reason TEXT,
+                        evaluated_by INTEGER NOT NULL,
+                        evaluated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        knockout_clauses_checked INTEGER DEFAULT 0,
+                        knockout_clause_failures TEXT,
+                        grievance_marked INTEGER DEFAULT 0,
+                        total_score REAL,
+                        scoring_breakdown TEXT,
+                        evaluation_status TEXT DEFAULT 'pending',
+                        completed_at TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (evaluated_by) REFERENCES users(id),
+                        UNIQUE(tender_id, item_id, bid_id)
+                    )`, (createErr) => {
+                        if (createErr) { console.error('Error creating technical_evaluations table:', createErr); }
+                        else { console.log('technical_evaluations table created with extended schema'); }
+                        resolve();
+                    });
+                    return;
+                }
+                // Table exists; inspect columns then add missing ones
+                db.all("PRAGMA table_info(technical_evaluations)", [], (err2, columns) => {
+                    if (err2) { console.error('Error reading technical_evaluations schema:', err2); resolve(); return; }
+                    const columnNames = columns.map(c => c.name);
+                    const additions = [];
+                    if (!columnNames.includes('knockout_clauses_checked')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN knockout_clauses_checked INTEGER DEFAULT 0');
+                    if (!columnNames.includes('knockout_clause_failures')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN knockout_clause_failures TEXT');
+                    if (!columnNames.includes('grievance_marked')) additions.push("ALTER TABLE technical_evaluations ADD COLUMN grievance_marked INTEGER DEFAULT 0");
+                    if (!columnNames.includes('total_score')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN total_score REAL');
+                    if (!columnNames.includes('scoring_breakdown')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN scoring_breakdown TEXT');
+                    if (!columnNames.includes('evaluation_status')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN evaluation_status TEXT DEFAULT "pending"');
+                    if (!columnNames.includes('completed_at')) additions.push('ALTER TABLE technical_evaluations ADD COLUMN completed_at TEXT');
+                    if (additions.length === 0) { resolve(); return; }
+                    const runNext = () => {
+                        if (additions.length === 0) { resolve(); return; }
+                        const stmt = additions.shift();
+                        db.run(stmt, (alterErr) => {
+                            if (alterErr && !alterErr.message.includes('duplicate column name')) {
+                                console.error('Error running migration for technical_evaluations:', alterErr);
+                                reject(alterErr);
+                            } else {
+                                runNext();
+                            }
+                        });
+                    };
+                    runNext();
+                });
+            });
+        });
+
+        // Migration 9: Create detailed item categorization tables
+        await new Promise((resolve, reject) => {
+            console.log('Creating detailed item categorization tables...');
+            
+            // Create drug categories table (for medicine items)
+            db.run(`CREATE TABLE IF NOT EXISTS drug_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating drug_categories table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created drug_categories table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create drug names table
+            db.run(`CREATE TABLE IF NOT EXISTS drug_names (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                drug_category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (drug_category_id) REFERENCES drug_categories (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating drug_names table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created drug_names table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create strength units table
+            db.run(`CREATE TABLE IF NOT EXISTS strength_units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                abbreviation TEXT NOT NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating strength_units table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created strength_units table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create dosage forms table
+            db.run(`CREATE TABLE IF NOT EXISTS dosage_forms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating dosage_forms table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created dosage_forms table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create preparations table
+            db.run(`CREATE TABLE IF NOT EXISTS preparations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating preparations table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created preparations table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create equipment categories table (for medical equipment items)
+            db.run(`CREATE TABLE IF NOT EXISTS equipment_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating equipment_categories table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created equipment_categories table');
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            // Create equipment types table
+            db.run(`CREATE TABLE IF NOT EXISTS equipment_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                equipment_category_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (equipment_category_id) REFERENCES equipment_categories (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating equipment_types table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created equipment_types table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 10: Update demand_items table structure for detailed categorization
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demand_items)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const needsDetailedColumns = !columnNames.includes('drug_category_id');
+                
+                if (needsDetailedColumns) {
+                    console.log('Adding detailed categorization columns to demand_items table...');
+                    
+                    // Add all new columns for detailed item categorization
+                    const alterQueries = [
+                        "ALTER TABLE demand_items ADD COLUMN drug_category_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN drug_name_id INTEGER", 
+                        "ALTER TABLE demand_items ADD COLUMN strength_value DECIMAL(10,2)",
+                        "ALTER TABLE demand_items ADD COLUMN strength_unit_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN dosage_form_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN preparation_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN equipment_category_id INTEGER",
+                        "ALTER TABLE demand_items ADD COLUMN equipment_type_id INTEGER"
+                    ];
+                    
+                    let completed = 0;
+                    
+                    alterQueries.forEach((query, index) => {
+                        db.run(query, (err) => {
+                            if (err) {
+                                console.error(`Error executing query ${query}:`, err);
+                                reject(err);
+                            } else {
+                                completed++;
+                                if (completed === alterQueries.length) {
+                                    console.log('Successfully added detailed categorization columns');
+                                    resolve();
+                                }
+                            }
+                        });
+                    });
+                } else {
+                    console.log('Detailed categorization columns already exist');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 12: Create audit_logs table if it doesn't exist
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_logs'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating audit_logs table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        user_role TEXT NOT NULL,
+                        user_name TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        details TEXT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating audit_logs table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created audit_logs table');
+                            
+                            // Create indexes after table creation
+                            Promise.all([
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                }),
+                                new Promise((resolveIdx, rejectIdx) => {
+                                    db.run(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`, (err) => {
+                                        if (err) rejectIdx(err);
+                                        else resolveIdx();
+                                    });
+                                })
+                            ]).then(() => {
+                                console.log('Successfully created indexes for audit_logs table');
+                                resolve();
+                            }).catch(reject);
+                        }
+                    });
+                } else {
+                    console.log('audit_logs table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 11: Insert default drug categories and related data
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default drug categories...');
+            
+            const drugCategories = [
+                { name: 'Nitrates', description: 'Vasodilators for heart conditions' },
+                { name: 'Beta-blockers', description: 'Heart rate and blood pressure medications' },
+                { name: 'Calcium-antagonists', description: 'Calcium channel blockers' },
+                { name: 'ACE inhibitors', description: 'Angiotensin-converting enzyme inhibitors' },
+                { name: 'Antibiotics', description: 'Anti-bacterial medications' },
+                { name: 'Analgesics', description: 'Pain relief medications' },
+                { name: 'Anti-inflammatory', description: 'Anti-inflammatory medications' }
+            ];
+            
+            let insertedCategories = 0;
+            
+            const insertNextDrugCategory = (index) => {
+                if (index >= drugCategories.length) {
+                    console.log('Successfully inserted default drug categories');
+                    resolve();
+                    return;
+                }
+                
+                const category = drugCategories[index];
+                db.run(
+                    'INSERT OR IGNORE INTO drug_categories (name, description) VALUES (?, ?)',
+                    [category.name, category.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting drug category ${category.name}:`, err);
+                        }
+                        insertedCategories++;
+                        // Continue with next category regardless of error
+                        insertNextDrugCategory(index + 1);
+                    }
+                );
+            };
+            
+            insertNextDrugCategory(0);
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default drug names...');
+            
+            // First get the drug category IDs
+            db.all('SELECT id, name FROM drug_categories', [], (err, categories) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const categoryMap = {};
+                categories.forEach(cat => {
+                    categoryMap[cat.name] = cat.id;
+                });
+                
+                const drugNames = [
+                    { category: 'Nitrates', name: 'Glyceryl trinitrate', description: 'Short-acting nitrate' },
+                    { category: 'Nitrates', name: 'Isosorbide dinitrate', description: 'Long-acting nitrate' },
+                    { category: 'Beta-blockers', name: 'Propranolol', description: 'Non-selective beta blocker' },
+                    { category: 'Beta-blockers', name: 'Metoprolol', description: 'Selective beta blocker' },
+                    { category: 'Calcium-antagonists', name: 'Amlodipine', description: 'Calcium channel blocker' },
+                    { category: 'Calcium-antagonists', name: 'Nifedipine', description: 'Calcium channel blocker' },
+                    { category: 'ACE inhibitors', name: 'Lisinopril', description: 'ACE inhibitor for hypertension' },
+                    { category: 'ACE inhibitors', name: 'Enalapril', description: 'ACE inhibitor for heart failure' }
+                ];
+                
+                let insertedNames = 0;
+                
+                drugNames.forEach(drug => {
+                    const categoryId = categoryMap[drug.category];
+                    if (categoryId) {
+                        db.run(
+                            'INSERT OR IGNORE INTO drug_names (drug_category_id, name, description) VALUES (?, ?, ?)',
+                            [categoryId, drug.name, drug.description],
+                            (err) => {
+                                if (err) {
+                                    console.error(`Error inserting drug name ${drug.name}:`, err);
+                                } else {
+                                    insertedNames++;
+                                    if (insertedNames === drugNames.length) {
+                                        console.log('Successfully inserted default drug names');
+                                        resolve();
+                                    }
+                                }
+                            }
+                        );
+                    }
+                });
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default strength units...');
+            
+            const strengthUnits = [
+                { name: 'milligram', abbreviation: 'mg' },
+                { name: 'gram', abbreviation: 'g' },
+                { name: 'microgram', abbreviation: 'mcg' },
+                { name: 'unit', abbreviation: 'IU' },
+                { name: 'milliliter', abbreviation: 'ml' },
+                { name: 'percentage', abbreviation: '%' }
+            ];
+            
+            let insertedUnits = 0;
+            
+            strengthUnits.forEach(unit => {
+                db.run(
+                    'INSERT OR IGNORE INTO strength_units (name, abbreviation) VALUES (?, ?)',
+                    [unit.name, unit.abbreviation],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting strength unit ${unit.name}:`, err);
+                        } else {
+                            insertedUnits++;
+                            if (insertedUnits === strengthUnits.length) {
+                                console.log('Successfully inserted default strength units');
+                                resolve();
+                            }
+                        }
+                    }
+                );
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default dosage forms...');
+            
+            const dosageForms = [
+                { name: 'Tablet', description: 'Solid dosage form' },
+                { name: 'Syrup', description: 'Liquid dosage form' },
+                { name: 'Injection', description: 'Injectable form' },
+                { name: 'Ampule', description: 'Glass container for injection' },
+                { name: 'Sublingual tablet', description: 'Under-tongue tablet' },
+                { name: 'Capsule', description: 'Encapsulated form' },
+                { name: 'Cream', description: 'Topical form' },
+                { name: 'Ointment', description: 'Topical semi-solid form' }
+            ];
+            
+            let insertedForms = 0;
+            
+            const insertNextForm = (index) => {
+                if (index >= dosageForms.length) {
+                    console.log('Successfully inserted default dosage forms');
+                    resolve();
+                    return;
+                }
+                
+                const form = dosageForms[index];
+                db.run(
+                    'INSERT OR IGNORE INTO dosage_forms (name, description) VALUES (?, ?)',
+                    [form.name, form.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting dosage form ${form.name}:`, err);
+                        }
+                        insertedForms++;
+                        // Continue with next form regardless of error
+                        insertNextForm(index + 1);
+                    }
+                );
+            };
+            
+            insertNextForm(0);
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default preparations...');
+            
+            const preparations = [
+                { name: 'Oral', description: 'Taken by mouth' },
+                { name: 'Parenteral', description: 'Administered by injection' },
+                { name: 'Topical', description: 'Applied to skin or surface' },
+                { name: 'Inhaler', description: 'Inhaled into lungs' },
+                { name: 'Suspension for nebulization', description: 'For nebulizer use' },
+                { name: 'Sublingual', description: 'Under the tongue' },
+                { name: 'Rectal', description: 'Administered rectally' }
+            ];
+            
+            let insertedPreparations = 0;
+            
+            const insertNextPreparation = (index) => {
+                if (index >= preparations.length) {
+                    console.log('Successfully inserted default preparations');
+                    resolve();
+                    return;
+                }
+                
+                const prep = preparations[index];
+                db.run(
+                    'INSERT OR IGNORE INTO preparations (name, description) VALUES (?, ?)',
+                    [prep.name, prep.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting preparation ${prep.name}:`, err);
+                        }
+                        insertedPreparations++;
+                        // Continue with next preparation regardless of error
+                        insertNextPreparation(index + 1);
+                    }
+                );
+            };
+            
+            insertNextPreparation(0);
+        });
+
+        await new Promise((resolve, reject) => {
+            console.log('Inserting default equipment categories...');
+            
+            const equipmentCategories = [
+                { name: 'Diagnostic Equipment', description: 'Equipment for medical diagnosis' },
+                { name: 'Surgical Instruments', description: 'Instruments used in surgery' },
+                { name: 'Patient Monitoring', description: 'Equipment for monitoring patient vitals' },
+                { name: 'Laboratory Equipment', description: 'Equipment for laboratory testing' },
+                { name: 'Imaging Equipment', description: 'Equipment for medical imaging' }
+            ];
+            
+            let insertedEquipCategories = 0;
+            
+            const insertNextEquipCategory = (index) => {
+                if (index >= equipmentCategories.length) {
+                    console.log('Successfully inserted default equipment categories');
+                    resolve();
+                    return;
+                }
+                
+                const category = equipmentCategories[index];
+                db.run(
+                    'INSERT OR IGNORE INTO equipment_categories (name, description) VALUES (?, ?)',
+                    [category.name, category.description],
+                    (err) => {
+                        if (err) {
+                            console.error(`Error inserting equipment category ${category.name}:`, err);
+                        }
+                        insertedEquipCategories++;
+                        // Continue with next category regardless of error
+                        insertNextEquipCategory(index + 1);
+                    }
+                );
+            };
+            
+            insertNextEquipCategory(0);
+        });
+
+        // Migration 13: Add manufacturer_brand column to supplier_bid_items table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(supplier_bid_items)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasManufacturerBrand = columnNames.includes('manufacturer_brand');
+                
+                if (!hasManufacturerBrand) {
+                    console.log('Adding manufacturer_brand column to supplier_bid_items table...');
+                    db.run("ALTER TABLE supplier_bid_items ADD COLUMN manufacturer_brand TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding manufacturer_brand column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added manufacturer_brand column');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('manufacturer_brand column already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 14: Add 2FA columns to suppliers table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(suppliers)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const has2FAColumns = columnNames.includes('two_factor_secret') && 
+                                      columnNames.includes('two_factor_enabled') && 
+                                      columnNames.includes('backup_codes');
+                
+                if (!has2FAColumns) {
+                    console.log('Adding 2FA columns to suppliers table...');
+                    
+                    const addColumn = (columnDef) => {
+                        return new Promise((resolveCol, rejectCol) => {
+                            db.run(`ALTER TABLE suppliers ADD COLUMN ${columnDef}`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    rejectCol(err);
+                                } else {
+                                    resolveCol();
+                                }
+                            });
+                        });
+                    };
+                    
+                    Promise.all([
+                        addColumn('two_factor_secret TEXT'),
+                        addColumn('two_factor_enabled INTEGER DEFAULT 0'),
+                        addColumn('backup_codes TEXT')
+                    ]).then(() => {
+                        console.log('Successfully added 2FA columns to suppliers table');
+                        resolve();
+                    }).catch((err) => {
+                        console.error('Error adding 2FA columns to suppliers table:', err);
+                        reject(err);
+                    });
+                } else {
+                    console.log('suppliers table already has 2FA columns');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 15: Add bid_cdr_document column to supplier_bids table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(supplier_bids)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasBidCdrDocument = columnNames.includes('bid_cdr_document');
+                
+                if (!hasBidCdrDocument) {
+                    console.log('Adding bid_cdr_document column to supplier_bids table...');
+                    db.run("ALTER TABLE supplier_bids ADD COLUMN bid_cdr_document TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding bid_cdr_document column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added bid_cdr_document column to supplier_bids table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('bid_cdr_document column already exists in supplier_bids table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 16: Create purchase_department_grievances table for approval workflow
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS purchase_department_grievances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL,
+                supplier_id INTEGER NOT NULL,
+                bid_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL,
+                rejection_reason TEXT NOT NULL,
+                supplier_email TEXT NOT NULL,
+                supplier_name TEXT,
+                contact_person TEXT,
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_by TEXT,
+                reviewed_at DATETIME,
+                approval_comments TEXT,
+                FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (bid_id) REFERENCES supplier_bids(id)
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating purchase_department_grievances table:', err);
+                    reject(err);
+                } else {
+                    console.log('Successfully created purchase_department_grievances table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 13: Add venue column to pre_bid_meetings table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(pre_bid_meetings)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasVenueColumn = columnNames.includes('venue');
+                
+                if (!hasVenueColumn) {
+                    console.log('Adding venue column to pre_bid_meetings table...');
+                    db.run("ALTER TABLE pre_bid_meetings ADD COLUMN venue TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding venue column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added venue column to pre_bid_meetings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('venue column already exists in pre_bid_meetings table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 14: Add additional_notes column to pre_bid_meetings table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(pre_bid_meetings)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasAdditionalNotesColumn = columnNames.includes('additional_notes');
+                
+                if (!hasAdditionalNotesColumn) {
+                    console.log('Adding additional_notes column to pre_bid_meetings table...');
+                    db.run("ALTER TABLE pre_bid_meetings ADD COLUMN additional_notes TEXT", (err) => {
+                        if (err) {
+                            console.error('Error adding additional_notes column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added additional_notes column to pre_bid_meetings table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('additional_notes column already exists in pre_bid_meetings table');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 15: Create tender_letters table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='tender_letters'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating tender_letters table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS tender_letters (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        letter_type TEXT NOT NULL CHECK (letter_type IN ('intent', 'award')),
+                        letter_title TEXT NOT NULL,
+                        letter_content TEXT,
+                        letter_file_path TEXT,
+                        letter_original_name TEXT,
+                        sent_to TEXT NOT NULL,
+                        sent_by INTEGER NOT NULL,
+                        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        total_recipients INTEGER DEFAULT 0,
+                        successful_sends INTEGER DEFAULT 0,
+                        failed_sends INTEGER DEFAULT 0,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (sent_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating tender_letters table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created tender_letters table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('tender_letters table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 16: Create letter_recipients table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='letter_recipients'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating letter_recipients table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS letter_recipients (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        letter_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        supplier_email TEXT NOT NULL,
+                        supplier_name TEXT NOT NULL,
+                        email_status TEXT DEFAULT 'pending' CHECK (email_status IN ('pending', 'sent', 'failed', 'bounced')),
+                        sent_at DATETIME,
+                        error_message TEXT,
+                        opened_at DATETIME,
+                        downloaded_at DATETIME,
+                        FOREIGN KEY (letter_id) REFERENCES tender_letters(id) ON DELETE CASCADE,
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                        UNIQUE(letter_id, supplier_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating letter_recipients table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created letter_recipients table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('letter_recipients table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 17: Create supplier_awards table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_awards'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating supplier_awards table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS supplier_awards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        bid_id INTEGER NOT NULL,
+                        award_letter_id INTEGER,
+                        award_amount DECIMAL(10,2),
+                        awarded_items TEXT,
+                        award_status TEXT DEFAULT 'awarded' CHECK (award_status IN ('awarded', 'contract_signed', 'completed', 'cancelled')),
+                        awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        contract_signed_at DATETIME,
+                        completion_date DATE,
+                        notes TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (bid_id) REFERENCES supplier_bids(id),
+                        FOREIGN KEY (award_letter_id) REFERENCES tender_letters(id),
+                        UNIQUE(tender_id, supplier_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating supplier_awards table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created supplier_awards table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('supplier_awards table already exists');
+                    resolve();
+                }
+            });
+        });
+        
+        // Migration 10: Add merged demands table for tracking demand merging
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='merged_demands'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating merged_demands table...');
+                    db.run(`CREATE TABLE merged_demands (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        new_demand_id INTEGER NOT NULL,
+                        original_demand_id INTEGER NOT NULL,
+                        merged_by INTEGER NOT NULL,
+                        merged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (new_demand_id) REFERENCES demands(id) ON DELETE CASCADE,
+                        FOREIGN KEY (original_demand_id) REFERENCES demands(id) ON DELETE CASCADE,
+                        FOREIGN KEY (merged_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating merged_demands table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created merged_demands table');
+                            
+                            // Add is_merged column to demands table
+                            db.run(`ALTER TABLE demands ADD COLUMN is_merged INTEGER DEFAULT 0`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    console.error('Error adding is_merged column:', err);
+                                    reject(err);
+                                } else {
+                                    console.log('Successfully added is_merged column to demands table');
+                                    resolve();
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    console.log('merged_demands table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 17: Add is_hod column to users table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(users)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasHodColumn = columnNames.includes('is_hod');
+                
+                if (!hasHodColumn) {
+                    console.log('Adding is_hod column to users table...');
+                    db.run(`ALTER TABLE users ADD COLUMN is_hod INTEGER DEFAULT 0`, (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            console.error('Error adding is_hod column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added is_hod column to users table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('users table already has is_hod column');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 18: Add HOD approval fields to demands table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demands)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasHodFields = columnNames.includes('hod_status') && columnNames.includes('hod_response_by') && columnNames.includes('hod_response_at') && columnNames.includes('hod_rejection_reason');
+                
+                if (!hasHodFields) {
+                    console.log('Adding HOD approval fields to demands table...');
+                    
+                    const addColumn = (columnDef) => {
+                        return new Promise((resolveCol, rejectCol) => {
+                            db.run(`ALTER TABLE demands ADD COLUMN ${columnDef}`, (err) => {
+                                if (err && !err.message.includes('duplicate column name')) {
+                                    rejectCol(err);
+                                } else {
+                                    resolveCol();
+                                }
+                            });
+                        });
+                    };
+                    
+                    Promise.all([
+                        addColumn('hod_status TEXT DEFAULT NULL'), // NULL = pending_hod_approval, 'approved', 'rejected'
+                        addColumn('hod_response_by INTEGER DEFAULT NULL'),
+                        addColumn('hod_response_at DATETIME DEFAULT NULL'),
+                        addColumn('hod_rejection_reason TEXT DEFAULT NULL')
+                    ]).then(() => {
+                        console.log('Successfully added HOD approval fields to demands table');
+                        resolve();
+                    }).catch((err) => {
+                        console.error('Error adding HOD approval fields to demands table:', err);
+                        reject(err);
+                    });
+                } else {
+                    console.log('demands table already has HOD approval fields');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 19: Create knockout clause documents table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='knockout_clause_documents'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating knockout_clause_documents table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS knockout_clause_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        clause_id INTEGER NOT NULL,
+                        document_filename TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+                        UNIQUE(tender_id, supplier_id, clause_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating knockout_clause_documents table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created knockout_clause_documents table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('knockout_clause_documents table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 20: Create market survey committee tables
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='market_surveys'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating market_surveys table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS market_surveys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tender_id INTEGER NOT NULL,
+                        sent_by INTEGER NOT NULL,
+                        status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+                        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        completed_at DATETIME,
+                        completed_by INTEGER,
+                        notes TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id) ON DELETE CASCADE,
+                        FOREIGN KEY (sent_by) REFERENCES users(id),
+                        FOREIGN KEY (completed_by) REFERENCES users(id),
+                        UNIQUE(tender_id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating market_surveys table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created market_surveys table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('market_surveys table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Create market survey documents table
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='market_survey_documents'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating market_survey_documents table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS market_survey_documents (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        survey_id INTEGER NOT NULL,
+                        document_type TEXT NOT NULL CHECK (document_type IN ('supporting', 'evaluation')),
+                        filename TEXT NOT NULL,
+                        original_filename TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        uploaded_by INTEGER NOT NULL,
+                        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (survey_id) REFERENCES market_surveys(id) ON DELETE CASCADE,
+                        FOREIGN KEY (uploaded_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating market_survey_documents table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created market_survey_documents table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('market_survey_documents table already exists');
+                    resolve();
+                }
+            });
+        });
+        
+        // Migration 21: Add tender time extension tracking columns to demand_tenders table
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(demand_tenders)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const hasTimeExtensionColumns = columns.some(col => col.name === 'time_extension_reason');
+                
+                if (!hasTimeExtensionColumns) {
+                    console.log('Adding tender time extension tracking columns to demand_tenders table...');
+                    db.run(`ALTER TABLE demand_tenders ADD COLUMN time_extension_reason TEXT`, (err) => {
+                        if (err) {
+                            console.error('Error adding time_extension_reason column:', err);
+                            reject(err);
+                            return;
+                        }
+                        
+                        db.run(`ALTER TABLE demand_tenders ADD COLUMN time_extension_by INTEGER`, (err) => {
+                            if (err) {
+                                console.error('Error adding time_extension_by column:', err);
+                                reject(err);
+                                return;
+                            }
+                            
+                            db.run(`ALTER TABLE demand_tenders ADD COLUMN time_extension_at DATETIME`, (err) => {
+                                if (err) {
+                                    console.error('Error adding time_extension_at column:', err);
+                                    reject(err);
+                                } else {
+                                    console.log('Successfully added tender time extension tracking columns');
+                                    resolve();
+                                }
+                            });
+                        });
+                    });
+                } else {
+                    console.log('Tender time extension tracking columns already exist');
+                    resolve();
+                }
+            });
+        });
+        
+        // Migration 22: Add is_finance_user column to users table (for Finance module cross-auth)
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(users)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                const columnNames = columns.map(col => col.name);
+                const hasFinanceUserColumn = columnNames.includes('is_finance_user');
+                
+                if (!hasFinanceUserColumn) {
+                    console.log('Adding is_finance_user column to users table...');
+                    db.run(`ALTER TABLE users ADD COLUMN is_finance_user INTEGER DEFAULT 0`, (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            console.error('Error adding is_finance_user column:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully added is_finance_user column to users table');
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('users table already has is_finance_user column');
+                    resolve();
+                }
+            });
+        });
+        
+        // Migration 23: Create purchase_orders table for Purchase Order management
+        await new Promise((resolve, reject) => {
+            db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='purchase_orders'", [], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                if (!row) {
+                    console.log('Creating purchase_orders table...');
+                    db.run(`CREATE TABLE IF NOT EXISTS purchase_orders (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        po_number TEXT NOT NULL UNIQUE,
+                        tender_id INTEGER NOT NULL,
+                        award_letter_id INTEGER NOT NULL,
+                        supplier_id INTEGER NOT NULL,
+                        items TEXT NOT NULL,
+                        total_amount DECIMAL(15,2) NOT NULL,
+                        status TEXT DEFAULT 'created' CHECK (status IN ('created', 'sent', 'acknowledged', 'fulfilled', 'cancelled')),
+                        remarks TEXT,
+                        created_by INTEGER NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        sent_at DATETIME,
+                        acknowledged_at DATETIME,
+                        fulfilled_at DATETIME,
+                        cancelled_at DATETIME,
+                        cancellation_reason TEXT,
+                        FOREIGN KEY (tender_id) REFERENCES demand_tenders(id),
+                        FOREIGN KEY (award_letter_id) REFERENCES tender_letters(id),
+                        FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                        FOREIGN KEY (created_by) REFERENCES users(id)
+                    )`, (err) => {
+                        if (err) {
+                            console.error('Error creating purchase_orders table:', err);
+                            reject(err);
+                        } else {
+                            console.log('Successfully created purchase_orders table');
+                            
+                            // Create indexes for purchase_orders table
+                            db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_tender_id ON purchase_orders(tender_id)`, (indexErr) => {
+                                if (indexErr) console.error('Error creating purchase_orders tender_id index:', indexErr);
+                            });
+                            db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier_id ON purchase_orders(supplier_id)`, (indexErr) => {
+                                if (indexErr) console.error('Error creating purchase_orders supplier_id index:', indexErr);
+                            });
+                            db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_po_number ON purchase_orders(po_number)`, (indexErr) => {
+                                if (indexErr) console.error('Error creating purchase_orders po_number index:', indexErr);
+                            });
+                            
+                            resolve();
+                        }
+                    });
+                } else {
+                    console.log('purchase_orders table already exists');
+                    resolve();
+                }
+            });
+        });
+
+        // Migration 24: Add professional PO fields to purchase_orders
+        await new Promise((resolve, reject) => {
+            db.all("PRAGMA table_info(purchase_orders)", [], (err, columns) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+
+                const existing = new Set((columns || []).map(col => col.name));
+                const additions = [
+                    { name: 'delivery_date', type: 'TEXT' },
+                    { name: 'payment_terms', type: 'TEXT' },
+                    { name: 'billing_address', type: 'TEXT' },
+                    { name: 'shipping_address', type: 'TEXT' },
+                    { name: 'contact_name', type: 'TEXT' },
+                    { name: 'contact_phone', type: 'TEXT' },
+                    { name: 'contact_email', type: 'TEXT' },
+                    { name: 'reference_no', type: 'TEXT' }
+                ];
+
+                const missing = additions.filter(col => !existing.has(col.name));
+                if (missing.length === 0) {
+                    console.log('purchase_orders already has professional PO fields');
+                    resolve();
+                    return;
+                }
+
+                let completed = 0;
+                missing.forEach((col) => {
+                    db.run(`ALTER TABLE purchase_orders ADD COLUMN ${col.name} ${col.type}`, (alterErr) => {
+                        if (alterErr) {
+                            console.error(`Error adding ${col.name} to purchase_orders:`, alterErr);
+                        }
+                        completed += 1;
+                        if (completed === missing.length) {
+                            resolve();
+                        }
+                    });
+                });
+            });
+        });
+        
+        // Migration 25: Create generic category custom-fields engine
+        // (category_fields / category_field_options / demand_item_field_values)
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS category_fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                field_type TEXT NOT NULL CHECK (field_type IN ('text', 'number', 'dropdown')),
+                depends_on_field_id INTEGER,
+                is_required INTEGER DEFAULT 1,
+                display_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES item_categories (id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_field_id) REFERENCES category_fields (id) ON DELETE SET NULL
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating category_fields table:', err);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS category_field_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                field_id INTEGER NOT NULL,
+                value TEXT NOT NULL,
+                parent_option_id INTEGER,
+                display_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (field_id) REFERENCES category_fields (id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_option_id) REFERENCES category_field_options (id) ON DELETE CASCADE
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating category_field_options table:', err);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE TABLE IF NOT EXISTS demand_item_field_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                demand_item_id INTEGER NOT NULL,
+                field_id INTEGER NOT NULL,
+                value_text TEXT,
+                option_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (demand_item_id) REFERENCES demand_items (id) ON DELETE CASCADE,
+                FOREIGN KEY (field_id) REFERENCES category_fields (id) ON DELETE CASCADE,
+                FOREIGN KEY (option_id) REFERENCES category_field_options (id) ON DELETE SET NULL,
+                UNIQUE(demand_item_id, field_id)
+            )`, (err) => {
+                if (err) {
+                    console.error('Error creating demand_item_field_values table:', err);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_category_fields_category_id ON category_fields(category_id)`, (err) => {
+                if (err) console.error('Error creating category_fields category_id index:', err);
+                resolve();
+            });
+        });
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_category_field_options_field_id ON category_field_options(field_id)`, (err) => {
+                if (err) console.error('Error creating category_field_options field_id index:', err);
+                resolve();
+            });
+        });
+        await new Promise((resolve, reject) => {
+            db.run(`CREATE INDEX IF NOT EXISTS idx_demand_item_field_values_item_id ON demand_item_field_values(demand_item_id)`, (err) => {
+                if (err) console.error('Error creating demand_item_field_values demand_item_id index:', err);
+                resolve();
+            });
+        });
+
+        // Migration 26: Seed the generic custom-fields engine from the legacy
+        // pharmaceutical/equipment lookup tables, and backfill historical
+        // demand_items rows into demand_item_field_values so every downstream
+        // view can read item details from one place going forward.
+        await migratePharmaEquipmentToGenericFields();
+
+        console.log('Database migrations completed successfully');
+    } catch (error) {
+        console.error('Error running database migrations:', error);
+        throw error;
+    }
+};
+
+// Promise-wrapped query helpers used only by the one-off migration below.
+const dbAll = (sqlText, params = []) => new Promise((resolve, reject) => {
+    db.all(sqlText, params, (err, rows) => err ? reject(err) : resolve(rows || []));
+});
+const dbGet = (sqlText, params = []) => new Promise((resolve, reject) => {
+    db.get(sqlText, params, (err, row) => err ? reject(err) : resolve(row));
+});
+const dbRun = (sqlText, params = []) => new Promise((resolve, reject) => {
+    db.run(sqlText, params, function (err) { err ? reject(err) : resolve(this); });
 });
 
+const isPharmaCategoryName = (name) => {
+    const n = (name || '').toLowerCase();
+    return n.includes('pharmaceutical') || n.includes('medicine') || n.includes('drug');
+};
+const isEquipmentCategoryName = (name) => {
+    const n = (name || '').toLowerCase();
+    return n.includes('equipment') || n.includes('machinery') || n.includes('instrument');
+};
+
+const migratePharmaEquipmentToGenericFields = async () => {
+    const categories = await dbAll('SELECT * FROM item_categories');
+    const pharmaCategory = categories.find(c => isPharmaCategoryName(c.name));
+    const equipmentCategory = categories.find(c => isEquipmentCategoryName(c.name));
+
+    if (pharmaCategory) {
+        const existing = await dbGet('SELECT id FROM category_fields WHERE category_id = ?', [pharmaCategory.id]);
+        if (!existing) {
+            console.log('Migrating Pharmaceuticals lookup data into generic category fields...');
+            await seedPharmaFields(pharmaCategory.id);
+        }
+    }
+
+    if (equipmentCategory) {
+        const existing = await dbGet('SELECT id FROM category_fields WHERE category_id = ?', [equipmentCategory.id]);
+        if (!existing) {
+            console.log('Migrating Equipment lookup data into generic category fields...');
+            await seedEquipmentFields(equipmentCategory.id);
+        }
+    }
+};
+
+const createField = async (categoryId, label, fieldType, displayOrder, isRequired, dependsOnFieldId = null) => {
+    const result = await dbRun(
+        'INSERT INTO category_fields (category_id, label, field_type, depends_on_field_id, is_required, display_order) VALUES (?, ?, ?, ?, ?, ?)',
+        [categoryId, label, fieldType, dependsOnFieldId, isRequired ? 1 : 0, displayOrder]
+    );
+    return result.lastID;
+};
+
+const createOption = async (fieldId, value, displayOrder, parentOptionId = null) => {
+    const result = await dbRun(
+        'INSERT INTO category_field_options (field_id, value, parent_option_id, display_order) VALUES (?, ?, ?, ?)',
+        [fieldId, value, parentOptionId, displayOrder]
+    );
+    return result.lastID;
+};
+
+const seedPharmaFields = async (categoryId) => {
+    const drugCategories = await dbAll('SELECT * FROM drug_categories ORDER BY name');
+    const drugNames = await dbAll('SELECT * FROM drug_names ORDER BY name');
+    const strengthUnits = await dbAll('SELECT * FROM strength_units ORDER BY name');
+    const dosageForms = await dbAll('SELECT * FROM dosage_forms ORDER BY name');
+    const preparations = await dbAll('SELECT * FROM preparations ORDER BY name');
+
+    const drugCategoryFieldId = await createField(categoryId, 'Drug Category', 'dropdown', 1, true);
+    const drugCategoryOptionMap = {};
+    for (let i = 0; i < drugCategories.length; i++) {
+        drugCategoryOptionMap[drugCategories[i].id] = await createOption(drugCategoryFieldId, drugCategories[i].name, i);
+    }
+
+    const drugNameFieldId = await createField(categoryId, 'Drug Name', 'dropdown', 2, true, drugCategoryFieldId);
+    const drugNameOptionMap = {};
+    for (let i = 0; i < drugNames.length; i++) {
+        const parentOptionId = drugCategoryOptionMap[drugNames[i].drug_category_id] || null;
+        drugNameOptionMap[drugNames[i].id] = await createOption(drugNameFieldId, drugNames[i].name, i, parentOptionId);
+    }
+
+    const strengthValueFieldId = await createField(categoryId, 'Strength Value', 'number', 3, true);
+
+    const strengthUnitFieldId = await createField(categoryId, 'Strength Unit', 'dropdown', 4, true);
+    const strengthUnitOptionMap = {};
+    for (let i = 0; i < strengthUnits.length; i++) {
+        const label = strengthUnits[i].abbreviation
+            ? `${strengthUnits[i].name} (${strengthUnits[i].abbreviation})`
+            : strengthUnits[i].name;
+        strengthUnitOptionMap[strengthUnits[i].id] = await createOption(strengthUnitFieldId, label, i);
+    }
+
+    const dosageFormFieldId = await createField(categoryId, 'Dosage Form', 'dropdown', 5, true);
+    const dosageFormOptionMap = {};
+    for (let i = 0; i < dosageForms.length; i++) {
+        dosageFormOptionMap[dosageForms[i].id] = await createOption(dosageFormFieldId, dosageForms[i].name, i);
+    }
+
+    const preparationFieldId = await createField(categoryId, 'Preparation', 'dropdown', 6, false);
+    const preparationOptionMap = {};
+    for (let i = 0; i < preparations.length; i++) {
+        preparationOptionMap[preparations[i].id] = await createOption(preparationFieldId, preparations[i].name, i);
+    }
+
+    const legacyItems = await dbAll('SELECT * FROM demand_items WHERE drug_category_id IS NOT NULL OR drug_name_id IS NOT NULL');
+    for (const item of legacyItems) {
+        if (item.drug_category_id && drugCategoryOptionMap[item.drug_category_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, drugCategoryFieldId, drugCategoryOptionMap[item.drug_category_id]]);
+        }
+        if (item.drug_name_id && drugNameOptionMap[item.drug_name_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, drugNameFieldId, drugNameOptionMap[item.drug_name_id]]);
+        }
+        if (item.strength_value !== null && item.strength_value !== undefined) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, value_text) VALUES (?, ?, ?)',
+                [item.id, strengthValueFieldId, String(item.strength_value)]);
+        }
+        if (item.strength_unit_id && strengthUnitOptionMap[item.strength_unit_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, strengthUnitFieldId, strengthUnitOptionMap[item.strength_unit_id]]);
+        }
+        if (item.dosage_form_id && dosageFormOptionMap[item.dosage_form_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, dosageFormFieldId, dosageFormOptionMap[item.dosage_form_id]]);
+        }
+        if (item.preparation_id && preparationOptionMap[item.preparation_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, preparationFieldId, preparationOptionMap[item.preparation_id]]);
+        }
+    }
+};
+
+const seedEquipmentFields = async (categoryId) => {
+    const equipmentCategories = await dbAll('SELECT * FROM equipment_categories ORDER BY name');
+    const equipmentTypes = await dbAll('SELECT * FROM equipment_types ORDER BY name');
+
+    const equipmentCategoryFieldId = await createField(categoryId, 'Equipment Category', 'dropdown', 1, true);
+    const equipmentCategoryOptionMap = {};
+    for (let i = 0; i < equipmentCategories.length; i++) {
+        equipmentCategoryOptionMap[equipmentCategories[i].id] = await createOption(equipmentCategoryFieldId, equipmentCategories[i].name, i);
+    }
+
+    const equipmentTypeFieldId = await createField(categoryId, 'Equipment Type', 'dropdown', 2, true, equipmentCategoryFieldId);
+    const equipmentTypeOptionMap = {};
+    for (let i = 0; i < equipmentTypes.length; i++) {
+        const parentOptionId = equipmentCategoryOptionMap[equipmentTypes[i].equipment_category_id] || null;
+        equipmentTypeOptionMap[equipmentTypes[i].id] = await createOption(equipmentTypeFieldId, equipmentTypes[i].name, i, parentOptionId);
+    }
+
+    const legacyItems = await dbAll('SELECT * FROM demand_items WHERE equipment_category_id IS NOT NULL OR equipment_type_id IS NOT NULL');
+    for (const item of legacyItems) {
+        if (item.equipment_category_id && equipmentCategoryOptionMap[item.equipment_category_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, equipmentCategoryFieldId, equipmentCategoryOptionMap[item.equipment_category_id]]);
+        }
+        if (item.equipment_type_id && equipmentTypeOptionMap[item.equipment_type_id]) {
+            await dbRun('INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                [item.id, equipmentTypeFieldId, equipmentTypeOptionMap[item.equipment_type_id]]);
+        }
+    }
+};
+
 module.exports = {
+    connectDatabase,
     getDatabase,
-    generateCredentials
+    isDatabaseConnected,
+    ensureDatabaseConnection,
+    generateCredentials,
+    generateUserBasedCredentials
 };
