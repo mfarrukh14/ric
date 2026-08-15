@@ -33,28 +33,41 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
             try {
                 const token = localStorage.getItem('supplierToken');
                 console.log('BidApplication - fetching tender data with token:', token ? 'present' : 'missing');
-                const response = await fetch(`${apiUrl}/suppliers/tenders/active`, {
+                // Look the tender up directly by ID instead of fetching the whole
+                // "active tenders" list and searching it client-side - that list is
+                // time-filtered and can legitimately omit a tender the supplier is
+                // mid-application for (e.g. right after submitting a bid), which
+                // was surfacing as a false "Tender not found" here.
+                const response = await fetch(`${apiUrl}/demands/tenders/${tenderId}/details`, {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
                 });
 
                 if (!response.ok) {
-                    console.error('BidApplication - Failed to fetch tender data:', response.status, response.statusText);
-                    throw new Error('Failed to fetch tender data');
+                    const errData = await response.json().catch(() => ({}));
+                    console.error('BidApplication - Failed to fetch tender data:', response.status, errData);
+                    throw new Error(errData.message || 'Tender not found');
                 }
 
                 const data = await response.json();
-                console.log('BidApplication - Tender data received:', data);
-                const foundTender = data.find(t => t.id === parseInt(tenderId));
-                
-                if (!foundTender) {
-                    console.error('BidApplication - Tender not found with ID:', tenderId, 'Available tenders:', data.map(t => t.id));
-                    throw new Error('Tender not found');
-                }
+                console.log('BidApplication - Found tender:', data.tender);
+                setTender(data.tender);
 
-                console.log('BidApplication - Found tender:', foundTender);
-                setTender(foundTender);
+                // This response already includes knockout clauses/criteria, so
+                // pre-fill any previously uploaded knockout documents here rather
+                // than relying on the separate details fetch below.
+                if (data.tender?.supplier_knockout_ack?.documents) {
+                    const docs = {};
+                    data.tender.supplier_knockout_ack.documents.forEach(doc => {
+                        docs[doc.clause_id] = {
+                            file: null,
+                            uploaded: true,
+                            filename: doc.original_filename
+                        };
+                    });
+                    setKnockoutDocuments(docs);
+                }
             } catch (err) {
                 console.error('BidApplication - Error fetching tender:', err);
                 setError(err.message);

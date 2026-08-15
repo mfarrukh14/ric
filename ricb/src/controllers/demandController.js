@@ -801,8 +801,11 @@ const getHodPendingDemands = async (req, res) => {
 };
 
 const approveRejectDemandByHod = async (req, res) => {
-    // NEW WORKFLOW: After store fulfillment, HOD reviews and approves/rejects
-    // If approved, determine if items go to purchase dept or are marked as available
+    // This is the FIRST approval stage - the requester's own department HOD
+    // approving the demand request itself, before store has looked at it.
+    // If approved, it goes to Store for fulfillment review. Store fulfillment
+    // approval (purchase vs. available) is decided later by the Store HOD via
+    // approveStoreFulfillmentByHod, not here.
     const { demandId, action, rejectionReason } = req.body;
     const hodUserId = req.user.id;
     const db = getDatabase();
@@ -874,27 +877,11 @@ const approveRejectDemandByHod = async (req, res) => {
                 );
             });
         } else {
-            // If HOD approves, determine status based on store fulfillment
-            const finalItems = await new Promise((resolve, reject) => {
-                db.all(
-                    'SELECT store_fulfilled FROM demand_items WHERE demand_id = ? AND is_removed != 1',
-                    [demandId],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
-
-            let demandStatus;
-            const hasUnfulfilledItems = finalItems.some(item => item.store_fulfilled === 0);
-            
-            if (hasUnfulfilledItems) {
-                demandStatus = 'purchase_pending'; // Items need to go to purchase department
-            } else {
-                demandStatus = 'available'; // All items fulfilled by store
-            }
-
+            // HOD approved the demand request - send it to Store for fulfillment
+            // review. Store has not looked at the items yet at this stage, so
+            // status must NOT be derived from store_fulfilled here (that would
+            // always be 0/unset and incorrectly skip straight to Purchase).
+            const demandStatus = 'pending';
             const hodStatus = 'approved';
 
             await new Promise((resolve, reject) => {

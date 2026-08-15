@@ -526,7 +526,7 @@ const updateGrievanceDeadlineConfig = async (req, res) => {
                             
                             db.run(
                                 'UPDATE grievance_deadlines SET deadline_end = ? WHERE id = ?',
-                                [newEndTime.toISOString(), deadline.id],
+                                [newEndTime, deadline.id],
                                 (updateErr) => {
                                     if (updateErr) rejectUpdate(updateErr);
                                     else resolveUpdate({ id: deadline.id, newEndTime });

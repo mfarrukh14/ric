@@ -135,6 +135,10 @@ const Login = ({ onLogin }) => {
         localStorage.setItem('supplierToken', data.token);
         const supplierWithRole = { ...data.supplier, role: 'supplier' };
         localStorage.setItem('supplier', JSON.stringify(supplierWithRole));
+        // This token only grants access to the registration-wizard endpoints, not
+        // the dashboard - flag it so App.jsx won't treat it as a real logged-in
+        // session if the page gets refreshed mid-wizard.
+        localStorage.setItem('supplierRegistrationIncomplete', 'true');
         setNewSupplierId(data.supplier.id);
         setIsResubmission(data.isResubmission || false);
         setShowRegistrationProcess(true);
@@ -146,6 +150,7 @@ const Login = ({ onLogin }) => {
         localStorage.setItem('supplierToken', data.token);
         const supplierWithRole = { ...data.supplier, role: 'supplier' };
         localStorage.setItem('supplier', JSON.stringify(supplierWithRole));
+        localStorage.setItem('supplierRegistrationIncomplete', 'true');
         setNewSupplierId(data.supplier.id);
         setIsResubmission(data.isResubmission || false);
         setShowRegistrationProcess(true);
@@ -204,10 +209,12 @@ const Login = ({ onLogin }) => {
         throw new Error(data.error);
       }
 
-      // Store token and supplier data
+      // Store token and supplier data. Flagged as incomplete - see the
+      // requiresRegistration branch above for why.
       localStorage.setItem('supplierToken', data.token);
       localStorage.setItem('supplier', JSON.stringify(data.supplier));
-      
+      localStorage.setItem('supplierRegistrationIncomplete', 'true');
+
       // Set supplier ID and show registration process
       setNewSupplierId(data.supplier.id);
       setShowRegistrationProcess(true);
@@ -241,6 +248,7 @@ const Login = ({ onLogin }) => {
     // Clear supplier data from localStorage since they need to log in again after registration
     localStorage.removeItem('supplier');
     localStorage.removeItem('supplierToken');
+    localStorage.removeItem('supplierRegistrationIncomplete');
     
     // Navigate back to login page for fresh login after registration
     navigate('/login');

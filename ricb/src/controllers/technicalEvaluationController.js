@@ -1115,7 +1115,7 @@ const startGrievanceDeadlineTimer = async (db, tenderId) => {
                 `INSERT OR REPLACE INTO grievance_deadlines 
                  (tender_id, deadline_start, deadline_end, is_active) 
                  VALUES (?, ?, ?, 1)`,
-                [tenderId, deadlineStart.toISOString(), deadlineEnd.toISOString()],
+                [tenderId, deadlineStart, deadlineEnd],
                 (err) => {
                     if (err) reject(err);
                     else resolve();

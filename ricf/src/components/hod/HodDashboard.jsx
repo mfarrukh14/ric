@@ -27,6 +27,10 @@ const HodDashboard = () => {
     const [isStoreHOD, setIsStoreHOD] = useState(false);
     const [pendingPublishing, setPendingPublishing] = useState([]);
     const [storePendingApprovals, setStorePendingApprovals] = useState([]);
+    const [showExpiredPublishModal, setShowExpiredPublishModal] = useState(false);
+    const [tenderPendingTimeFix, setTenderPendingTimeFix] = useState(null);
+    const [newBiddingEndTime, setNewBiddingEndTime] = useState('');
+    const [timeFixReason, setTimeFixReason] = useState('');
 
     useEffect(() => {
         // Check user department
@@ -348,10 +352,80 @@ const HodDashboard = () => {
                 alert('Tender published successfully!');
             } else {
                 const errorData = await response.json();
+                if (response.status === 409 && errorData.expired) {
+                    // Bidding end time has already passed - offer to fix it instead
+                    // of just failing, rather than making the user hunt for the edit flow.
+                    const tender = pendingPublishing.find(t => t.id === tenderId) || { id: tenderId };
+                    setTenderPendingTimeFix(tender);
+                    setNewBiddingEndTime('');
+                    setTimeFixReason('');
+                    setShowExpiredPublishModal(true);
+                    return;
+                }
                 throw new Error(errorData.error || 'Failed to publish tender');
             }
         } catch (error) {
             setError('Error publishing tender: ' + error.message);
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const closeExpiredPublishModal = () => {
+        setShowExpiredPublishModal(false);
+        setTenderPendingTimeFix(null);
+        setNewBiddingEndTime('');
+        setTimeFixReason('');
+    };
+
+    const handleFixTimeAndPublish = async () => {
+        if (!newBiddingEndTime || !timeFixReason.trim()) {
+            setError('New bidding end time and a reason are required');
+            return;
+        }
+
+        if (new Date(newBiddingEndTime).getTime() < Date.now() + 2 * 60 * 1000) {
+            setError('New bidding end time must be at least 2 minutes from now');
+            return;
+        }
+
+        setProcessing(true);
+        try {
+            const token = localStorage.getItem('token');
+
+            const updateResponse = await fetch(`${API_BASE_URL}/api/demands/tenders/${tenderPendingTimeFix.id}/update-time`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ newBiddingEndTime, reason: timeFixReason.trim() })
+            });
+
+            if (!updateResponse.ok) {
+                const errorData = await updateResponse.json();
+                throw new Error(errorData.message || 'Failed to update bidding end time');
+            }
+
+            const publishResponse = await fetch(`${API_BASE_URL}/api/demands/purchase-hod/publish-tender/${tenderPendingTimeFix.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!publishResponse.ok) {
+                const errorData = await publishResponse.json();
+                throw new Error(errorData.error || 'Bidding end time updated, but publishing still failed');
+            }
+
+            await fetchPendingPublishing();
+            setError('');
+            closeExpiredPublishModal();
+            alert('Bidding end time updated and tender published successfully!');
+        } catch (error) {
+            setError('Error updating time and publishing: ' + error.message);
         } finally {
             setProcessing(false);
         }
@@ -646,6 +720,17 @@ const HodDashboard = () => {
                                                         <p><strong>Estimated Cost:</strong> PKR{Number(tender.estimated_cost || 0).toLocaleString()}</p>
                                                         <p><strong>Created By:</strong> {tender.creator_name}</p>
                                                         <p><strong>Created:</strong> {new Date(tender.created_at).toLocaleDateString()}</p>
+                                                        {tender.bidding_end_time && (
+                                                            <p>
+                                                                <strong>Bidding End:</strong> {new Date(tender.bidding_end_time).toLocaleString()}
+                                                                {(tender.is_expired === 1 || tender.is_expired === true) && (
+                                                                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                                                        <AlertCircle className="w-3 h-3 mr-1" />
+                                                                        Time passed
+                                                                    </span>
+                                                                )}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="ml-4 flex-shrink-0">
@@ -904,7 +989,7 @@ const HodDashboard = () => {
                                 <div><strong>Cost:</strong> PKR{Number(selectedDemand.estimated_cost).toLocaleString()}</div>
                                 <div><strong>Urgency:</strong> {selectedDemand.urgency}</div>
                                 <div><strong>Required By:</strong> {new Date(selectedDemand.required_by).toLocaleDateString()}</div>
-                                <div><strong>Requested By:</strong> {selectedDemand.creator_name}</div>
+                                <div><strong>Requested By:</strong> {selectedDemand.created_by_name || selectedDemand.creator_name}</div>
                             </div>
                         </div>
                         
@@ -982,7 +1067,7 @@ const HodDashboard = () => {
                         <div className="bg-gray-50 p-4 rounded-lg">
                             <h4 className="font-medium text-gray-900 mb-2">Demand Summary</h4>
                             <p><strong>Item:</strong> {selectedDemand.item_name}</p>
-                            <p><strong>Requested By:</strong> {selectedDemand.creator_name}</p>
+                            <p><strong>Requested By:</strong> {selectedDemand.created_by_name || selectedDemand.creator_name}</p>
                             <p><strong>Cost:</strong> PKR{Number(selectedDemand.estimated_cost).toLocaleString()}</p>
                         </div>
 
@@ -1127,6 +1212,75 @@ const HodDashboard = () => {
                                     </div>
                                 ) : (
                                     tenderApprovalAction === 'approve' ? 'Approve Tender' : 'Reject Tender'
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+
+            <Modal
+                show={showExpiredPublishModal}
+                onClose={closeExpiredPublishModal}
+                title="Bidding End Time Has Passed"
+            >
+                {tenderPendingTimeFix && (
+                    <div className="space-y-4">
+                        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-800 flex items-start">
+                            <AlertCircle className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
+                            <span>
+                                This tender's bidding end time
+                                {tenderPendingTimeFix.bidding_end_time && (
+                                    <> ({new Date(tenderPendingTimeFix.bidding_end_time).toLocaleString()})</>
+                                )} has already passed, so it can't be published as-is. Set a new bidding end time to continue.
+                            </span>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                New Bidding End Time *
+                            </label>
+                            <input
+                                type="datetime-local"
+                                value={newBiddingEndTime}
+                                onChange={(e) => setNewBiddingEndTime(e.target.value)}
+                                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Reason for Extension *
+                            </label>
+                            <textarea
+                                value={timeFixReason}
+                                onChange={(e) => setTimeFixReason(e.target.value)}
+                                rows={3}
+                                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                placeholder="Why the bidding end time is being updated..."
+                            />
+                        </div>
+
+                        <div className="flex justify-end space-x-3">
+                            <button
+                                onClick={closeExpiredPublishModal}
+                                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                                disabled={processing}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleFixTimeAndPublish}
+                                disabled={processing || !newBiddingEndTime || !timeFixReason.trim()}
+                                className="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {processing ? (
+                                    <div className="flex items-center">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                        Processing...
+                                    </div>
+                                ) : (
+                                    'Update Time & Publish'
                                 )}
                             </button>
                         </div>

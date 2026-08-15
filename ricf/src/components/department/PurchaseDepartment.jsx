@@ -343,6 +343,11 @@ const PurchaseDepartment = () => {
             return;
         }
 
+        if (new Date(timeExtensionForm.newBiddingEndTime).getTime() < Date.now() + 2 * 60 * 1000) {
+            toast.error('New bidding end time must be at least 2 minutes from now');
+            return;
+        }
+
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`${apiUrl}/demands/tenders/${selectedTenderForExtension.id}/update-time`, {
@@ -516,13 +521,13 @@ const PurchaseDepartment = () => {
             return;
         }
 
-        // Validate that expiry time is at least 1 minute from now (for testing)
+        // Bidding expiry must be a real future time, at least 2 minutes out.
         if (evaluationForm.status === 'approved' && evaluationForm.biddingExpiryTime) {
             const expiryTime = new Date(evaluationForm.biddingExpiryTime);
-            const minTime = new Date(Date.now() + 1 * 60 * 1000); // 1 minute from now
+            const minTime = new Date(Date.now() + 2 * 60 * 1000);
 
             if (expiryTime < minTime) {
-                setError('Bidding expiry must be at least 1 minute from now');
+                setError('Bidding expiry must be at least 2 minutes from now');
                 return;
             }
         }

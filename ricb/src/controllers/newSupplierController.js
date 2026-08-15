@@ -213,7 +213,7 @@ const sendEmailOTP = async (req, res) => {
                 `INSERT OR REPLACE INTO supplier_otp_verifications 
                  (supplier_id, email, otp_code, otp_type, expires_at, verified) 
                  VALUES (?, ?, ?, 'email_verification', ?, 0)`,
-                [supplierId, supplier.business_email, otp, expiresAt.toISOString()],
+                [supplierId, supplier.business_email, otp, expiresAt],
                 (err) => {
                     if (err) reject(err);
                     else resolve();

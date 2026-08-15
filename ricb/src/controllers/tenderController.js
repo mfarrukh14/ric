@@ -64,16 +64,22 @@ const markExpiredTendersForOpening = async () => {
     const db = getDatabase();
     
     try {
-        // Get all expired tenders that are still active
+        // Get all expired tenders that are still active.
+        // Compared against a bound Date param, not GETDATE()/datetime('now') - the
+        // latter reads the SQL Server's own clock, which mssqlAdapter.js documents
+        // as running server-local time despite the driver reporting it as UTC. That
+        // offset made tenders flip to "ended" hours before their real bidding_end_time.
+        // Binding new Date() here goes through the same serialization bidding_end_time
+        // was originally stored with, so the comparison stays correct regardless.
         const expiredTenders = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT dt.*, d.item_name, d.description, d.urgency
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.tender_status = 'active' 
-                 AND datetime(dt.bidding_end_time) <= datetime('now', 'localtime')
+                 WHERE dt.tender_status = 'active'
+                 AND dt.bidding_end_time <= ?
                  ORDER BY dt.bidding_end_time ASC`,
-                [],
+                [new Date()],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -133,16 +139,18 @@ const processExpiredTenders = async (req, res) => {
             hour12: false
         });
         
-        // Get all expired tenders that haven't been processed yet
+        // Get all expired tenders that haven't been processed yet.
+        // See the comment in markExpiredTendersForOpening above - bound as a Date
+        // param rather than compared against GETDATE()/datetime('now').
         const expiredTenders = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT dt.*, d.item_name, d.description, d.urgency
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.tender_status = 'active' 
-                 AND datetime(dt.bidding_end_time) <= datetime('now', 'localtime')
+                 WHERE dt.tender_status = 'active'
+                 AND dt.bidding_end_time <= ?
                  ORDER BY dt.bidding_end_time ASC`,
-                [],
+                [new Date()],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -463,6 +471,10 @@ const createTenderWithCriteria = async (req, res) => {
         const biddingEndDate = new Date(biddingEndTime);
         if (isNaN(biddingEndDate.getTime())) {
             return res.status(400).json({ message: 'Invalid bidding end time' });
+        }
+        // Must leave suppliers at least a 2-minute window to respond.
+        if (biddingEndDate.getTime() < Date.now() + 2 * 60 * 1000) {
+            return res.status(400).json({ message: 'Bidding end time must be at least 2 minutes from now' });
         }
 
         // Check if tender already exists for this demand
@@ -802,30 +814,28 @@ const acknowledgeCriteria = async (req, res) => {
 
         console.log(`Processing knockout documents for tender ${tenderId}, supplier ${supplierId}:`, knockoutDocuments.length, 'files');
 
-        // Update legacy acknowledgement flag
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE supplier_tender_views 
-                 SET criteria_acknowledged = 1 
-                 WHERE tender_id = ? AND supplier_id = ?`,
-                [tenderId, supplierId],
-                (err) => { if (err) reject(err); else resolve(); }
-            );
-        });
-
         // Store knockout clause documents in database
         if (knockoutDocuments.length > 0) {
+            // Replace any documents from a previous acknowledgment attempt for this tender/supplier
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `DELETE FROM knockout_clause_documents WHERE tender_id = ? AND supplier_id = ?`,
+                    [tenderId, supplierId],
+                    (err) => { if (err) reject(err); else resolve(); }
+                );
+            });
+
             for (const doc of knockoutDocuments) {
                 await new Promise((resolve, reject) => {
                     db.run(
-                        `INSERT INTO knockout_clause_documents 
+                        `INSERT INTO knockout_clause_documents
                          (tender_id, supplier_id, clause_id, document_filename, original_filename, uploaded_at)
                          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
                         [
-                            tenderId, 
-                            supplierId, 
-                            doc.clauseIndex, 
-                            doc.fileName, 
+                            tenderId,
+                            supplierId,
+                            doc.clauseIndex,
+                            doc.fileName,
                             doc.originalName
                         ],
                         (err) => { if (err) reject(err); else resolve(); }
@@ -834,21 +844,50 @@ const acknowledgeCriteria = async (req, res) => {
             }
 
             // Update supplier_knockout_acknowledgments with document submission status
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `INSERT INTO supplier_knockout_acknowledgments (tender_id, supplier_id, all_clauses_checked, checklist)
-                     VALUES (?, ?, ?, ?)
-                     ON CONFLICT(tender_id, supplier_id) DO UPDATE SET
-                        all_clauses_checked=excluded.all_clauses_checked,
-                        checklist=excluded.checklist,
-                        acknowledged_at=CURRENT_TIMESTAMP`,
-                    [tenderId, supplierId, 1, JSON.stringify({ documentsUploaded: knockoutDocuments.length })],
-                    (err) => { if (err) reject(err); else resolve(); }
+            const checklist = JSON.stringify({ documentsUploaded: knockoutDocuments.length });
+            const existingAck = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT id FROM supplier_knockout_acknowledgments WHERE tender_id = ? AND supplier_id = ?`,
+                    [tenderId, supplierId],
+                    (err, row) => { if (err) reject(err); else resolve(row); }
                 );
             });
+
+            if (existingAck) {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `UPDATE supplier_knockout_acknowledgments
+                         SET all_clauses_checked = ?, checklist = ?, acknowledged_at = CURRENT_TIMESTAMP
+                         WHERE tender_id = ? AND supplier_id = ?`,
+                        [1, checklist, tenderId, supplierId],
+                        (err) => { if (err) reject(err); else resolve(); }
+                    );
+                });
+            } else {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO supplier_knockout_acknowledgments (tender_id, supplier_id, all_clauses_checked, checklist)
+                         VALUES (?, ?, ?, ?)`,
+                        [tenderId, supplierId, 1, checklist],
+                        (err) => { if (err) reject(err); else resolve(); }
+                    );
+                });
+            }
         }
 
-        res.json({ 
+        // Update legacy acknowledgement flag - only after documents (if any) are safely stored,
+        // so a failed upload doesn't leave the tender falsely marked as acknowledged.
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE supplier_tender_views
+                 SET criteria_acknowledged = 1
+                 WHERE tender_id = ? AND supplier_id = ?`,
+                [tenderId, supplierId],
+                (err) => { if (err) reject(err); else resolve(); }
+            );
+        });
+
+        res.json({
             message: 'Evaluation criteria acknowledged and knockout clause documents uploaded successfully',
             documentsUploaded: knockoutDocuments.length
         });
@@ -1763,20 +1802,23 @@ const getPurchaseHodPendingPublishing = async (req, res) => {
     try {
         const tenders = await new Promise((resolve, reject) => {
             db.all(
-                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost, u.name as creator_name
+                `SELECT dt.*, d.item_name, d.description, d.quantity, d.estimated_cost, u.name as creator_name,
+                        CASE WHEN dt.bidding_end_time <= ? THEN 1 ELSE 0 END as is_expired
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  JOIN users u ON dt.created_by = u.id
                  WHERE dt.tender_status = 'pending_purchase_hod_publishing'
                  ORDER BY dt.created_at DESC`,
-                [],
+                // See publishTenderByPurchaseHod - bound as a Date param, not GETDATE(),
+                // so it lines up with how bidding_end_time was originally stored.
+                [new Date()],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
                 }
             );
         });
-        
+
         res.json(tenders);
     } catch (error) {
         console.error('Error fetching Purchase HOD pending publishing tenders:', error);
@@ -1813,7 +1855,29 @@ const publishTenderByPurchaseHod = async (req, res) => {
         if (!tender) {
             return res.status(404).json({ error: 'Tender not found or not approved by Finance & MS HOD' });
         }
-        
+
+        // Refuse to publish a tender whose bidding end time has already passed.
+        // Checked via a bound Date param (not GETDATE()) so it lines up with how
+        // bidding_end_time was originally stored - see markExpiredTendersForOpening.
+        const expiryCheck = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT CASE WHEN bidding_end_time <= ? THEN 1 ELSE 0 END as is_expired FROM demand_tenders WHERE id = ?',
+                [new Date(), tenderId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+
+        if (expiryCheck && Number(expiryCheck.is_expired) === 1) {
+            return res.status(409).json({
+                error: 'Bidding end time has already passed. Update the bidding end time before publishing.',
+                expired: true,
+                biddingEndTime: tender.bidding_end_time
+            });
+        }
+
         // Publish the tender
         await new Promise((resolve, reject) => {
             db.run(

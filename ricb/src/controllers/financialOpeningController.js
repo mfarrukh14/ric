@@ -163,7 +163,7 @@ const scheduleFinancialOpening = async (req, res) => {
                     `UPDATE financial_openings 
                      SET scheduled_opening_time = ?, scheduled_by = ?, status = 'scheduled'
                      WHERE tender_id = ?`,
-                    [dateTime.toISOString(), userId, tenderId],
+                    [dateTime, userId, tenderId],
                     function(err) {
                         if (err) {
                             console.error('Error updating financial opening:', err);
@@ -191,7 +191,7 @@ const scheduleFinancialOpening = async (req, res) => {
                 `INSERT INTO financial_openings 
                 (tender_id, scheduled_opening_time, scheduled_by, status) 
                 VALUES (?, ?, ?, 'scheduled')`,
-                [tenderId, dateTime.toISOString(), userId],
+                [tenderId, dateTime, userId],
                 function(err) {
                     if (err) {
                         console.error('Error inserting financial opening:', err);

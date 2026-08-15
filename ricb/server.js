@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { connectDatabase } = require('./src/config/database');
+const { connectDatabase, ensureDatabaseConnection } = require('./src/config/database');
 const auditCleanupService = require('./src/services/auditCleanupService');
 
 const authRoutes = require('./src/routes/auth');
@@ -47,6 +47,15 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// If the database isn't connected yet, kick off a background reconnect
+// attempt on every request (i.e. every browser refresh) without ever
+// delaying or failing the request itself.
+app.use((req, res, next) => {
+  ensureDatabaseConnection();
+  next();
+});
+
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
@@ -128,8 +137,7 @@ connectDatabase()
     app.listen(PORT, HOST, () => {
       console.log(`Server is running on http://${HOST}:${PORT}`);
     });
-  })
-  .catch(err => {
-    console.error('Failed to connect to the database:', err);
-    process.exit(1);
   });
+// Note: connectDatabase() never rejects - a failed initial connection just
+// leaves the DB disconnected and the server starts anyway; the request
+// middleware above keeps retrying in the background.

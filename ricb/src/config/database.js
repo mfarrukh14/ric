@@ -4,30 +4,59 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
 let db = null;
+let dbConnected = false;
+let connecting = null;
 
+const getMssqlConfig = () => ({
+    server: process.env.MSSQL_HOST || '58.65.158.107',
+    port: parseInt(process.env.MSSQL_PORT || '9194', 10),
+    database: process.env.MSSQL_DATABASE || 'HMS',
+    user: process.env.MSSQL_USER || 'sa',
+    password: process.env.MSSQL_PASSWORD || 'Pakistan123',
+    options: {
+        encrypt: false,
+        trustServerCertificate: true,
+        enableArithAbort: true,
+    },
+    pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+    connectionTimeout: 5000,
+    requestTimeout: 5000,
+});
+
+// Attempts a connection but never throws/rejects - the caller (server startup,
+// or the per-request retry hook) should be able to proceed regardless of
+// whether the DB is reachable. Guarded so overlapping attempts (e.g. several
+// requests refreshing at once) share a single in-flight connect.
 const connectDatabase = async () => {
-    const mssqlConfig = {
-        server: process.env.MSSQL_HOST || '58.65.158.107',
-        port: parseInt(process.env.MSSQL_PORT || '9194', 10),
-        database: process.env.MSSQL_DATABASE || 'HMS',
-        user: process.env.MSSQL_USER || 'sa',
-        password: process.env.MSSQL_PASSWORD || 'Pakistan123',
-        options: {
-            encrypt: false,
-            trustServerCertificate: true,
-            enableArithAbort: true,
-        },
-        pool: { max: 10, min: 0, idleTimeoutMillis: 30000 }
-    };
+    if (dbConnected) return db;
+    if (connecting) return connecting;
 
-    try {
-        db = await mssqlConnect(mssqlConfig);
-        console.log('Connected to SQL Server (HMS) database');
-        await initializeDatabase();
+    connecting = (async () => {
+        try {
+            db = await mssqlConnect(getMssqlConfig());
+            dbConnected = true;
+            console.log('Connected to SQL Server (HMS) database');
+            await initializeDatabase();
+        } catch (err) {
+            dbConnected = false;
+            db = null;
+            console.warn('Database unreachable, will keep serving and retry later:', err.message);
+        } finally {
+            connecting = null;
+        }
         return db;
-    } catch (err) {
-        console.error('Error connecting to database:', err);
-        throw err;
+    })();
+
+    return connecting;
+};
+
+const isDatabaseConnected = () => dbConnected;
+
+// Fire-and-forget reconnect attempt - safe to call from a request middleware
+// on every page load without ever delaying or failing that request.
+const ensureDatabaseConnection = () => {
+    if (!dbConnected && !connecting) {
+        connectDatabase().catch(() => {});
     }
 };
 
@@ -3594,6 +3623,8 @@ const seedEquipmentFields = async (categoryId) => {
 module.exports = {
     connectDatabase,
     getDatabase,
+    isDatabaseConnected,
+    ensureDatabaseConnection,
     generateCredentials,
     generateUserBasedCredentials
 };

@@ -2,6 +2,12 @@ const { getDatabase } = require('../config/database');
 const fs = require('fs');
 const path = require('path');
 
+const MIN_BIDDING_LEAD_MS = 2 * 60 * 1000;
+
+// A bidding end time must be a real future date at least 2 minutes out -
+// otherwise suppliers effectively get no window to respond.
+const isBiddingEndTimeTooSoon = (date) => date.getTime() < Date.now() + MIN_BIDDING_LEAD_MS;
+
 // Get demands for purchase department
 const getPurchaseDemands = async (req, res) => {
     const db = getDatabase();
@@ -91,6 +97,9 @@ const evaluateDemandPurchase = async (req, res) => {
         if (isNaN(biddingEndDate.getTime())) {
             return res.status(400).json({ message: 'Invalid bidding end time' });
         }
+        if (isBiddingEndTimeTooSoon(biddingEndDate)) {
+            return res.status(400).json({ message: 'Bidding end time must be at least 2 minutes from now' });
+        }
     }
 
     try {
@@ -170,6 +179,9 @@ const approveDemand = async (req, res) => {
     const expiryDateParsed = new Date(expiryDate);
     if (isNaN(expiryDateParsed.getTime())) {
         return res.status(400).json({ message: 'Invalid bidding expiry date' });
+    }
+    if (isBiddingEndTimeTooSoon(expiryDateParsed)) {
+        return res.status(400).json({ message: 'Bidding expiry date must be at least 2 minutes from now' });
     }
 
     // Validate required files
@@ -540,9 +552,9 @@ const getManagableTenders = async (req, res) => {
                         fu.name as finance_hod_response_by_name,
                         mu.name as ms_hod_response_by_name,
                         eu.name as extension_by_name,
-                        CASE 
-                            WHEN dt.bidding_end_time > datetime('now') THEN 'active'
-                            WHEN dt.bidding_end_time <= datetime('now') THEN 'expired'
+                        CASE
+                            WHEN dt.bidding_end_time > ? THEN 'active'
+                            ELSE 'expired'
                         END as tender_time_status
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
@@ -554,7 +566,11 @@ const getManagableTenders = async (req, res) => {
                  WHERE d.hod_status = 'approved'
                  AND (dt.finance_hod_status = 'pending' OR dt.ms_hod_status = 'pending' OR dt.tender_status IN ('published', 'active'))
                  ORDER BY dt.created_at DESC`,
-                [],
+                // Bound as a Date param (not GETDATE()/datetime('now')) so it goes through the
+                // same driver serialization as bidding_end_time was stored with - comparing
+                // against the server clock directly caused tenders to read as expired hours
+                // before their real deadline (see mssqlAdapter.js comment on GETDATE() offset).
+                [new Date()],
                 (err, rows) => {
                     if (err) {
                         console.error('❌ Database query error:', err);
@@ -604,12 +620,13 @@ const updateTenderTime = async (req, res) => {
     }
 
     try {
-        // Validate that the new time is in the future
+        // Validate that the new time is a real date at least 2 minutes out
         const newTime = new Date(newBiddingEndTime);
-        const currentTime = new Date();
-        
-        if (newTime <= currentTime) {
-            return res.status(400).json({ message: 'New bidding end time must be in the future' });
+        if (isNaN(newTime.getTime())) {
+            return res.status(400).json({ message: 'Invalid bidding end time' });
+        }
+        if (isBiddingEndTimeTooSoon(newTime)) {
+            return res.status(400).json({ message: 'New bidding end time must be at least 2 minutes from now' });
         }
 
         // Get current tender details

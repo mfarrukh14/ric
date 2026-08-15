@@ -15,7 +15,7 @@ const EPROC_TABLES = [
     'supplier_otp_verifications', 'supplier_otp_verification',
     'supplier_evaluations', 'supplier_bids', 'supplier_bid_items',
     'supplier_tender_views', 'supplier_knockout_acknowledgments',
-    'supplier_awards',
+    'supplier_awards', 'knockout_clause_documents',
     'demand_evaluations', 'demand_tenders',
     'supply_orders', 'purchase_orders',
     'tender_evaluation_criteria', 'tender_status_history',

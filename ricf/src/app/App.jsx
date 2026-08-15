@@ -40,10 +40,21 @@ function App() {
     try {
       const storedUser = localStorage.getItem('user');
       const storedSupplier = localStorage.getItem('supplier');
-      
+      const registrationIncomplete = localStorage.getItem('supplierRegistrationIncomplete') === 'true';
+
       if (storedUser) {
         const userData = JSON.parse(storedUser);
         setUser(userData);
+      } else if (storedSupplier && registrationIncomplete) {
+        // This supplier token only exists to drive the registration wizard
+        // (Login.jsx) - it was never a real logged-in session, so a page
+        // refresh mid-registration must NOT land the user on the dashboard.
+        // Drop it and leave `user` unset so every protected route bounces to
+        // /login and the supplier has to sign in (or restart registration)
+        // for real.
+        localStorage.removeItem('supplier');
+        localStorage.removeItem('supplierToken');
+        localStorage.removeItem('supplierRegistrationIncomplete');
       } else if (storedSupplier) {
         // Handle supplier login - convert supplier data to user format
         const supplierData = JSON.parse(storedSupplier);
@@ -57,6 +68,8 @@ function App() {
       console.error('Error parsing user data:', error);
       localStorage.removeItem('user');
       localStorage.removeItem('supplier');
+      localStorage.removeItem('supplierToken');
+      localStorage.removeItem('supplierRegistrationIncomplete');
     } finally {
       setLoading(false);
     }

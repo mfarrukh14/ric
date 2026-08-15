@@ -309,7 +309,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         toast.error('Bidding end date and time are required');
         return;
       }
-      
+
+      const biddingEndDateTime = new Date(`${tenderData.biddingEndDate}T${tenderData.biddingEndTime}`);
+      if (biddingEndDateTime.getTime() < Date.now() + 2 * 60 * 1000) {
+        toast.error('Bidding end time must be at least 2 minutes from now');
+        return;
+      }
+
       if (tenderData.evaluationCriteria.length === 0) {
         toast.error('At least one evaluation criteria is required');
         return;

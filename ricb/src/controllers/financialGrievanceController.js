@@ -152,11 +152,11 @@ const initiateFinancialGrievance = async (req, res) => {
                 VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
             `, [
                 tenderId,
-                meetingDateTime,
+                new Date(meetingDateTime),
                 meetingLocation || 'Conference Room - Rawalpindi Institute of Cardiology',
                 customMessage || '',
-                grievanceStartDate.toISOString(),
-                grievanceEndDate.toISOString(),
+                grievanceStartDate,
+                grievanceEndDate,
                 userId
             ], function(err) {
                 if (err) reject(err);

@@ -949,47 +949,33 @@ const getActiveTenders = async (req, res) => {
     const db = getDatabase();
 
     try {
-        // Get all tenders with status active (time filter applied in JS for broader timestamp compatibility)
-        const rawActive = await new Promise((resolve, reject) => {
+        // Get all tenders with status active and a bidding_end_time still ahead of
+        // now. Compared against a bound Date param (not a JS-side Date.parse of the
+        // stored string against Date.now()) - the driver serializes bidding_end_time
+        // and GETDATE() through different clocks (see mssqlAdapter.js), so comparing
+        // a raw JS parse of the stored value against true Date.now() was hiding
+        // tenders from suppliers hours before their real deadline. Binding new Date()
+        // here goes through the same serialization bidding_end_time was stored with.
+        const tenders = await new Promise((resolve, reject) => {
             db.all(
                 `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description, d.urgency, d.required_by
                  FROM demand_tenders dt
                  JOIN demands d ON dt.demand_id = d.id
                  WHERE dt.tender_status = 'active'
+                 AND dt.bidding_end_time > ?
                  ORDER BY dt.bidding_end_time ASC`,
+                [new Date()],
                 (err, rows) => {
                     if (err) {
                         console.error('❌ Database error in getActiveTenders:', err);
                         reject(err);
                     } else {
-                        console.log('✅ Raw active tenders fetched:', rows.length);
+                        console.log('✅ Active tenders fetched:', rows.length);
                         resolve(rows || []);
                     }
                 }
             );
         });
-
-        // Normalize and filter by bidding_end_time > now
-        const nowTs = Date.now();
-        const tenders = rawActive.filter(t => {
-            if (!t.bidding_end_time) return false;
-            // Normalize possible ISO / with T / with Z / without space
-            let raw = t.bidding_end_time;
-            // Replace 'T' with space for readability (Date can still parse ISO with T, but keep uniform)
-            const parsed = Date.parse(raw);
-            if (isNaN(parsed)) {
-                // Try fallback by stripping Z and milliseconds
-                let fallback = raw.replace('T',' ').replace('Z','').split('.')[0];
-                const parsedFallback = Date.parse(fallback);
-                if (isNaN(parsedFallback)) {
-                    console.warn('⚠️ Unparseable bidding_end_time, excluding tender id', t.id, raw);
-                    return false;
-                }
-                return parsedFallback > nowTs;
-            }
-            return parsed > nowTs;
-        });
-        console.log(`🕒 After time filtering, active tenders remaining: ${tenders.length}`);
 
         // For each tender, get the associated demand items
         const tendersWithItems = await Promise.all(
