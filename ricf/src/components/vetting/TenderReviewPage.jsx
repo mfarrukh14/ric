@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { ArrowLeft, Save, Trash2, Plus, Edit3, Check, X } from 'lucide-react';
+import { ArrowLeft, FloppyDisk as Save, Trash as Trash2, Plus, PencilSimpleLine as Edit3, Check, X } from '@phosphor-icons/react';
 import api from '../../config/api';
+import { confirmDialog } from '../../lib/confirm';
 
+import { formatDate } from '../../lib/time';
+import { money } from '../../ui/status';
 const TenderReviewPage = () => {
     const { tenderId } = useParams();
     const navigate = useNavigate();
@@ -55,16 +58,16 @@ const TenderReviewPage = () => {
         setEditedItems(updatedItems);
     };
 
-    const handleDeleteItem = (index) => {
+    const handleDeleteItem = async (index) => {
         if (editedItems.length <= 1) {
             toast.error('Cannot delete the last item. A tender must have at least one item.');
             return;
         }
         
-        if (window.confirm('Are you sure you want to delete this item?')) {
+        if ((await confirmDialog('Are you sure you want to delete this item?'))) {
             const updatedItems = editedItems.filter((_, i) => i !== index);
             setEditedItems(updatedItems);
-            toast.success('Item deleted successfully');
+            toast.success('Item deleted');
         }
     };
 
@@ -98,7 +101,7 @@ const TenderReviewPage = () => {
             custom_item_name: ''
         });
         setShowAddItemModal(false);
-        toast.success('Item added successfully');
+        toast.success('Item added');
     };
 
     const saveChanges = async () => {
@@ -122,7 +125,7 @@ const TenderReviewPage = () => {
             };
 
             await api.put(`/vetting/tenders/${tenderId}/update-items`, updatedTenderData);
-            toast.success('Changes saved successfully');
+            toast.success('Changes saved');
             
             // Refresh the data
             await fetchTenderDetails();
@@ -143,7 +146,7 @@ const TenderReviewPage = () => {
         try {
             setSaving(true);
             await api.post(`/vetting/tenders/${tenderId}/evaluate`, evaluationForm);
-            toast.success('Evaluation submitted successfully');
+            toast.success('Evaluation submitted');
             navigate(-1);
         } catch (error) {
             console.error('Error submitting evaluation:', error);
@@ -172,7 +175,7 @@ const TenderReviewPage = () => {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <div className="ui-spin mx-auto mb-4"></div>
                     <p className="text-gray-600">Loading tender details...</p>
                 </div>
             </div>
@@ -186,9 +189,9 @@ const TenderReviewPage = () => {
                     <p className="text-gray-600">Tender not found</p>
                     <button 
                         onClick={() => navigate(-1)}
-                        className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                        className="ui-btn ui-btn--primary mt-4"
                     >
-                        Go Back
+                        Go back
                     </button>
                 </div>
             </div>
@@ -206,14 +209,14 @@ const TenderReviewPage = () => {
                         <div className="flex items-center space-x-4">
                             <button
                                 onClick={() => navigate(-1)}
-                                className="flex items-center text-gray-600 hover:text-gray-900"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <ArrowLeft className="w-5 h-5 mr-1" />
                                 Back
                             </button>
                             <div>
                                 <h1 className="text-xl font-semibold text-gray-900">
-                                    Tender Review - {tender.tender_number}
+                                    Tender review - {tender.tender_number}
                                 </h1>
                                 <p className="text-sm text-gray-500">
                                     Vetting Committee Evaluation
@@ -224,7 +227,7 @@ const TenderReviewPage = () => {
                             <button
                                 onClick={saveChanges}
                                 disabled={saving}
-                                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                                className="ui-btn ui-btn--primary"
                             >
                                 <Save className="w-4 h-4 mr-1" />
                                 {saving ? 'Saving...' : 'Save Changes'}
@@ -239,81 +242,81 @@ const TenderReviewPage = () => {
                     {/* Main Content */}
                     <div className="lg:col-span-2">
                         {/* Tender Information */}
-                        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                            <h2 className="text-lg font-semibold text-gray-900 mb-4">Tender Information</h2>
+                        <div className="ui-panel ui-panel--pad mb-6">
+                            <h2 className="text-lg font-semibold text-gray-900 mb-4">Tender information</h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Tender Number</label>
+                                    <label className="ui-label block">Tender number</label>
                                     <p className="mt-1 text-sm text-gray-900">{tender.tender_number}</p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Description</label>
+                                    <label className="ui-label block">Description</label>
                                     <p className="mt-1 text-sm text-gray-900">{tender.demand_description}</p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Created By</label>
+                                    <label className="ui-label block">Created by</label>
                                     <p className="mt-1 text-sm text-gray-900">{tender.created_by_name}</p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Department</label>
+                                    <label className="ui-label block">Department</label>
                                     <p className="mt-1 text-sm text-gray-900">{tender.created_by_department}</p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Required By</label>
+                                    <label className="ui-label block">Required by</label>
                                     <p className="mt-1 text-sm text-gray-900">
-                                        {new Date(tender.required_by).toLocaleDateString()}
+                                        {formatDate(tender.required_by)}
                                     </p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Urgency</label>
+                                    <label className="ui-label block">Urgency</label>
                                     <p className="mt-1 text-sm text-gray-900 capitalize">{tender.urgency}</p>
                                 </div>
                             </div>
                         </div>
 
                         {/* Tender Items */}
-                        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                        <div className="ui-panel ui-panel--pad mb-6">
                             <div className="flex items-center justify-between mb-4">
-                                <h2 className="text-lg font-semibold text-gray-900">Tender Items</h2>
+                                <h2 className="text-lg font-semibold text-gray-900">Tender items</h2>
                                 <div className="flex items-center space-x-3">
                                     <span className="text-sm text-gray-600">
-                                        Total: PKR {calculateTotalCost().toLocaleString()}
+                                        Total: {money(calculateTotalCost())}
                                     </span>
                                     <button
                                         onClick={() => setShowAddItemModal(true)}
-                                        className="flex items-center px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                                        className="ui-btn ui-btn--primary ui-btn--sm"
                                     >
                                         <Plus className="w-4 h-4 mr-1" />
-                                        Add Item
+                                        Add item
                                     </button>
                                 </div>
                             </div>
 
                             <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                                <table className="ui-table">
+                                    <thead>
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Item Name
+                                            <th className="text-left">
+                                                Item name
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Quantity
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Unit
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Unit Cost
+                                            <th className="text-left">
+                                                Unit cost
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Total Cost
+                                            <th className="text-left">
+                                                Total cost
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Actions
                                             </th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody>
                                         {editedItems.map((item, index) => (
                                             <ItemRow
                                                 key={item.id || index}
@@ -333,11 +336,11 @@ const TenderReviewPage = () => {
 
                         {/* Evaluation Criteria */}
                         {evaluationCriteria && evaluationCriteria.length > 0 && (
-                            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                                <h2 className="text-lg font-semibold text-gray-900 mb-4">Evaluation Criteria</h2>
+                            <div className="ui-panel ui-panel--pad mb-6">
+                                <h2 className="text-lg font-semibold text-gray-900 mb-4">Evaluation criteria</h2>
                                 <div className="space-y-3">
                                     {evaluationCriteria.map((criteria, index) => (
-                                        <div key={index} className="border rounded-lg p-4">
+                                        <div key={index} className="ui-card">
                                             <div className="flex items-start justify-between">
                                                 <div className="flex-1">
                                                     <h3 className="font-medium text-gray-900">{criteria.criteria_title}</h3>
@@ -349,7 +352,7 @@ const TenderReviewPage = () => {
                                                             Knockout
                                                         </span>
                                                     ) : (
-                                                        <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded">
+                                                        <span className="px-2 py-1 bg-blue-100 text-xs font-medium rounded">
                                                             {criteria.weightage}%
                                                         </span>
                                                     )}
@@ -366,11 +369,11 @@ const TenderReviewPage = () => {
                     <div className="lg:col-span-1">
                         {/* Existing Evaluations */}
                         {existingEvaluations && existingEvaluations.length > 0 && (
-                            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-4">Committee Evaluations</h3>
+                            <div className="ui-panel ui-panel--pad mb-6">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-4">Committee evaluations</h3>
                                 <div className="space-y-3">
                                     {existingEvaluations.map((evaluation, index) => (
-                                        <div key={index} className="border rounded-lg p-3">
+                                        <div key={index} className="ui-card">
                                             <div className="flex items-center justify-between mb-2">
                                                 <span className="font-medium text-gray-900">{evaluation.member_name}</span>
                                                 <span className={`px-2 py-1 text-xs font-medium rounded ${
@@ -391,11 +394,11 @@ const TenderReviewPage = () => {
                         )}
 
                         {/* Evaluation Form */}
-                        <div className="bg-white rounded-lg shadow-sm p-6">
-                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Your Evaluation</h3>
+                        <div className="ui-panel ui-panel--pad">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Your evaluation</h3>
                             <div className="space-y-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Decision</label>
+                                    <label className="ui-label block mb-2">Decision</label>
                                     <div className="space-y-2">
                                         <label className="flex items-center">
                                             <input
@@ -406,7 +409,7 @@ const TenderReviewPage = () => {
                                                 onChange={(e) => setEvaluationForm(prev => ({ ...prev, decision: e.target.value }))}
                                                 className="mr-2"
                                             />
-                                            <span className="text-green-700 font-medium">Approve</span>
+                                            <span className="font-medium">Approve</span>
                                         </label>
                                         <label className="flex items-center">
                                             <input
@@ -423,12 +426,12 @@ const TenderReviewPage = () => {
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Comments</label>
+                                    <label className="ui-label block mb-2">Comments</label>
                                     <textarea
                                         value={evaluationForm.comments}
                                         onChange={(e) => setEvaluationForm(prev => ({ ...prev, comments: e.target.value }))}
                                         rows={4}
-                                        className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        className="ui-input ui-textarea"
                                         placeholder="Enter your comments (optional)"
                                     />
                                 </div>
@@ -436,7 +439,7 @@ const TenderReviewPage = () => {
                                 <button
                                     onClick={submitEvaluation}
                                     disabled={saving || !evaluationForm.decision}
-                                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                                    className="ui-btn ui-btn--primary w-full"
                                 >
                                     {saving ? 'Submitting...' : 'Submit Evaluation'}
                                 </button>
@@ -473,76 +476,76 @@ const ItemRow = ({ item, index, editingItem, setEditingItem, onEdit, onDelete, g
 
     return (
         <tr>
-            <td className="px-6 py-4 whitespace-nowrap">
+            <td className="whitespace-nowrap">
                 {isEditing ? (
                     <input
                         type="text"
                         value={item.item_name || ''}
                         onChange={(e) => onEdit(index, 'item_name', e.target.value)}
-                        className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                        className="ui-input"
                         placeholder="Item name"
                     />
                 ) : (
                     <div className="text-sm text-gray-900">{getItemDisplayName(item)}</div>
                 )}
             </td>
-            <td className="px-6 py-4 whitespace-nowrap">
+            <td className="whitespace-nowrap">
                 {isEditing ? (
                     <input
                         type="number"
                         value={item.quantity || ''}
                         onChange={(e) => onEdit(index, 'quantity', e.target.value)}
-                        className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                        className="ui-input"
                         min="1"
                     />
                 ) : (
                     <div className="text-sm text-gray-900">{item.quantity}</div>
                 )}
             </td>
-            <td className="px-6 py-4 whitespace-nowrap">
+            <td className="whitespace-nowrap">
                 {isEditing ? (
                     <input
                         type="text"
                         value={item.unit || ''}
                         onChange={(e) => onEdit(index, 'unit', e.target.value)}
-                        className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                        className="ui-input"
                         placeholder="Unit"
                     />
                 ) : (
                     <div className="text-sm text-gray-900">{item.unit}</div>
                 )}
             </td>
-            <td className="px-6 py-4 whitespace-nowrap">
+            <td className="whitespace-nowrap">
                 {isEditing ? (
                     <input
                         type="number"
                         value={item.estimated_cost || ''}
                         onChange={(e) => onEdit(index, 'estimated_cost', e.target.value)}
-                        className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm"
+                        className="ui-input"
                         min="0"
                         step="0.01"
                     />
                 ) : (
-                    <div className="text-sm text-gray-900">PKR {parseFloat(item.estimated_cost || 0).toLocaleString()}</div>
+                    <div className="text-sm text-gray-900">{money(item.estimated_cost)}</div>
                 )}
             </td>
-            <td className="px-6 py-4 whitespace-nowrap">
+            <td className="whitespace-nowrap">
                 <div className="text-sm text-gray-900">
-                    PKR {((parseFloat(item.estimated_cost || 0)) * (parseInt(item.quantity || 0))).toLocaleString()}
+                    {money(parseFloat(item.estimated_cost || 0) * parseInt(item.quantity || 0))}
                 </div>
             </td>
-            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+            <td className="whitespace-nowrap text-right">
                 {isEditing ? (
                     <div className="flex space-x-2">
                         <button
                             onClick={handleSave}
-                            className="text-green-600 hover:text-green-900"
+                            className="ui-btn ui-btn--ghost ui-btn--sm"
                         >
                             <Check className="w-4 h-4" />
                         </button>
                         <button
                             onClick={handleCancel}
-                            className="text-gray-400 hover:text-gray-600"
+                            className="ui-btn ui-btn--ghost ui-btn--sm"
                         >
                             <X className="w-4 h-4" />
                         </button>
@@ -551,13 +554,13 @@ const ItemRow = ({ item, index, editingItem, setEditingItem, onEdit, onDelete, g
                     <div className="flex space-x-2">
                         <button
                             onClick={() => setEditingItem(index)}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="ui-btn ui-btn--ghost ui-btn--sm"
                         >
                             <Edit3 className="w-4 h-4" />
                         </button>
                         <button
                             onClick={() => onDelete(index)}
-                            className="text-red-600 hover:text-red-900"
+                            className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm"
                         >
                             <Trash2 className="w-4 h-4" />
                         </button>
@@ -571,53 +574,53 @@ const ItemRow = ({ item, index, editingItem, setEditingItem, onEdit, onDelete, g
 // Add Item Modal Component
 const AddItemModal = ({ newItem, setNewItem, onAdd, onClose }) => {
     return (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg max-w-md w-full p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Add New Item</h3>
+        <div className="ui-scrim">
+            <div className="ui-dialog ui-dialog--legacy ui-dialog--sm">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Add new item</h3>
                 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
+                        <label className="ui-label block mb-1">Item name *</label>
                         <input
                             type="text"
                             value={newItem.custom_item_name}
                             onChange={(e) => setNewItem(prev => ({ ...prev, custom_item_name: e.target.value }))}
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="ui-input"
                             placeholder="Enter item name"
                         />
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+                            <label className="ui-label block mb-1">Quantity *</label>
                             <input
                                 type="number"
                                 value={newItem.quantity}
                                 onChange={(e) => setNewItem(prev => ({ ...prev, quantity: e.target.value }))}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="ui-input"
                                 min="1"
                             />
                         </div>
                         
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Unit *</label>
+                            <label className="ui-label block mb-1">Unit *</label>
                             <input
                                 type="text"
                                 value={newItem.unit}
                                 onChange={(e) => setNewItem(prev => ({ ...prev, unit: e.target.value }))}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="ui-input"
                                 placeholder="e.g., pcs, kg, box"
                             />
                         </div>
                     </div>
                     
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit Cost (PKR) *</label>
+                        <label className="ui-label block mb-1">Unit cost (PKR) *</label>
                         <input
                             type="number"
                             value={newItem.estimated_cost}
                             onChange={(e) => setNewItem(prev => ({ ...prev, estimated_cost: e.target.value }))}
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="ui-input"
                             min="0"
                             step="0.01"
                         />
@@ -627,15 +630,15 @@ const AddItemModal = ({ newItem, setNewItem, onAdd, onClose }) => {
                 <div className="flex justify-end space-x-3 mt-6">
                     <button
                         onClick={onClose}
-                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                        className="ui-btn ui-btn--secondary"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={onAdd}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                        className="ui-btn ui-btn--primary"
                     >
-                        Add Item
+                        Add item
                     </button>
                 </div>
             </div>

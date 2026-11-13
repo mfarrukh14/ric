@@ -1,15 +1,12 @@
 const express = require('express');
-const router = express.Router();
+const { authenticate } = require('../middleware/auth');
+const { rateLimit, byIpAndAccount } = require('../middleware/rateLimit');
 const authController = require('../controllers/authController');
-const auth = require('../middleware/auth');
 
-// Login route
-router.post('/login', authController.login);
+const router = express.Router();
 
-// Complete 2FA login
-router.post('/complete-2fa-login', authController.complete2FALogin);
-
-// Get current user profile
-router.get('/profile', auth, authController.getProfile);
+router.post('/login', rateLimit({ max: 10, key: byIpAndAccount('username') }), authController.login);
+router.post('/complete-2fa-login', rateLimit({ max: 10, key: byIpAndAccount('challenge') }), authController.complete2FALogin);
+router.get('/profile', authenticate, authController.getProfile);
 
 module.exports = router;

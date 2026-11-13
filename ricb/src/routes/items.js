@@ -1,52 +1,29 @@
 const express = require('express');
+const { staffOnly, superAdminOnly } = require('../middleware/auth');
+const items = require('../controllers/itemController');
+const fields = require('../controllers/categoryFieldsController');
+
 const router = express.Router();
-const auth = require('../middleware/auth');
-const {
-    getItemCategories,
-    getItemCategory,
-    createItemCategory,
-    updateItemCategory,
-    deleteItemCategory,
-    getItemNamesByCategory,
-    getAllItemNames,
-    getItemName,
-    createItemName,
-    updateItemName,
-    deleteItemName
-} = require('../controllers/itemController');
 
-const {
-    getCategoryFields,
-    createCategoryField,
-    updateCategoryField,
-    deleteCategoryField,
-    createFieldOption,
-    updateFieldOption,
-    deleteFieldOption
-} = require('../controllers/categoryFieldsController');
+// Reads: any staff member (demand forms). Writes: superadmin.
+router.get('/categories', staffOnly, items.getItemCategories);
+router.get('/categories/:id', staffOnly, items.getItemCategory);
+router.get('/categories/:categoryId/names', staffOnly, items.getItemNamesByCategory);
+router.get('/categories/:categoryId/fields', staffOnly, fields.getCategoryFields);
+router.get('/names', staffOnly, items.getAllItemNames);
+router.get('/names/:id', staffOnly, items.getItemName);
 
-// Item Categories Routes
-router.get('/categories', auth, getItemCategories);
-router.get('/categories/:id', auth, getItemCategory);
-router.post('/categories', auth, createItemCategory);
-router.put('/categories/:id', auth, updateItemCategory);
-router.delete('/categories/:id', auth, deleteItemCategory);
-
-// Item Names Routes
-router.get('/names', auth, getAllItemNames);
-router.get('/names/:id', auth, getItemName);
-router.get('/categories/:categoryId/names', auth, getItemNamesByCategory);
-router.post('/names', auth, createItemName);
-router.put('/names/:id', auth, updateItemName);
-router.delete('/names/:id', auth, deleteItemName);
-
-// Category Custom Fields Routes (generic engine replacing pharma/equipment hardcoding)
-router.get('/categories/:categoryId/fields', auth, getCategoryFields);
-router.post('/categories/:categoryId/fields', auth, createCategoryField);
-router.put('/fields/:fieldId', auth, updateCategoryField);
-router.delete('/fields/:fieldId', auth, deleteCategoryField);
-router.post('/fields/:fieldId/options', auth, createFieldOption);
-router.put('/fields/options/:optionId', auth, updateFieldOption);
-router.delete('/fields/options/:optionId', auth, deleteFieldOption);
+router.post('/categories', superAdminOnly, items.createItemCategory);
+router.put('/categories/:id', superAdminOnly, items.updateItemCategory);
+router.delete('/categories/:id', superAdminOnly, items.deleteItemCategory);
+router.post('/names', superAdminOnly, items.createItemName);
+router.put('/names/:id', superAdminOnly, items.updateItemName);
+router.delete('/names/:id', superAdminOnly, items.deleteItemName);
+router.post('/categories/:categoryId/fields', superAdminOnly, fields.createCategoryField);
+router.put('/fields/:fieldId', superAdminOnly, fields.updateCategoryField);
+router.delete('/fields/:fieldId', superAdminOnly, fields.deleteCategoryField);
+router.post('/fields/:fieldId/options', superAdminOnly, fields.createFieldOption);
+router.put('/fields/options/:optionId', superAdminOnly, fields.updateFieldOption);
+router.delete('/fields/options/:optionId', superAdminOnly, fields.deleteFieldOption);
 
 module.exports = router;

@@ -1,38 +1,22 @@
 const express = require('express');
+const { staffOnly, requireFinanceToken } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const orders = require('../controllers/purchaseOrderController');
+
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
-const {
-    createPurchaseOrder,
-    getPurchaseOrders,
-    getPurchaseOrderById,
-    getPurchaseOrderByNumber,
-    getAwardedSuppliersForTender,
-    updatePurchaseOrderStatus,
-    getPurchaseOrdersByAwardLetter
-} = require('../controllers/purchaseOrderController');
 
-// Create a new purchase order
-router.post('/', authenticateToken, createPurchaseOrder);
+// Read-only feed for the Finance module. It used to be public; it now needs the
+// shared X-Finance-Token header (FINANCE_CALLBACK_TOKEN), the same secret the
+// Finance callback already uses.
+router.get('/public', requireFinanceToken, orders.getPurchaseOrders);
 
-// Get all purchase orders (with optional filters)
-router.get('/', authenticateToken, getPurchaseOrders);
-
-// Public read-only access for finance app
-router.get('/public', getPurchaseOrders);
-
-// Get awarded suppliers for a tender (for creating PO)
-router.get('/tender/:tenderId/awarded-suppliers', authenticateToken, getAwardedSuppliersForTender);
-
-// Get purchase orders by award letter ID
-router.get('/award-letter/:awardLetterId', authenticateToken, getPurchaseOrdersByAwardLetter);
-
-// Get purchase order by PO number
-router.get('/by-number/:poNumber', authenticateToken, getPurchaseOrderByNumber);
-
-// Get purchase order by ID
-router.get('/:id', authenticateToken, getPurchaseOrderById);
-
-// Update purchase order status
-router.patch('/:id/status', authenticateToken, updatePurchaseOrderStatus);
+router.use(staffOnly);
+router.post('/', allow('purchase'), orders.createPurchaseOrder);
+router.get('/', allow('purchase', 'store'), orders.getPurchaseOrders);
+router.get('/tender/:tenderId/awarded-suppliers', allow('purchase'), orders.getAwardedSuppliersForTender);
+router.get('/award-letter/:awardLetterId', allow('purchase'), orders.getPurchaseOrdersByAwardLetter);
+router.get('/by-number/:poNumber', allow('purchase'), orders.getPurchaseOrderByNumber);
+router.get('/:id', allow('purchase', 'store'), orders.getPurchaseOrderById);
+router.patch('/:id/status', allow('purchase'), orders.updatePurchaseOrderStatus);
 
 module.exports = router;

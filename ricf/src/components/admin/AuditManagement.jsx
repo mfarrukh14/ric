@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Search, Calendar, Users, Activity, BarChart3, Database, Trash2, Settings } from 'lucide-react';
+import { DownloadSimple as Download, MagnifyingGlass as Search, Calendar, UsersThree as Users, Pulse as Activity, ChartBar as BarChart3, Database, Trash as Trash2, GearSix as Settings } from '@phosphor-icons/react';
 import { apiUrl } from '../../config/api';
+import { confirmDialog } from '../../lib/confirm';
 
+import { formatDate, formatDateTime } from '../../lib/time';
 const AuditManagement = () => {
     const [auditLogs, setAuditLogs] = useState([]);
     const [auditFiles, setAuditFiles] = useState([]);
@@ -51,15 +53,12 @@ const AuditManagement = () => {
                 if (value) queryParams.append(key, value);
             });
 
-            console.log('Fetching audit logs with params:', queryParams.toString());
             const response = await fetch(`${apiUrl}/audit/logs?${queryParams}`, {
                 headers: getAuthHeaders()
             });
 
-            console.log('Response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
-                console.log('Audit logs data:', data);
                 setAuditLogs(data.logs || []);
             } else {
                 const errorText = await response.text();
@@ -82,10 +81,8 @@ const AuditManagement = () => {
                 headers: getAuthHeaders()
             });
 
-            console.log('Files response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
-                console.log('Audit files data:', data);
                 setAuditFiles(data);
             } else {
                 const errorText = await response.text();
@@ -108,10 +105,8 @@ const AuditManagement = () => {
                 headers: getAuthHeaders()
             });
 
-            console.log('Statistics response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
-                console.log('Statistics data:', data);
                 setStatistics(data);
             } else {
                 const errorText = await response.text();
@@ -134,10 +129,8 @@ const AuditManagement = () => {
                 headers: getAuthHeaders()
             });
 
-            console.log('Cleanup stats response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
-                console.log('Cleanup stats data:', data);
                 setCleanupStats(data.data || {});
             } else {
                 const errorText = await response.text();
@@ -175,7 +168,7 @@ const AuditManagement = () => {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
-                setSuccess('Audit logs downloaded successfully');
+                setSuccess('Audit logs downloaded');
             } else {
                 setError('Failed to download audit logs');
             }
@@ -200,7 +193,7 @@ const AuditManagement = () => {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
-                setSuccess(`File ${filename} downloaded successfully`);
+                setSuccess(`File ${filename} downloaded`);
             } else {
                 setError('Failed to download file');
             }
@@ -241,7 +234,7 @@ const AuditManagement = () => {
     };
 
     const performCleanup = async () => {
-        if (!confirm(`Are you sure you want to cleanup audit logs older than ${retentionDays} days? This action cannot be undone.`)) {
+        if (!(await confirmDialog(`Are you sure you want to cleanup audit logs older than ${retentionDays} days? This action cannot be undone.`))) {
             return;
         }
 
@@ -292,9 +285,7 @@ const AuditManagement = () => {
         }
     };
 
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleString();
-    };
+
 
     const formatFileSize = (bytes) => {
         if (bytes === 0) return '0 Bytes';
@@ -305,19 +296,15 @@ const AuditManagement = () => {
     };
 
     return (
-        <div className="p-6 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 min-h-screen">
-            <div className="max-w-7xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
-                    <div>
-                        <h1 className="text-3xl font-bold text-gray-900">Audit Trail Management</h1>
-                        <p className="text-gray-600 mt-2">Comprehensive audit logging and compliance monitoring</p>
-                    </div>
+        <div>
+            <div>
+                <div className="flex justify-end mb-5">
                     <button
                         onClick={downloadAllLogs}
-                        className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 flex items-center space-x-2 transition-colors shadow-lg"
+                        className="ui-btn ui-btn--secondary"
                     >
-                        <Download size={20} />
-                        <span>Download All Logs (.txt)</span>
+                        <Download size={17} />
+                        <span>Download all logs (.txt)</span>
                     </button>
                 </div>
 
@@ -329,14 +316,14 @@ const AuditManagement = () => {
                     </div>
                 )}
                 {success && (
-                    <div className="bg-green-100 border border-green-400 text-green-700 p-4 rounded-lg mb-6 flex justify-between">
+                    <div className="bg-green-100 border border-green-400 p-4 rounded-lg mb-6 flex justify-between">
                         <span>{success}</span>
                         <button onClick={() => setSuccess('')} className="font-bold">×</button>
                     </div>
                 )}
 
                 {/* Tab Navigation */}
-                <div className="bg-white rounded-lg shadow-lg mb-6">
+                <div className="ui-panel mb-6">
                     <div className="border-b border-gray-200">
                         <nav className="flex space-x-8 px-6">
                             {[
@@ -366,48 +353,48 @@ const AuditManagement = () => {
                 </div>
 
                 {/* Tab Content */}
-                <div className="bg-white rounded-lg shadow-lg">
+                <div className="ui-panel">
                     {/* Audit Logs Tab */}
                     {activeTab === 'logs' && (
                         <div className="p-6">
                             {/* Filters */}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
+                                    <label className="ui-label block mb-2">Start date</label>
                                     <input
                                         type="datetime-local"
                                         value={filters.startDate}
                                         onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        className="ui-input"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
+                                    <label className="ui-label block mb-2">End date</label>
                                     <input
                                         type="datetime-local"
                                         value={filters.endDate}
                                         onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        className="ui-input"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">User ID</label>
+                                    <label className="ui-label block mb-2">User ID</label>
                                     <input
                                         type="text"
                                         placeholder="Filter by user ID"
                                         value={filters.userId}
                                         onChange={(e) => setFilters(prev => ({ ...prev, userId: e.target.value }))}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        className="ui-input"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Action</label>
+                                    <label className="ui-label block mb-2">Action</label>
                                     <input
                                         type="text"
                                         placeholder="Filter by action"
                                         value={filters.action}
                                         onChange={(e) => setFilters(prev => ({ ...prev, action: e.target.value }))}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        className="ui-input"
                                     />
                                 </div>
                             </div>
@@ -420,19 +407,19 @@ const AuditManagement = () => {
                                         placeholder="Search in audit logs..."
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        className="ui-input"
                                     />
                                 </div>
                                 <button
                                     onClick={searchLogs}
-                                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <Search size={18} />
                                     <span>Search</span>
                                 </button>
                                 <button
                                     onClick={fetchAuditLogs}
-                                    className="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     Clear
                                 </button>
@@ -441,35 +428,35 @@ const AuditManagement = () => {
                             {/* Audit Logs Table */}
                             {loading ? (
                                 <div className="text-center py-12">
-                                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                    <div className="ui-spin inline-block"></div>
                                     <p className="mt-2 text-gray-600">Loading audit logs...</p>
                                 </div>
                             ) : (
                                 <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead className="bg-gray-50">
+                                    <table className="ui-table">
+                                        <thead>
                                             <tr>
-                                                <th className="px-4 py-3 text-left font-medium text-gray-700">Timestamp</th>
-                                                <th className="px-4 py-3 text-left font-medium text-gray-700">User</th>
-                                                <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
-                                                <th className="px-4 py-3 text-left font-medium text-gray-700">Action</th>
-                                                <th className="px-4 py-3 text-left font-medium text-gray-700">Details</th>
-                                                <th className="px-4 py-3 text-left font-medium text-gray-700">IP Address</th>
+                                                <th className="text-left">Timestamp</th>
+                                                <th className="text-left">User</th>
+                                                <th className="text-left">Role</th>
+                                                <th className="text-left">Action</th>
+                                                <th className="text-left">Details</th>
+                                                <th className="text-left">IP address</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-gray-200">
+                                        <tbody>
                                             {auditLogs.length === 0 ? (
                                                 <tr>
-                                                    <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
+                                                    <td colSpan="6" className="text-center">
                                                         No audit logs found
                                                     </td>
                                                 </tr>
                                             ) : (
                                                 auditLogs.map((log, index) => (
                                                     <tr key={index} className="hover:bg-gray-50">
-                                                        <td className="px-4 py-3 text-gray-900">{formatDate(log.created_at)}</td>
-                                                        <td className="px-4 py-3 text-gray-900">{log.user_name}</td>
-                                                        <td className="px-4 py-3">
+                                                        <td>{formatDateTime(log.created_at)}</td>
+                                                        <td>{log.user_name}</td>
+                                                        <td>
                                                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                                                 log.user_role === 'superadmin' ? 'bg-red-100 text-red-800' :
                                                                 log.user_role === 'admin' ? 'bg-orange-100 text-orange-800' :
@@ -478,11 +465,11 @@ const AuditManagement = () => {
                                                                 {log.user_role}
                                                             </span>
                                                         </td>
-                                                        <td className="px-4 py-3 text-gray-900 font-medium">{log.action}</td>
-                                                        <td className="px-4 py-3 text-gray-600 max-w-xs truncate" title={log.details}>
+                                                        <td>{log.action}</td>
+                                                        <td className="max-w-xs truncate" title={log.details}>
                                                             {log.details}
                                                         </td>
-                                                        <td className="px-4 py-3 text-gray-600">{log.ip_address}</td>
+                                                        <td>{log.ip_address}</td>
                                                     </tr>
                                                 ))
                                             )}
@@ -497,13 +484,13 @@ const AuditManagement = () => {
                     {activeTab === 'files' && (
                         <div className="p-6">
                             <div className="mb-6">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Daily Audit Log Files</h3>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Daily audit log files</h3>
                                 <p className="text-gray-600">Download individual daily audit log files</p>
                             </div>
 
                             {loading ? (
                                 <div className="text-center py-12">
-                                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                    <div className="ui-spin inline-block"></div>
                                     <p className="mt-2 text-gray-600">Loading log files...</p>
                                 </div>
                             ) : (
@@ -514,18 +501,18 @@ const AuditManagement = () => {
                                         </div>
                                     ) : (
                                         auditFiles.map((file, index) => (
-                                            <div key={index} className="border border-gray-200 rounded-lg p-4 flex items-center justify-between hover:bg-gray-50">
+                                            <div key={index} className="ui-card flex items-center justify-between">
                                                 <div className="flex-1">
                                                     <h4 className="font-medium text-gray-900">{file.filename}</h4>
                                                     <div className="text-sm text-gray-600 mt-1">
                                                         <span>Size: {formatFileSize(file.size)}</span>
                                                         <span className="mx-2">•</span>
-                                                        <span>Modified: {formatDate(file.modified)}</span>
+                                                        <span>Modified: {formatDateTime(file.modified)}</span>
                                                     </div>
                                                 </div>
                                                 <button
                                                     onClick={() => downloadFile(file.filename)}
-                                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2 text-sm"
+                                                    className="ui-btn ui-btn--secondary"
                                                 >
                                                     <Download size={16} />
                                                     <span>Download</span>
@@ -542,19 +529,19 @@ const AuditManagement = () => {
                     {activeTab === 'statistics' && (
                         <div className="p-6">
                             <div className="mb-6">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Audit Statistics</h3>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Audit statistics</h3>
                                 <p className="text-gray-600">Activity overview for the last 30 days</p>
                             </div>
 
                             {loading ? (
                                 <div className="text-center py-12">
-                                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                    <div className="ui-spin inline-block"></div>
                                     <p className="mt-2 text-gray-600">Loading statistics...</p>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {/* Total Actions */}
-                                    <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg p-6 text-white">
+                                    <div className="ui-callout">
                                         <div className="flex items-center justify-between">
                                             <div>
                                                 <p className="text-blue-100">Total Actions</p>
@@ -565,8 +552,8 @@ const AuditManagement = () => {
                                     </div>
 
                                     {/* Actions by Role */}
-                                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                                        <h4 className="font-semibold text-gray-900 mb-4">Actions by Role</h4>
+                                    <div className="ui-panel ui-panel--pad">
+                                        <h4 className="font-semibold text-gray-900 mb-4">Actions by role</h4>
                                         <div className="space-y-2">
                                             {statistics.actionsByRole?.map((item, index) => (
                                                 <div key={index} className="flex justify-between">
@@ -578,8 +565,8 @@ const AuditManagement = () => {
                                     </div>
 
                                     {/* Most Active Users */}
-                                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                                        <h4 className="font-semibold text-gray-900 mb-4">Most Active Users</h4>
+                                    <div className="ui-panel ui-panel--pad">
+                                        <h4 className="font-semibold text-gray-900 mb-4">Most active users</h4>
                                         <div className="space-y-2">
                                             {statistics.mostActiveUsers?.slice(0, 5).map((user, index) => (
                                                 <div key={index} className="flex justify-between text-sm">
@@ -591,8 +578,8 @@ const AuditManagement = () => {
                                     </div>
 
                                     {/* Top Actions */}
-                                    <div className="bg-white border border-gray-200 rounded-lg p-6 md:col-span-2">
-                                        <h4 className="font-semibold text-gray-900 mb-4">Top Actions</h4>
+                                    <div className="ui-panel ui-panel--pad md:col-span-2">
+                                        <h4 className="font-semibold text-gray-900 mb-4">Top actions</h4>
                                         <div className="grid grid-cols-2 gap-4">
                                             {statistics.topActions?.slice(0, 8).map((action, index) => (
                                                 <div key={index} className="flex justify-between text-sm">
@@ -604,12 +591,12 @@ const AuditManagement = () => {
                                     </div>
 
                                     {/* Daily Activity */}
-                                    <div className="bg-white border border-gray-200 rounded-lg p-6">
-                                        <h4 className="font-semibold text-gray-900 mb-4">Recent Daily Activity</h4>
+                                    <div className="ui-panel ui-panel--pad">
+                                        <h4 className="font-semibold text-gray-900 mb-4">Recent daily activity</h4>
                                         <div className="space-y-2">
                                             {statistics.dailyActivity?.slice(0, 7).map((day, index) => (
                                                 <div key={index} className="flex justify-between text-sm">
-                                                    <span className="text-gray-600">{new Date(day.date).toLocaleDateString()}</span>
+                                                    <span className="text-gray-600">{formatDate(day.date)}</span>
                                                     <span className="font-medium">{day.count}</span>
                                                 </div>
                                             ))}
@@ -624,17 +611,17 @@ const AuditManagement = () => {
                     {activeTab === 'cleanup' && (
                         <div className="p-6">
                             <div className="mb-6">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Cleanup & Retention Management</h3>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Cleanup & retention management</h3>
                                 <p className="text-gray-600">Manage audit log retention and perform cleanup operations</p>
                             </div>
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 {/* Current Statistics */}
-                                <div className="bg-white border border-gray-200 rounded-lg p-6">
-                                    <h4 className="font-semibold text-gray-900 mb-4">Current Storage Status</h4>
+                                <div className="ui-panel ui-panel--pad">
+                                    <h4 className="font-semibold text-gray-900 mb-4">Current storage status</h4>
                                     {loading ? (
                                         <div className="text-center py-8">
-                                            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                                            <div className="ui-spin inline-block"></div>
                                         </div>
                                     ) : (
                                         <div className="space-y-4">
@@ -658,7 +645,7 @@ const AuditManagement = () => {
                                                 <span className="text-gray-600">Oldest Record:</span>
                                                 <span className="font-medium text-sm">
                                                     {cleanupStats.database?.oldestRecord ? 
-                                                        formatDate(cleanupStats.database.oldestRecord) : 'None'}
+                                                        formatDateTime(cleanupStats.database.oldestRecord) : 'None'}
                                                 </span>
                                             </div>
                                         </div>
@@ -666,13 +653,13 @@ const AuditManagement = () => {
                                 </div>
 
                                 {/* Cleanup Operations */}
-                                <div className="bg-white border border-gray-200 rounded-lg p-6">
-                                    <h4 className="font-semibold text-gray-900 mb-4">Cleanup Operations</h4>
+                                <div className="ui-panel ui-panel--pad">
+                                    <h4 className="font-semibold text-gray-900 mb-4">Cleanup operations</h4>
                                     
                                     <div className="space-y-4">
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                Retention Period (days)
+                                            <label className="ui-label block mb-2">
+                                                Retention period (days)
                                             </label>
                                             <input
                                                 type="number"
@@ -680,7 +667,7 @@ const AuditManagement = () => {
                                                 max="3650"
                                                 value={retentionDays}
                                                 onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                className="ui-input"
                                             />
                                             <p className="text-xs text-gray-500 mt-1">Minimum 30 days, maximum 10 years</p>
                                         </div>
@@ -689,30 +676,30 @@ const AuditManagement = () => {
                                             <button
                                                 onClick={updateRetentionPolicy}
                                                 disabled={loading}
-                                                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center space-x-2"
+                                                className="ui-btn ui-btn--primary flex-1"
                                             >
                                                 <Settings size={16} />
-                                                <span>Update Policy</span>
+                                                <span>Update policy</span>
                                             </button>
                                             
                                             <button
                                                 onClick={performCleanup}
                                                 disabled={loading}
-                                                className="flex-1 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center space-x-2"
+                                                className="ui-btn ui-btn--danger-solid flex-1"
                                             >
                                                 <Trash2 size={16} />
-                                                <span>Manual Cleanup</span>
+                                                <span>Manual cleanup</span>
                                             </button>
                                         </div>
 
-                                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                                        <div className="ui-callout ui-callout--warning">
                                             <p className="text-sm text-yellow-800">
                                                 <strong>Warning:</strong> Manual cleanup will permanently delete audit logs older than the specified retention period. This action cannot be undone.
                                             </p>
                                         </div>
 
-                                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                            <p className="text-sm text-blue-800">
+                                        <div className="ui-callout">
+                                            <p className="text-sm">
                                                 <strong>Automatic Cleanup:</strong> The system automatically performs cleanup daily at 2:00 AM and checks disk space weekly.
                                             </p>
                                         </div>

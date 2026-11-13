@@ -1,5 +1,6 @@
-const { getDatabase } = require('../config/database');
+const { getDatabase, dbAll, dbGet, dbRun } = require('../db');
 const auditLogger = require('../utils/auditLogger');
+const { buildDemandReport } = require('../reports/demandReport');
 const {
     getCategoryFieldDefinitions,
     getFieldValuesByItemIds,
@@ -81,12 +82,7 @@ const createDemand = async (req, res) => {
                 const formatted = formatItemFields(resolvedFields);
                 resolvedItems.push({ item, itemName: formatted.name || 'Unknown Item' });
             } else {
-                const itemNameData = await new Promise((resolve, reject) => {
-                    db.get('SELECT name FROM item_names WHERE id = ?', [item.itemNameId], (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    });
-                });
+                const itemNameData = await dbGet('SELECT name FROM item_names WHERE id = ?', [item.itemNameId]);
                 resolvedItems.push({ item, itemName: itemNameData?.name || 'Unknown Item' });
             }
         }
@@ -96,32 +92,17 @@ const createDemand = async (req, res) => {
         }
 
         // Check if user's department has an HOD to determine initial status
-        const userInfo = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT department_id FROM users WHERE id = ?',
-                [userId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const userInfo = await dbGet('SELECT department_id FROM users WHERE id = ?', [userId]);
 
         let initialStatus = 'pending'; // Default: goes directly to store
         let hodStatus = null;
 
         // If user has a department, check if department has an HOD
         if (userInfo && userInfo.department_id) {
-            const departmentHod = await new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT id FROM users WHERE department_id = ? AND is_hod = 1',
-                    [userInfo.department_id],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
+            const departmentHod = await dbGet(
+                'SELECT id FROM users WHERE department_id = ? AND is_hod = 1',
+                [userInfo.department_id]
+            );
 
             // If department has an HOD, demand needs HOD approval first
             if (departmentHod) {
@@ -131,17 +112,13 @@ const createDemand = async (req, res) => {
         }
 
         // Create main demand record (using first item as primary for backward compatibility)
-        const demandResult = await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO demands (item_name, quantity, estimated_cost, description, urgency, required_by, created_by, status, hod_status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [resolvedItems[0].itemName, items[0].quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId, initialStatus, hodStatus],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve({ id: this.lastID });
-                }
-            );
-        });
+        const demandResult = await dbRun(
+            `INSERT INTO demands (item_name, quantity, estimated_cost, description, urgency, required_by, created_by, status, hod_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [resolvedItems[0].itemName, items[0].quantity, totalEstimatedCost, description, urgency || 'normal', requiredBy, userId, initialStatus, hodStatus]
+        ).then(result => ({
+            id: result.lastID
+        }));
 
         const demandId = demandResult.id;
 
@@ -150,30 +127,26 @@ const createDemand = async (req, res) => {
             const { item, itemName } = resolvedItems[i];
             const fieldDefs = fieldDefsByItem[i];
 
-            const demandItemResult = await new Promise((resolve, reject) => {
-                db.run(
-                    `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, remarks, unit,
-                     category_id, item_name_id, prev_year_cost, current_year_cost, specifications)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        demandId,
-                        itemName,
-                        item.quantity,
-                        parseFloat(item.currentYearCost) || 0, // Use current year cost as estimated cost
-                        item.remarks || null,
-                        item.unit,
-                        item.categoryId,
-                        item.itemNameId || null,
-                        parseFloat(item.prevYearCost) || 0,
-                        parseFloat(item.currentYearCost) || 0,
-                        item.specifications || null
-                    ],
-                    function(err) {
-                        if (err) reject(err);
-                        else resolve({ id: this.lastID });
-                    }
-                );
-            });
+            const demandItemResult = await dbRun(
+                `INSERT INTO demand_items (demand_id, item_name, quantity, estimated_cost, remarks, unit,
+                 category_id, item_name_id, prev_year_cost, current_year_cost, specifications)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    demandId,
+                    itemName,
+                    item.quantity,
+                    parseFloat(item.currentYearCost) || 0, // Use current year cost as estimated cost
+                    item.remarks || null,
+                    item.unit,
+                    item.categoryId,
+                    item.itemNameId || null,
+                    parseFloat(item.prevYearCost) || 0,
+                    parseFloat(item.currentYearCost) || 0,
+                    item.specifications || null
+                ]
+            ).then(result => ({
+                id: result.lastID
+            }));
 
             const fieldValues = item.fieldValues || {};
             for (const field of fieldDefs) {
@@ -181,35 +154,21 @@ const createDemand = async (req, res) => {
                 if (raw === undefined || raw === null || raw === '') continue;
 
                 if (field.fieldType === 'dropdown') {
-                    await new Promise((resolve, reject) => {
-                        db.run(
-                            'INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
-                            [demandItemResult.id, field.id, raw],
-                            (err) => err ? reject(err) : resolve()
-                        );
-                    });
+                    await dbRun(
+                        'INSERT INTO demand_item_field_values (demand_item_id, field_id, option_id) VALUES (?, ?, ?)',
+                        [demandItemResult.id, field.id, raw]
+                    );
                 } else {
-                    await new Promise((resolve, reject) => {
-                        db.run(
-                            'INSERT INTO demand_item_field_values (demand_item_id, field_id, value_text) VALUES (?, ?, ?)',
-                            [demandItemResult.id, field.id, String(raw)],
-                            (err) => err ? reject(err) : resolve()
-                        );
-                    });
+                    await dbRun(
+                        'INSERT INTO demand_item_field_values (demand_item_id, field_id, value_text) VALUES (?, ?, ?)',
+                        [demandItemResult.id, field.id, String(raw)]
+                    );
                 }
             }
         }
 
         // Log demand creation
-        await auditLogger.logDemandManagement(
-            userId,
-            req.user.role,
-            req.user.name,
-            'DEMAND_CREATED',
-            demandId,
-            `Items: ${items.length} | Total Cost: ${totalEstimatedCost} | Description: ${description}`,
-            req
-        );
+        await auditLogger.record(req, 'DEMAND_CREATED', `Demand ${demandId} | Items: ${items.length} | Total Cost: ${totalEstimatedCost} | Description: ${description}`);
 
         res.status(201).json({
             message: 'Demand created successfully',
@@ -224,39 +183,23 @@ const createDemand = async (req, res) => {
 
 // Get demands for the current user with items
 const getUserDemands = async (req, res) => {
-    const db = getDatabase();
     const userId = req.user.id;
 
     try {
-        const demands = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT d.*, u.name as created_by_name, sr.name as store_response_by_name, hr.name as hod_response_by_name
-                 FROM demands d
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN users sr ON d.store_response_by = sr.id
-                 LEFT JOIN users hr ON d.hod_response_by = hr.id
-                 WHERE d.created_by = ? AND (d.is_merged IS NULL OR d.is_merged = 0)
-                 ORDER BY d.created_at DESC`,
-                [userId],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const demands = await dbAll(
+            `SELECT d.*, u.name as created_by_name, sr.name as store_response_by_name, hr.name as hod_response_by_name
+             FROM demands d
+             LEFT JOIN users u ON d.created_by = u.id
+             LEFT JOIN users sr ON d.store_response_by = sr.id
+             LEFT JOIN users hr ON d.hod_response_by = hr.id
+             WHERE d.created_by = ? AND (d.is_merged IS NULL OR d.is_merged = 0)
+             ORDER BY d.created_at DESC`,
+            [userId]
+        );
 
         // Get items for each demand
         for (const demand of demands) {
-            const items = await new Promise((resolve, reject) => {
-                db.all(
-                    `SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id`,
-                    [demand.id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
+            const items = await dbAll(`SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id`, [demand.id]);
             demand.items = items;
         }
 
@@ -267,84 +210,22 @@ const getUserDemands = async (req, res) => {
     }
 };
 
-// Get all demands (for superadmin and store department users)
-const getAllDemands = async (req, res) => {
-    const db = getDatabase();
-    const user = req.user;
-
-    // Check if user can view all demands
-    const canViewAll = user.role === 'superadmin' || 
-                      (user.department_name && user.department_name.toLowerCase() === 'store');
-
-    if (!canViewAll) {
-        return res.status(403).json({ message: 'You do not have permission to view all demands' });
-    }
-
-    try {
-        const demands = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department,
-                        sr.name as store_response_by_name, hr.name as hod_response_by_name
-                 FROM demands d
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN users sr ON d.store_response_by = sr.id
-                 LEFT JOIN users hr ON d.hod_response_by = hr.id
-                 WHERE d.status != 'pending_hod_approval' AND d.is_merged != 1
-                 ORDER BY d.created_at DESC`,
-                [],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
-
-        // Get items for each demand
-        for (const demand of demands) {
-            const items = await new Promise((resolve, reject) => {
-                db.all(
-                    `SELECT * FROM demand_items WHERE demand_id = ? ORDER BY id`,
-                    [demand.id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
-            demand.items = items;
-        }
-
-        res.json(demands);
-    } catch (error) {
-        console.error('Error fetching all demands:', error);
-        res.status(500).json({ message: 'Internal server error' });
-    }
-};
-
 // Get demand by ID
 const getDemandById = async (req, res) => {
-    const db = getDatabase();
     const { id } = req.params;
     const user = req.user;
 
     try {
-        const demand = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department,
-                        sr.name as store_response_by_name
-                 FROM demands d
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN departments dept ON u.department_id = dept.id
-                 LEFT JOIN users sr ON d.store_response_by = sr.id
-                 WHERE d.id = ?`,
-                [id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const demand = await dbGet(
+            `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department,
+                    sr.name as store_response_by_name
+             FROM demands d
+             LEFT JOIN users u ON d.created_by = u.id
+             LEFT JOIN departments dept ON u.department_id = dept.id
+             LEFT JOIN users sr ON d.store_response_by = sr.id
+             WHERE d.id = ?`,
+            [id]
+        );
 
         if (!demand) {
             return res.status(404).json({ message: 'Demand not found' });
@@ -375,43 +256,28 @@ const getDemandWithItems = async (req, res) => {
 
     try {
         // Get the demand
-        const demand = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department
-                 FROM demands d
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN departments dept ON u.department_id = dept.id
-                 WHERE d.id = ?`,
-                [id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const demand = await dbGet(
+            `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department
+             FROM demands d
+             LEFT JOIN users u ON d.created_by = u.id
+             LEFT JOIN departments dept ON u.department_id = dept.id
+             WHERE d.id = ?`,
+            [id]
+        );
 
         if (!demand) {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
         // Get items for the demand along with their generic custom field values
-        const items = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT di.*,
-                        ic.name as category_name,
-                        in_t.name as item_name_full
-                 FROM demand_items di
-                 LEFT JOIN item_categories ic ON di.category_id = ic.id
-                 LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 WHERE di.demand_id = ?
-                 ORDER BY di.id`,
-                [id],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const items = await dbAll(`SELECT di.*,
+                ic.name as category_name,
+                in_t.name as item_name_full
+         FROM demand_items di
+         LEFT JOIN item_categories ic ON di.category_id = ic.id
+         LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+         WHERE di.demand_id = ?
+         ORDER BY di.id`, [id]);
 
         const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
         demand.items = items.map(item => {
@@ -432,45 +298,25 @@ const getDemandWithItems = async (req, res) => {
 
 // Get all demands with their items for store management
 const getAllDemandsWithItems = async (req, res) => {
-    const db = getDatabase();
-
     try {
-        const demands = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT d.*, u.name as created_by_name, sr.name as store_response_by_name
-                 FROM demands d
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN users sr ON d.store_response_by = sr.id
-                 WHERE d.status IN ('pending', 'store_pending', 'available', 'not_available', 'vetting_pending', 'vetting_approved', 'purchase_pending', 'pending_hod_approval')
-                 AND (d.is_merged IS NULL OR d.is_merged = 0)
-                 ORDER BY d.created_at DESC`,
-                [],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const demands = await dbAll(`SELECT d.*, u.name as created_by_name, sr.name as store_response_by_name
+         FROM demands d
+         LEFT JOIN users u ON d.created_by = u.id
+         LEFT JOIN users sr ON d.store_response_by = sr.id
+         WHERE d.status IN ('pending', 'store_pending', 'available', 'not_available', 'vetting_pending', 'vetting_approved', 'purchase_pending', 'pending_hod_approval')
+         AND (d.is_merged IS NULL OR d.is_merged = 0)
+         ORDER BY d.created_at DESC`, []);
 
         // Get items for each demand with category names
         for (let demand of demands) {
-            const items = await new Promise((resolve, reject) => {
-                db.all(
-                    `SELECT di.*, 
-                            ic.name as category_name,
-                            in_t.name as item_name_full
-                     FROM demand_items di
-                     LEFT JOIN item_categories ic ON di.category_id = ic.id
-                     LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                     WHERE di.demand_id = ? 
-                     ORDER BY di.id ASC`,
-                    [demand.id],
-                    (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    }
-                );
-            });
+            const items = await dbAll(`SELECT di.*, 
+                    ic.name as category_name,
+                    in_t.name as item_name_full
+             FROM demand_items di
+             LEFT JOIN item_categories ic ON di.category_id = ic.id
+             LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+             WHERE di.demand_id = ? 
+             ORDER BY di.id ASC`, [demand.id]);
             
             demand.items = items;
         }
@@ -478,16 +324,15 @@ const getAllDemandsWithItems = async (req, res) => {
         res.json(demands);
     } catch (error) {
         console.error('Get all demands with items error:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
+        res.status(500).json({ message: 'Server error' });
     }
 };
 
 // Reject demand with reason
 const rejectDemand = async (req, res) => {
-    const db = getDatabase();
     const { id } = req.params;
     const { reason } = req.body;
-    const rejectedBy = req.user?.id || 1; // Get from auth middleware
+    const rejectedBy = req.user.id;
 
     try {
         if (!reason || !reason.trim()) {
@@ -495,64 +340,27 @@ const rejectDemand = async (req, res) => {
         }
 
         // Check if demand exists
-        const demand = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT id, user_id, status FROM demands WHERE id = ?',
-                [id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const demand = await dbGet('SELECT id, created_by, status FROM demands WHERE id = ?', [id]);
 
         if (!demand) {
             return res.status(404).json({ message: 'Demand not found' });
         }
 
         // Update demand status to rejected
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE demands 
-                 SET status = 'rejected', 
-                     rejection_reason = ?, 
-                     rejected_by = ?, 
-                     rejected_at = datetime('now') 
-                 WHERE id = ?`,
-                [reason.trim(), rejectedBy, id],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`UPDATE demands 
+         SET status = 'rejected', 
+             rejection_reason = ?, 
+             rejected_by = ?, 
+             rejected_at = datetime('now') 
+         WHERE id = ?`, [reason.trim(), rejectedBy, id]);
 
         // Add to demand evaluations table for tracking
-        await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO demand_evaluations 
-                 (demand_id, evaluator_id, committee_type, status, comments) 
-                 VALUES (?, ?, 'purchase', 'rejected', ?)`,
-                [id, rejectedBy, reason.trim()],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
-
-        console.log(`Demand ${id} rejected by user ${rejectedBy} with reason: ${reason}`);
+        await dbRun(`INSERT INTO demand_evaluations 
+         (demand_id, evaluator_id, committee_type, status, comments) 
+         VALUES (?, ?, 'purchase', 'rejected', ?)`, [id, rejectedBy, reason.trim()]);
 
         // Log demand rejection
-        await auditLogger.logDemandManagement(
-            rejectedBy,
-            req.user.role,
-            req.user.name,
-            'DEMAND_REJECTED',
-            id,
-            `Reason: ${reason}`,
-            req
-        );
+        await auditLogger.record(req, 'DEMAND_REJECTED', `Demand ${id} | Reason: ${reason}`);
 
         res.json({ 
             message: 'Demand rejected successfully',
@@ -579,36 +387,18 @@ const getDemandItemsPaginated = async (req, res) => {
 
     try {
         // Get total count
-        const totalCount = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT COUNT(*) as count FROM demand_items WHERE demand_id = ?',
-                [id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row.count);
-                }
-            );
-        });
+        const totalCount = await dbGet('SELECT COUNT(*) as count FROM demand_items WHERE demand_id = ?', [id]).then(row => row.count);
 
         // Get paginated items with category info
-        const items = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT di.*,
-                        ic.name as category_name,
-                        in_t.name as item_name_full
-                 FROM demand_items di
-                 LEFT JOIN item_categories ic ON di.category_id = ic.id
-                 LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 WHERE di.demand_id = ?
-                 ORDER BY di.id ASC
-                 LIMIT ? OFFSET ?`,
-                [id, limit, offset],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const items = await dbAll(`SELECT di.*,
+                ic.name as category_name,
+                in_t.name as item_name_full
+         FROM demand_items di
+         LEFT JOIN item_categories ic ON di.category_id = ic.id
+         LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
+         WHERE di.demand_id = ?
+         ORDER BY di.id ASC
+         LIMIT ? OFFSET ?`, [id, limit, offset]);
 
         // Format items for frontend, attaching each item's generic custom field values
         const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
@@ -646,153 +436,81 @@ const getDemandItemsPaginated = async (req, res) => {
 
 // Generate Excel report for demand
 const generateDemandExcelReport = async (req, res) => {
-    console.log(`[EXCEL REPORT] Function called for demand ID: ${req.params.id} by user: ${req.user?.name || 'unknown'}`);
     const db = getDatabase();
     const { id } = req.params;
-
     try {
-        // Get demand details
-        const demand = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT d.*, u.name as created_by_name, u.department_id, dept.name as creator_department
-                 FROM demands d
-                 LEFT JOIN users u ON d.created_by = u.id
-                 LEFT JOIN departments dept ON u.department_id = dept.id
-                 WHERE d.id = ?`,
-                [id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const demand = await dbGet(
+            `SELECT d.*, u.name AS created_by_name, dept.name AS creator_department
+             FROM demands d
+             LEFT JOIN users u ON d.created_by = u.id
+             LEFT JOIN departments dept ON u.department_id = dept.id
+             WHERE d.id = ?`,
+            [id],
+        );
+        if (!demand) return res.status(404).json({ message: 'Demand not found' });
 
-        if (!demand) {
-            return res.status(404).json({ message: 'Demand not found' });
-        }
+        // Items store fulfilled completely are not part of the tender.
+        const items = await dbAll(
+            `SELECT di.*, ic.name AS category_name, inm.name AS item_name_full
+             FROM demand_items di
+             LEFT JOIN item_categories ic ON di.category_id = ic.id
+             LEFT JOIN item_names inm ON di.item_name_id = inm.id
+             WHERE di.demand_id = ? AND (di.is_removed IS NULL OR di.is_removed = 0)
+             ORDER BY ic.name, di.id`,
+            [id],
+        );
+        const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map((item) => item.id));
 
-        // Get demand items with category info
-        const items = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT di.*,
-                        ic.name as category_name,
-                        in_t.name as item_name_full
-                 FROM demand_items di
-                 LEFT JOIN item_categories ic ON di.category_id = ic.id
-                 LEFT JOIN item_names in_t ON di.item_name_id = in_t.id
-                 WHERE di.demand_id = ?
-                 ORDER BY di.id ASC`,
-                [id],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
-
-        // Use the Excel report generator
-        const { generateDemandReport } = require('../utils/excelReportGenerator');
-
-        const fieldValuesByItem = await getFieldValuesByItemIds(db, items.map(item => item.id));
-
-        const reportData = {
-            demand: {
+        const { buffer, filename } = await buildDemandReport(
+            {
                 id: demand.id,
                 description: demand.description,
-                urgency: demand.urgency,
                 required_by: demand.required_by,
                 status: demand.status,
                 created_by: demand.created_by_name,
-                department: demand.department,
-                created_at: demand.created_at
+                department: demand.creator_department,
             },
-            items: items.map(item => {
+            items.map((item) => {
                 const formatted = formatItemFields(fieldValuesByItem[item.id] || []);
                 return {
+                    ...item,
                     name: item.item_name_full || item.item_name || formatted.name,
                     category: item.category_name,
-                    quantity: item.quantity,
-                    unit: item.unit,
-                    specifications: item.specifications,
-                    // Costs: fall back to legacy estimated_cost if specific year costs absent
-                    previous_year_cost: item.previous_year_cost || item.prev_year_cost || 0,
-                    current_year_cost: item.current_year_cost || item.estimated_cost || 0,
-                    // Generic category custom fields (e.g. Drug Name, Strength, Equipment Type)
                     custom_fields: formatted.fields,
-                    consumption_amount: item.consumption_amount,
-                    consumption_type: item.consumption_type
+                    current_year_cost: item.current_year_cost || item.estimated_cost || 0,
                 };
-            })
-        };
-
-        // Debug log to verify mapped data before Excel generation
-        try {
-            console.log('[DEBUG] Demand Excel report data preview:', JSON.stringify({
-                demandId: reportData.demand.id,
-                itemSample: reportData.items.slice(0,5)
-            }, null, 2));
-        } catch (e) {
-            console.warn('[DEBUG] Failed to stringify reportData preview:', e.message);
-        }
-
-        const buffer = await generateDemandReport(reportData);
+            }),
+        );
 
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="Demand_${id}_Annual_Report.xlsx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.send(buffer);
-
     } catch (error) {
-        console.error('Error generating Excel report:', error);
-        res.status(500).json({ 
-            message: 'Failed to generate Excel report', 
-            error: error.message 
-        });
+        console.error('Error generating demand report:', error);
+        res.status(500).json({ message: 'Failed to generate the report' });
     }
 };
 
 // HOD Approval Functions
 const getHodPendingDemands = async (req, res) => {
-    const db = getDatabase();
     const hodUserId = req.user.id;
     
     try {
         // Get HOD's department
-        const hodInfo = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT department_id FROM users WHERE id = ? AND is_hod = 1',
-                [hodUserId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const hodInfo = await dbGet('SELECT department_id FROM users WHERE id = ? AND is_hod = 1', [hodUserId]);
 
         if (!hodInfo) {
-            console.log('HOD authorization failed for user:', hodUserId);
             return res.status(403).json({ error: 'You are not authorized as an HOD' });
         }
 
-        console.log('HOD Department ID:', hodInfo.department_id);
-
         // Get all pending demands from HOD's department
-        const demands = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT d.*, u.name as creator_name, dept.name as department_name
-                 FROM demands d
-                 JOIN users u ON d.created_by = u.id
-                 JOIN departments dept ON u.department_id = dept.id
-                 WHERE u.department_id = ? AND d.status = 'pending_hod_approval' AND d.hod_status IS NULL AND (d.is_merged IS NULL OR d.is_merged != 1)
-                 ORDER BY d.created_at DESC`,
-                [hodInfo.department_id],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows || []);
-                }
-            );
-        });
+        const demands = await dbAll(`SELECT d.*, u.name as creator_name, dept.name as department_name
+         FROM demands d
+         JOIN users u ON d.created_by = u.id
+         JOIN departments dept ON u.department_id = dept.id
+         WHERE u.department_id = ? AND d.status = 'pending_hod_approval' AND d.hod_status IS NULL AND (d.is_merged IS NULL OR d.is_merged != 1)
+         ORDER BY d.created_at DESC`, [hodInfo.department_id]);
 
-        console.log('Found pending demands for HOD:', demands.length);
         res.json(demands);
     } catch (error) {
         console.error('Error fetching HOD pending demands:', error);
@@ -808,7 +526,6 @@ const approveRejectDemandByHod = async (req, res) => {
     // approveStoreFulfillmentByHod, not here.
     const { demandId, action, rejectionReason } = req.body;
     const hodUserId = req.user.id;
-    const db = getDatabase();
     
     if (!demandId || !action || !['approve', 'reject'].includes(action)) {
         return res.status(400).json({ error: 'Demand ID and valid action (approve/reject) are required' });
@@ -820,35 +537,20 @@ const approveRejectDemandByHod = async (req, res) => {
 
     try {
         // Verify HOD has authority over this demand
-        const demandInfo = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT d.*, u.department_id, u.name as creator_name
-                 FROM demands d
-                 JOIN users u ON d.created_by = u.id
-                 WHERE d.id = ? AND d.status = 'pending_hod_approval' AND d.hod_status IS NULL`,
-                [demandId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const demandInfo = await dbGet(`SELECT d.*, u.department_id, u.name as creator_name
+         FROM demands d
+         JOIN users u ON d.created_by = u.id
+         WHERE d.id = ? AND d.status = 'pending_hod_approval' AND d.hod_status IS NULL`, [demandId]);
 
         if (!demandInfo) {
             return res.status(404).json({ error: 'Demand not found or not pending HOD approval' });
         }
 
         // Verify user is HOD of the department
-        const hodInfo = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT department_id FROM users WHERE id = ? AND is_hod = 1 AND department_id = ?',
-                [hodUserId, demandInfo.department_id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const hodInfo = await dbGet(
+            'SELECT department_id FROM users WHERE id = ? AND is_hod = 1 AND department_id = ?',
+            [hodUserId, demandInfo.department_id]
+        );
 
         if (!hodInfo) {
             return res.status(403).json({ error: 'You are not authorized to approve/reject this demand' });
@@ -860,22 +562,13 @@ const approveRejectDemandByHod = async (req, res) => {
             const newStatus = 'hod_rejected';
             const hodStatus = 'rejected';
 
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `UPDATE demands SET 
-                     status = ?, 
-                     hod_status = ?, 
-                     hod_response_by = ?, 
-                     hod_response_at = CURRENT_TIMESTAMP,
-                     hod_rejection_reason = ?
-                     WHERE id = ?`,
-                    [newStatus, hodStatus, hodUserId, rejectionReason, demandId],
-                    function(err) {
-                        if (err) reject(err);
-                        else resolve();
-                    }
-                );
-            });
+            await dbRun(`UPDATE demands SET 
+             status = ?, 
+             hod_status = ?, 
+             hod_response_by = ?, 
+             hod_response_at = CURRENT_TIMESTAMP,
+             hod_rejection_reason = ?
+             WHERE id = ?`, [newStatus, hodStatus, hodUserId, rejectionReason, demandId]);
         } else {
             // HOD approved the demand request - send it to Store for fulfillment
             // review. Store has not looked at the items yet at this stage, so
@@ -884,47 +577,23 @@ const approveRejectDemandByHod = async (req, res) => {
             const demandStatus = 'pending';
             const hodStatus = 'approved';
 
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `UPDATE demands SET 
-                     status = ?, 
-                     hod_status = ?, 
-                     hod_response_by = ?, 
-                     hod_response_at = CURRENT_TIMESTAMP,
-                     hod_rejection_reason = ?
-                     WHERE id = ?`,
-                    [demandStatus, hodStatus, hodUserId, null, demandId],
-                    function(err) {
-                        if (err) reject(err);
-                        else resolve();
-                    }
-                );
-            });
+            await dbRun(`UPDATE demands SET 
+             status = ?, 
+             hod_status = ?, 
+             hod_response_by = ?, 
+             hod_response_at = CURRENT_TIMESTAMP,
+             hod_rejection_reason = ?
+             WHERE id = ?`, [demandStatus, hodStatus, hodUserId, null, demandId]);
         }
 
         // Log the action with the correct status
         const finalStatus = action === 'reject' ? 'hod_rejected' : 
-                           (await new Promise((resolve, reject) => {
-                               db.get('SELECT status FROM demands WHERE id = ?', [demandId], (err, row) => {
-                                   if (err) reject(err);
-                                   else resolve(row?.status);
-                               });
-                           }));
+                           (await dbGet('SELECT status FROM demands WHERE id = ?', [demandId]).then(row => row?.status));
 
-        await auditLogger.logDemandManagement(
-            hodUserId,
-            req.user.role,
-            req.user.name,
+        await auditLogger.record(
+            req,
             action === 'approve' ? 'HOD_DEMAND_APPROVED' : 'HOD_DEMAND_REJECTED',
-            {
-                id: demandId,
-                status: finalStatus,
-                department: demandInfo.department_id,
-                title: demandInfo.item_name,
-                creator: demandInfo.creator_name,
-                rejectionReason: action === 'reject' ? rejectionReason : null
-            },
-            req
+            `Demand ${demandId} | Status: ${finalStatus}${action === 'reject' ? ` | Reason: ${rejectionReason}` : ''}`,
         );
 
         res.json({ message: `Demand ${action}d successfully` });
@@ -937,7 +606,6 @@ const approveRejectDemandByHod = async (req, res) => {
 module.exports = {
     createDemand,
     getUserDemands,
-    getAllDemands,
     getDemandById,
     getDemandWithItems,
     getAllDemandsWithItems,

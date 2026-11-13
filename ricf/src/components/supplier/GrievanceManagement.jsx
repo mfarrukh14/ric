@@ -3,6 +3,7 @@ import axios from 'axios';
 import { toast } from 'react-toastify';
 import { apiUrl } from '../../config/api';
 
+import { formatClockTime, formatDate, formatDateTime } from '../../lib/time';
 const GrievanceManagement = () => {
     const [activeTab, setActiveTab] = useState('rejected-items');
     const [rejectedItems, setRejectedItems] = useState([]);
@@ -165,7 +166,7 @@ const GrievanceManagement = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             
-            toast.success('Grievance application submitted successfully');
+            toast.success('Grievance application submitted');
             setShowGrievanceForm(false);
             setSelectedItem(null);
             fetchRejectedItems();
@@ -196,15 +197,6 @@ const GrievanceManagement = () => {
         );
     };
 
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    };
 
     const renderMeetingDetails = (grievance) => {
         if (grievance.status !== 'meeting_scheduled' || !grievance.meeting_details) {
@@ -214,19 +206,19 @@ const GrievanceManagement = () => {
         try {
             const meetingInfo = JSON.parse(grievance.meeting_details);
             return (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+                <div className="ui-callout ui-callout--warning">
                     <h6 className="text-sm font-medium text-yellow-800 mb-3 flex items-center">
                         <i className="fas fa-calendar-alt mr-2"></i> 
-                        Meeting Details
+                        Meeting details
                     </h6>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                         <div>
                             <span className="font-medium text-yellow-800">Date:</span>
-                            <span className="text-yellow-700 ml-1">{meetingInfo.date}</span>
+                            <span className="text-yellow-700 ml-1">{formatDate(meetingInfo.date)}</span>
                         </div>
                         <div>
                             <span className="font-medium text-yellow-800">Time:</span>
-                            <span className="text-yellow-700 ml-1">{meetingInfo.time}</span>
+                            <span className="text-yellow-700 ml-1">{formatClockTime(meetingInfo.time)}</span>
                         </div>
                         <div>
                             <span className="font-medium text-yellow-800">Location:</span>
@@ -251,7 +243,7 @@ const GrievanceManagement = () => {
             <div className="mb-8">
                 <h2 className="text-2xl font-bold text-gray-900 flex items-center">
                     <i className="fas fa-balance-scale mr-3"></i> 
-                    Grievance Management
+                    Grievance management
                 </h2>
                 <p className="mt-2 text-sm text-gray-600">
                     Review rejected items and manage your grievance applications
@@ -269,7 +261,7 @@ const GrievanceManagement = () => {
                         onClick={() => setActiveTab('rejected-items')}
                     >
                         <i className="fas fa-exclamation-triangle mr-2"></i> 
-                        Rejected Items
+                        Rejected items
                     </button>
                     <button 
                         className={`${
@@ -280,35 +272,35 @@ const GrievanceManagement = () => {
                         onClick={() => setActiveTab('my-grievances')}
                     >
                         <i className="fas fa-file-alt mr-2"></i> 
-                        My Grievances
+                        My grievances
                     </button>
                 </nav>
             </div>
 
             {loading && (
                 <div className="flex items-center justify-center py-12">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                    <div className="ui-spin"></div>
                     <p className="ml-3 text-gray-600">Loading...</p>
                 </div>
             )}
 
             {activeTab === 'rejected-items' && !loading && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:px-6">
                         <h3 className="text-lg leading-6 font-medium text-gray-900">
-                            Items Rejected in Technical Evaluation
+                            Items rejected in technical evaluation
                         </h3>
                     </div>
                     {rejectedItems.length === 0 ? (
                         <div className="px-4 py-12 text-center">
                             <i className="fas fa-check-circle text-4xl text-green-500 mb-4"></i>
-                            <h4 className="text-lg font-medium text-gray-900 mb-2">No Rejected Items</h4>
+                            <h4 className="text-lg font-medium text-gray-900 mb-2">No rejected items</h4>
                             <p className="text-gray-500">You don't have any rejected items at the moment.</p>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
                             {rejectedItems.map((item) => (
-                                <div key={item.id} className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+                                <div key={item.id} className="ui-panel">
                                     <div className="p-6">
                                         <div className="flex justify-between items-start mb-4">
                                             <h4 className="text-lg font-semibold text-gray-900">{item.item_name}</h4>
@@ -332,29 +324,28 @@ const GrievanceManagement = () => {
                                             </div>
                                         </div>
 
-                                        <div className="mb-4 p-3 bg-red-50 rounded-md">
-                                            <h6 className="text-sm font-medium text-red-800 mb-1">Rejection Reason:</h6>
+                                        <div className="ui-callout ui-callout--danger mb-4">
+                                            <h6 className="text-sm font-medium text-red-800 mb-1">Rejection reason:</h6>
                                             <p className="text-sm text-red-700">{item.rejection_reason}</p>
                                         </div>
 
                                         {/* Deadline Status Display */}
                                         {(() => {
                                             const deadlineInfo = getDeadlineInfo(item);
-                                            const canApply = canApplyGrievance(item);
                                             
                                             if (deadlineInfo) {
                                                 if (deadlineInfo.grievance_submitted) {
                                                     return (
-                                                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                                                        <div className="ui-callout mb-4">
                                                             <div className="flex items-center">
                                                                 <i className="fas fa-check-circle text-blue-600 mr-2"></i>
-                                                                <span className="text-sm font-medium text-blue-800">Grievance Already Submitted</span>
+                                                                <span className="text-sm font-medium">Grievance Already Submitted</span>
                                                             </div>
                                                         </div>
                                                     );
                                                 } else if (deadlineInfo.has_expired) {
                                                     return (
-                                                        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                                                        <div className="ui-callout ui-callout--danger mb-4">
                                                             <div className="flex items-center">
                                                                 <i className="fas fa-clock text-red-600 mr-2"></i>
                                                                 <span className="text-sm font-medium text-red-800">Grievance Deadline Expired</span>
@@ -366,11 +357,11 @@ const GrievanceManagement = () => {
                                                     );
                                                 } else {
                                                     return (
-                                                        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
+                                                        <div className="ui-callout mb-4">
                                                             <div className="flex items-center justify-between">
                                                                 <div className="flex items-center">
                                                                     <i className="fas fa-hourglass-half text-green-600 mr-2"></i>
-                                                                    <span className="text-sm font-medium text-green-800">Grievance Available</span>
+                                                                    <span className="text-sm font-medium">Grievance Available</span>
                                                                 </div>
                                                                 <span className="text-xs text-green-600 font-medium">
                                                                     {getTimeRemaining(deadlineInfo.deadline_end)}
@@ -397,7 +388,7 @@ const GrievanceManagement = () => {
                                                         disabled
                                                     >
                                                         <i className="fas fa-check mr-2"></i>
-                                                        Grievance Submitted
+                                                        Grievance submitted
                                                     </button>
                                                 );
                                             } else if (deadlineInfo?.has_expired) {
@@ -407,17 +398,17 @@ const GrievanceManagement = () => {
                                                         disabled
                                                     >
                                                         <i className="fas fa-clock mr-2"></i>
-                                                        Deadline Expired
+                                                        Deadline expired
                                                     </button>
                                                 );
                                             } else if (canApply) {
                                                 return (
                                                     <button 
-                                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center"
+                                                        className="ui-btn ui-btn--primary w-full"
                                                         onClick={() => handleApplyGrievance(item)}
                                                     >
                                                         <i className="fas fa-file-signature mr-2"></i>
-                                                        Apply for Grievance
+                                                        Apply for grievance
                                                     </button>
                                                 );
                                             } else {
@@ -427,7 +418,7 @@ const GrievanceManagement = () => {
                                                         disabled
                                                     >
                                                         <i className="fas fa-ban mr-2"></i>
-                                                        Grievance Not Available
+                                                        Grievance not available
                                                     </button>
                                                 );
                                             }
@@ -441,16 +432,16 @@ const GrievanceManagement = () => {
             )}
 
             {activeTab === 'my-grievances' && !loading && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:px-6">
                         <h3 className="text-lg leading-6 font-medium text-gray-900">
-                            My Grievance Applications
+                            My grievance applications
                         </h3>
                     </div>
                     {grievances.length === 0 ? (
                         <div className="px-4 py-12 text-center">
                             <i className="fas fa-inbox text-4xl text-gray-400 mb-4"></i>
-                            <h4 className="text-lg font-medium text-gray-900 mb-2">No Grievances Submitted</h4>
+                            <h4 className="text-lg font-medium text-gray-900 mb-2">No grievances submitted</h4>
                             <p className="text-gray-500">You haven't submitted any grievance applications yet.</p>
                         </div>
                     ) : (
@@ -461,33 +452,33 @@ const GrievanceManagement = () => {
                                         <div>
                                             <h4 className="text-lg font-medium text-gray-900">{grievance.item_name}</h4>
                                             <p className="text-sm text-gray-500">
-                                                Submitted on {formatDate(grievance.submitted_at)}
+                                                Submitted on {formatDateTime(grievance.submitted_at)}
                                             </p>
                                         </div>
                                         {getStatusBadge(grievance.status)}
                                     </div>
 
                                     <div className="space-y-4">
-                                        <div className="p-3 bg-red-50 rounded-md">
-                                            <h6 className="text-sm font-medium text-red-800 mb-1">Original Rejection Reason:</h6>
+                                        <div className="ui-callout ui-callout--danger">
+                                            <h6 className="text-sm font-medium text-red-800 mb-1">Original rejection reason:</h6>
                                             <p className="text-sm text-red-700">{grievance.rejection_reason}</p>
                                         </div>
 
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <div className="p-3 bg-blue-50 rounded-md">
-                                                <h6 className="text-sm font-medium text-blue-800 mb-1">Your Grievance Reason:</h6>
-                                                <p className="text-sm text-blue-700">{grievance.grievance_reason}</p>
+                                            <div className="ui-callout">
+                                                <h6 className="text-sm font-medium mb-1">Your grievance reason:</h6>
+                                                <p className="text-sm">{grievance.grievance_reason}</p>
                                             </div>
 
-                                            <div className="p-3 bg-green-50 rounded-md">
-                                                <h6 className="text-sm font-medium text-green-800 mb-1">Requested Action:</h6>
-                                                <p className="text-sm text-green-700">{grievance.requested_action}</p>
+                                            <div className="ui-callout">
+                                                <h6 className="text-sm font-medium mb-1">Requested action:</h6>
+                                                <p className="text-sm">{grievance.requested_action}</p>
                                             </div>
                                         </div>
 
                                         {grievance.additional_comments && (
-                                            <div className="p-3 bg-gray-50 rounded-md">
-                                                <h6 className="text-sm font-medium text-gray-800 mb-1">Additional Comments:</h6>
+                                            <div className="ui-callout">
+                                                <h6 className="text-sm font-medium text-gray-800 mb-1">Additional comments:</h6>
                                                 <p className="text-sm text-gray-700">{grievance.additional_comments}</p>
                                             </div>
                                         )}
@@ -495,9 +486,9 @@ const GrievanceManagement = () => {
                                         {renderMeetingDetails(grievance)}
 
                                         {grievance.resolution && (
-                                            <div className="p-3 bg-purple-50 rounded-md">
-                                                <h6 className="text-sm font-medium text-purple-800 mb-1">Committee Resolution:</h6>
-                                                <p className="text-sm text-purple-700">{grievance.resolution}</p>
+                                            <div className="ui-callout">
+                                                <h6 className="text-sm font-medium mb-1">Committee resolution:</h6>
+                                                <p className="text-sm">{grievance.resolution}</p>
                                                 {grievance.reviewed_by_name && (
                                                     <small className="text-purple-600">Reviewed by: {grievance.reviewed_by_name}</small>
                                                 )}
@@ -513,15 +504,15 @@ const GrievanceManagement = () => {
 
             {/* Grievance Application Modal */}
             {showGrievanceForm && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-4xl shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--xl">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-medium text-gray-900 flex items-center">
                                 <i className="fas fa-file-signature mr-2"></i> 
-                                Submit Grievance Application
+                                Submit grievance application
                             </h3>
                             <button 
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                                 onClick={() => setShowGrievanceForm(false)}
                             >
                                 <i className="fas fa-times text-xl"></i>
@@ -529,9 +520,9 @@ const GrievanceManagement = () => {
                         </div>
 
                         {selectedItem && (
-                            <div className="mb-6 p-4 bg-blue-50 rounded-md">
-                                <h4 className="text-md font-medium text-blue-900">Item: {selectedItem.item_name}</h4>
-                                <p className="text-sm text-blue-700 mt-1">
+                            <div className="ui-callout mb-6">
+                                <h4 className="text-md font-medium">Item: {selectedItem.item_name}</h4>
+                                <p className="text-sm mt-1">
                                     <strong>Rejection Reason:</strong> {selectedItem.rejection_reason}
                                 </p>
                             </div>
@@ -539,8 +530,8 @@ const GrievanceManagement = () => {
 
                         <form onSubmit={handleSubmitGrievance} className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Grievance Reason <span className="text-red-500">*</span>
+                                <label className="ui-label block mb-1">
+                                    Grievance reason <span className="text-red-500">*</span>
                                 </label>
                                 <textarea
                                     value={grievanceForm.grievanceReason}
@@ -551,13 +542,13 @@ const GrievanceManagement = () => {
                                     placeholder="Explain why you believe the rejection was unfair or incorrect..."
                                     rows="4"
                                     required
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="ui-input ui-textarea"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Supporting Documents/Evidence
+                                <label className="ui-label block mb-1">
+                                    Supporting documents/evidence
                                 </label>
                                 <textarea
                                     value={grievanceForm.supportingDocuments}
@@ -567,13 +558,13 @@ const GrievanceManagement = () => {
                                     })}
                                     placeholder="List any supporting documents or evidence you have..."
                                     rows="3"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="ui-input ui-textarea"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Requested Action <span className="text-red-500">*</span>
+                                <label className="ui-label block mb-1">
+                                    Requested action <span className="text-red-500">*</span>
                                 </label>
                                 <textarea
                                     value={grievanceForm.requestedAction}
@@ -584,13 +575,13 @@ const GrievanceManagement = () => {
                                     placeholder="What action would you like the committee to take?"
                                     rows="3"
                                     required
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="ui-input ui-textarea"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Additional Comments
+                                <label className="ui-label block mb-1">
+                                    Additional comments
                                 </label>
                                 <textarea
                                     value={grievanceForm.additionalComments}
@@ -600,21 +591,21 @@ const GrievanceManagement = () => {
                                     })}
                                     placeholder="Any additional information you'd like to provide..."
                                     rows="3"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="ui-input ui-textarea"
                                 />
                             </div>
 
                             <div className="flex justify-end space-x-3 pt-4">
                                 <button 
                                     type="button" 
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                    className="ui-btn ui-btn--secondary"
                                     onClick={() => setShowGrievanceForm(false)}
                                 >
                                     Cancel
                                 </button>
                                 <button 
                                     type="submit" 
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                                    className="ui-btn ui-btn--primary"
                                     disabled={loading}
                                 >
                                     {loading ? 'Submitting...' : 'Submit Grievance'}

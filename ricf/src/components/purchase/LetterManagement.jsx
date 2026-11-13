@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
+import { apiUrl } from '../../config/api';
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
+import { formatDate, formatDateTime } from '../../lib/time';
 const LetterManagement = () => {
     const [activeLetterTab, setActiveLetterTab] = useState('send-intent');
     const [loading, setLoading] = useState(false);
@@ -62,7 +62,7 @@ const LetterManagement = () => {
     const fetchTendersForIntent = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/letters/intent/ready-tenders`, {
+            const response = await fetch(`${apiUrl}/letters/intent/ready-tenders`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -85,7 +85,7 @@ const LetterManagement = () => {
     const fetchAllLetters = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/letters`, {
+            const response = await fetch(`${apiUrl}/letters`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -104,7 +104,7 @@ const LetterManagement = () => {
     const fetchSuppliersForIntent = async (tenderId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/letters/intent/recipients/${tenderId}`, {
+            const response = await fetch(`${apiUrl}/letters/intent/recipients/${tenderId}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -142,7 +142,7 @@ const LetterManagement = () => {
                 formData.append('selectedSuppliers', JSON.stringify(selectedSupplierIds));
             }
 
-            const response = await fetch(`${apiUrl}/api/letters/intent/send/${selectedTender.id}`, {
+            const response = await fetch(`${apiUrl}/letters/intent/send/${selectedTender.id}`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -154,7 +154,7 @@ const LetterManagement = () => {
             
             const data = await response.json();
             toast.success(
-                `Letter of Intent sent successfully! 
+                `Letter of intent sent. 
                 Sent to ${data.totalRecipients} suppliers. 
                 ${data.successfulSends} successful, ${data.failedSends} failed.`
             );
@@ -222,7 +222,7 @@ const LetterManagement = () => {
             formData.append('selectedSuppliers', JSON.stringify(selectedAwardSupplierIds));
             formData.append('awardDetails', JSON.stringify(awardForm.awardDetails));
 
-            const response = await fetch(`${apiUrl}/api/letters/award/send/${selectedTender.id}`, {
+            const response = await fetch(`${apiUrl}/letters/award/send/${selectedTender.id}`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -233,7 +233,7 @@ const LetterManagement = () => {
             if (!response.ok) throw new Error('Failed to send letter of award');
             
             const data = await response.json();
-            toast.success(data?.message || 'Letter of Award sent successfully.');
+            toast.success(data?.message || 'Letter of Award sent');
 
             setShowAwardModal(false);
             setAwardForm({ letterTitle: '', letterContent: '', letterFile: null, awardDetails: {} });
@@ -268,7 +268,7 @@ const LetterManagement = () => {
     const fetchApprovedSuppliersForTender = async (tenderId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/letters/intent/suppliers/${tenderId}`, {
+            const response = await fetch(`${apiUrl}/letters/intent/suppliers/${tenderId}`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -302,7 +302,7 @@ const LetterManagement = () => {
     const downloadLetter = async (letterId, fileName) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/letters/${letterId}/download`, {
+            const response = await fetch(`${apiUrl}/letters/${letterId}/download`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -344,7 +344,7 @@ const LetterManagement = () => {
             
             // Fetch awarded suppliers for this tender
             const suppliersResponse = await fetch(
-                `${apiUrl}/api/purchase-orders/tender/${letter.tender_id}/awarded-suppliers`,
+                `${apiUrl}/purchase-orders/tender/${letter.tender_id}/awarded-suppliers`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             
@@ -354,7 +354,7 @@ const LetterManagement = () => {
             
             // Fetch existing POs for this award letter
             const posResponse = await fetch(
-                `${apiUrl}/api/purchase-orders/award-letter/${letter.id}`,
+                `${apiUrl}/purchase-orders/award-letter/${letter.id}`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             
@@ -439,7 +439,7 @@ const LetterManagement = () => {
             setLoadingPO(true);
             const token = localStorage.getItem('token');
             
-            const response = await fetch(`${apiUrl}/api/purchase-orders`, {
+            const response = await fetch(`${apiUrl}/purchase-orders`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -468,11 +468,11 @@ const LetterManagement = () => {
             }
 
             const data = await response.json();
-            toast.success(`Purchase Order ${data.purchaseOrder.poNumber} created successfully!`);
+            toast.success(`Purchase Order ${data.purchaseOrder.poNumber} created.`);
             
             // Refresh existing POs list
             const posResponse = await fetch(
-                `${apiUrl}/api/purchase-orders/award-letter/${selectedLetterForPO.id}`,
+                `${apiUrl}/purchase-orders/award-letter/${selectedLetterForPO.id}`,
                 { headers: { 'Authorization': `Bearer ${token}` } }
             );
             if (posResponse.ok) {
@@ -519,9 +519,6 @@ const LetterManagement = () => {
         setPOReferenceNo('');
     };
 
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleString();
-    };
 
     return (
         <div className="space-y-6">
@@ -537,7 +534,7 @@ const LetterManagement = () => {
                         }`}
                     >
                         <i className="fas fa-paper-plane mr-2"></i>
-                        Send Letter of Intent
+                        Send letter of intent
                     </button>
                     <button
                         onClick={() => setActiveLetterTab('send-award')}
@@ -548,7 +545,7 @@ const LetterManagement = () => {
                         }`}
                     >
                         <i className="fas fa-trophy mr-2"></i>
-                        Send Letter of Award
+                        Send letter of award
                     </button>
                     <button
                         onClick={() => setActiveLetterTab('all-letters')}
@@ -559,22 +556,19 @@ const LetterManagement = () => {
                         }`}
                     >
                         <i className="fas fa-envelope mr-2"></i>
-                        All Letters ({allLetters.length})
+                        All letters ({allLetters.length})
                     </button>
                 </nav>
             </div>
 
             {/* Send Letter of Intent Tab */}
             {activeLetterTab === 'send-intent' && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
                         <h3 className="text-lg font-medium text-gray-900 mb-4">
                             <i className="fas fa-paper-plane mr-2 text-blue-600"></i>
-                            Send Letter of Intent
+                            Send letter of intent
                         </h3>
-                        <p className="text-sm text-gray-600 mb-6">
-                            Send Letter of Intent to suppliers after financial opening is completed.
-                        </p>
 
                         {tendersForIntent.length === 0 ? (
                             <div className="text-center py-8">
@@ -585,7 +579,7 @@ const LetterManagement = () => {
                         ) : (
                             <div className="grid gap-4">
                                 {tendersForIntent.map((tender) => (
-                                    <div key={tender.id} className="border border-gray-200 rounded-lg p-4">
+                                    <div key={tender.id} className="ui-card">
                                         <div className="flex justify-between items-start">
                                             <div className="flex-1">
                                                 <h4 className="font-medium text-gray-900">
@@ -603,28 +597,28 @@ const LetterManagement = () => {
                                                     </span>
                                                     <span>
                                                         <i className="fas fa-calendar mr-1"></i>
-                                                        Financial opened: {formatDate(tender.financial_opened_at)}
+                                                        Financial opened: {formatDateTime(tender.financial_opened_at)}
                                                     </span>
                                                 </div>
                                             </div>
                                             <div className="ml-4">
                                                 {tender.intent_letter_sent ? (
                                                     <div className="text-center">
-                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100">
                                                             <i className="fas fa-check mr-1"></i>
                                                             Intent Sent
                                                         </span>
                                                         <p className="text-xs text-gray-500 mt-1">
-                                                            {formatDate(tender.intent_sent_at)}
+                                                            {formatDateTime(tender.intent_sent_at)}
                                                         </p>
                                                     </div>
                                                 ) : (
                                                     <button
                                                         onClick={() => openIntentModal(tender)}
-                                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                                                        className="ui-btn ui-btn--primary"
                                                     >
                                                         <i className="fas fa-paper-plane mr-2"></i>
-                                                        Send Intent
+                                                        Send intent
                                                     </button>
                                                 )}
                                             </div>
@@ -639,15 +633,12 @@ const LetterManagement = () => {
 
             {/* Send Letter of Award Tab */}
             {activeLetterTab === 'send-award' && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
                         <h3 className="text-lg font-medium text-gray-900 mb-4">
                             <i className="fas fa-trophy mr-2 text-green-600"></i>
-                            Send Letter of Award
+                            Send letter of award
                         </h3>
-                        <p className="text-sm text-gray-600 mb-6">
-                            Send Letter of Award to selected suppliers (only those who received Letter of Intent).
-                        </p>
 
                         {tendersForAward.length === 0 ? (
                             <div className="text-center py-8">
@@ -658,7 +649,7 @@ const LetterManagement = () => {
                         ) : (
                             <div className="grid gap-4">
                                 {tendersForAward.map((tender) => (
-                                    <div key={tender.id} className="border border-gray-200 rounded-lg p-4">
+                                    <div key={tender.id} className="ui-card">
                                         <div className="flex justify-between items-start">
                                             <div className="flex-1">
                                                 <h4 className="font-medium text-gray-900">
@@ -668,7 +659,7 @@ const LetterManagement = () => {
                                                 <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-500">
                                                     <span>
                                                         <i className="fas fa-check-circle mr-1 text-green-500"></i>
-                                                        Intent sent: {formatDate(tender.intent_sent_at)}
+                                                        Intent sent: {formatDateTime(tender.intent_sent_at)}
                                                     </span>
                                                     {tender.tender_status === 'award_pending' && (
                                                         <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
@@ -681,10 +672,10 @@ const LetterManagement = () => {
                                             <div className="ml-4">
                                                 <button
                                                     onClick={() => openAwardModal(tender)}
-                                                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                                                    className="ui-btn ui-btn--primary"
                                                 >
                                                     <i className="fas fa-trophy mr-2"></i>
-                                                    Send Award
+                                                    Send award
                                                 </button>
                                             </div>
                                         </div>
@@ -698,11 +689,11 @@ const LetterManagement = () => {
 
             {/* All Letters Tab */}
             {activeLetterTab === 'all-letters' && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
                         <h3 className="text-lg font-medium text-gray-900 mb-4">
                             <i className="fas fa-envelope mr-2 text-gray-600"></i>
-                            All Letters History
+                            All letters history
                         </h3>
 
                         {allLetters.length === 0 ? (
@@ -712,33 +703,33 @@ const LetterManagement = () => {
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                                <table className="ui-table">
+                                    <thead>
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Letter Details
+                                            <th className="text-left">
+                                                Letter details
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Type
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Recipients
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Status
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Sent Date
+                                            <th className="text-left">
+                                                Sent date
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Actions
                                             </th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody>
                                         {allLetters.map((letter) => (
                                             <tr key={letter.id}>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <div>
                                                         <div className="text-sm font-medium text-gray-900">
                                                             {letter.letter_title}
@@ -748,7 +739,7 @@ const LetterManagement = () => {
                                                         </div>
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                                                         letter.letter_type === 'intent' 
                                                             ? 'bg-blue-100 text-blue-800' 
@@ -758,10 +749,10 @@ const LetterManagement = () => {
                                                         {letter.letter_type === 'intent' ? 'Intent' : 'Award'}
                                                     </span>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                <td className="whitespace-nowrap">
                                                     {letter.total_recipients} recipients
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <div className="text-xs">
                                                         {letter.letter_type === 'award' && !letter.sent_at ? (
                                                             <div className="text-yellow-700">
@@ -784,13 +775,13 @@ const LetterManagement = () => {
                                                         )}
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                    {formatDate(letter.sent_at)}
+                                                <td className="whitespace-nowrap">
+                                                    {formatDateTime(letter.sent_at)}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                <td className="whitespace-nowrap">
                                                     <button
                                                         onClick={() => downloadLetter(letter.id, letter.letter_original_name)}
-                                                        className="text-indigo-600 hover:text-indigo-900 mr-3"
+                                                        className="ui-btn ui-btn--ghost ui-btn--sm mr-3"
                                                     >
                                                         <i className="fas fa-download mr-1"></i>
                                                         Download
@@ -798,7 +789,7 @@ const LetterManagement = () => {
                                                     {letter.letter_type === 'award' && (
                                                         <button
                                                             onClick={() => openPOModal(letter)}
-                                                            className="text-green-600 hover:text-green-900 ml-2"
+                                                            className="ui-btn ui-btn--ghost ui-btn--sm ml-2"
                                                         >
                                                             <i className="fas fa-file-invoice mr-1"></i>
                                                             Create PO
@@ -817,16 +808,16 @@ const LetterManagement = () => {
 
             {/* Letter of Intent Modal */}
             {showIntentModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
                                 <i className="fas fa-paper-plane mr-2 text-blue-600"></i>
-                                Send Letter of Intent
+                                Send letter of intent
                             </h3>
                             <button
                                 onClick={() => setShowIntentModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times"></i>
                             </button>
@@ -835,34 +826,34 @@ const LetterManagement = () => {
                         <form onSubmit={handleSendIntent}>
                             <div className="space-y-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Letter Title</label>
+                                    <label className="ui-label block">Letter title</label>
                                     <input
                                         type="text"
                                         value={intentForm.letterTitle}
                                         onChange={(e) => setIntentForm({...intentForm, letterTitle: e.target.value})}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        className="ui-input mt-1"
                                         required
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Letter Content</label>
+                                    <label className="ui-label block">Letter content</label>
                                     <textarea
                                         value={intentForm.letterContent}
                                         onChange={(e) => setIntentForm({...intentForm, letterContent: e.target.value})}
                                         rows={4}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        className="ui-input ui-textarea mt-1"
                                         placeholder="Additional content for the email body..."
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Send To</label>
+                                    <label className="ui-label block">Send to</label>
                                     <select
                                         value={intentForm.sendTo}
                                         onChange={handleIntentFormChange}
                                         name="sendTo"
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        className="ui-input mt-1"
                                     >
                                         <option value="all">All Approved Suppliers</option>
                                         <option value="selected">Selected Suppliers</option>
@@ -872,10 +863,10 @@ const LetterManagement = () => {
                                 {/* Supplier Selection Section */}
                                 {intentForm.sendTo === 'selected' && (
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Select Suppliers ({selectedSupplierIds.length} selected)
+                                        <label className="ui-label block mb-2">
+                                            Select suppliers ({selectedSupplierIds.length} selected)
                                         </label>
-                                        <div className="max-h-40 overflow-y-auto border border-gray-300 rounded-md p-3 bg-gray-50">
+                                        <div className="ui-callout max-h-40 overflow-y-auto">
                                             {selectedSuppliersForIntent.length > 0 ? (
                                                 selectedSuppliersForIntent.map((supplier) => (
                                                     <label key={supplier.id} className="flex items-center space-x-3 py-2">
@@ -904,7 +895,7 @@ const LetterManagement = () => {
                                 )}
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Letter File (PDF/DOC/DOCX)</label>
+                                    <label className="ui-label block">Letter file (PDF/DOC/DOCX)</label>
                                     <input
                                         type="file"
                                         name="letterFile"
@@ -920,14 +911,14 @@ const LetterManagement = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowIntentModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading || (intentForm.sendTo === 'selected' && selectedSupplierIds.length === 0)}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     {loading ? (
                                         <>
@@ -937,7 +928,7 @@ const LetterManagement = () => {
                                     ) : (
                                         <>
                                             <i className="fas fa-paper-plane mr-2"></i>
-                                            Send Letter of Intent
+                                            Send letter of intent
                                         </>
                                     )}
                                 </button>
@@ -949,16 +940,16 @@ const LetterManagement = () => {
 
             {/* Letter of Award Modal */}
             {showAwardModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-2/3 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
                                 <i className="fas fa-trophy mr-2 text-green-600"></i>
-                                Send Letter of Award
+                                Send letter of award
                             </h3>
                             <button
                                 onClick={() => setShowAwardModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times"></i>
                             </button>
@@ -967,32 +958,32 @@ const LetterManagement = () => {
                         <form onSubmit={handleSendAward}>
                             <div className="space-y-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Letter Title</label>
+                                    <label className="ui-label block">Letter title</label>
                                     <input
                                         type="text"
                                         value={awardForm.letterTitle}
                                         onChange={(e) => setAwardForm({...awardForm, letterTitle: e.target.value})}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        className="ui-input mt-1"
                                         required
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Letter Content</label>
+                                    <label className="ui-label block">Letter content</label>
                                     <textarea
                                         value={awardForm.letterContent}
                                         onChange={(e) => setAwardForm({...awardForm, letterContent: e.target.value})}
                                         rows={4}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                        className="ui-input ui-textarea mt-1"
                                         placeholder="Additional content for the email body..."
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Select Suppliers for Award ({selectedAwardSupplierIds.length} selected)
+                                    <label className="ui-label block">
+                                        Select suppliers for award ({selectedAwardSupplierIds.length} selected)
                                     </label>
-                                    <div className="mt-2 max-h-48 overflow-y-auto border border-gray-300 rounded-md p-3 bg-gray-50">
+                                    <div className="ui-callout mt-2 max-h-48 overflow-y-auto">
                                         {selectedSuppliersForAward.length === 0 ? (
                                             <p className="text-gray-500 text-sm text-center py-4">Loading suppliers...</p>
                                         ) : (
@@ -1018,7 +1009,7 @@ const LetterManagement = () => {
                                                             {supplier.supplier_email}
                                                         </div>
                                                         <div className="text-xs text-gray-400">
-                                                            Intent sent: {new Date(supplier.sent_at).toLocaleDateString()}
+                                                            Intent sent: {formatDate(supplier.sent_at)}
                                                         </div>
                                                     </div>
                                                 </label>
@@ -1031,7 +1022,7 @@ const LetterManagement = () => {
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Letter File (PDF/DOC/DOCX)</label>
+                                    <label className="ui-label block">Letter file (PDF/DOC/DOCX)</label>
                                     <input
                                         type="file"
                                         accept=".pdf,.doc,.docx"
@@ -1046,14 +1037,14 @@ const LetterManagement = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowAwardModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading || selectedAwardSupplierIds.length === 0}
-                                    className="px-4 py-2 bg-green-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     {loading ? (
                                         <>
@@ -1063,7 +1054,7 @@ const LetterManagement = () => {
                                     ) : (
                                         <>
                                             <i className="fas fa-trophy mr-2"></i>
-                                            Send Letter of Award
+                                            Send letter of award
                                         </>
                                     )}
                                 </button>
@@ -1075,16 +1066,16 @@ const LetterManagement = () => {
 
             {/* Purchase Order Modal */}
             {showPOModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-2/3 shadow-lg rounded-md bg-white max-h-[90vh] overflow-y-auto">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg overflow-y-auto">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
                                 <i className="fas fa-file-invoice mr-2 text-green-600"></i>
-                                Create Purchase Order
+                                Create purchase order
                             </h3>
                             <button
                                 onClick={closePOModal}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times"></i>
                             </button>
@@ -1099,7 +1090,7 @@ const LetterManagement = () => {
                             <div className="space-y-6">
                                 {/* Letter Info */}
                                 {selectedLetterForPO && (
-                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                    <div className="ui-callout">
                                         <h4 className="font-medium text-gray-900">{selectedLetterForPO.letter_title}</h4>
                                         <p className="text-sm text-gray-600 mt-1">
                                             Tender: {selectedLetterForPO.tender_number} - {selectedLetterForPO.tender_title}
@@ -1108,98 +1099,98 @@ const LetterManagement = () => {
                                 )}
 
                                 {/* PO Details */}
-                                <div className="border border-gray-200 rounded-lg p-4">
+                                <div className="ui-card">
                                     <h4 className="font-medium text-gray-900 mb-3">
                                         <i className="fas fa-clipboard-list mr-2 text-indigo-600"></i>
-                                        Purchase Order Details
+                                        Purchase order details
                                     </h4>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">PO Date</label>
+                                            <label className="ui-label block">PO date</label>
                                             <input
                                                 type="text"
-                                                value={new Date().toLocaleDateString()}
+                                                value={formatDate(new Date())}
                                                 readOnly
-                                                className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-gray-50"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Delivery Date</label>
+                                            <label className="ui-label block">Delivery date</label>
                                             <input
                                                 type="date"
                                                 value={poDeliveryDate}
                                                 onChange={(e) => setPODeliveryDate(e.target.value)}
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Payment Terms</label>
+                                            <label className="ui-label block">Payment terms</label>
                                             <input
                                                 type="text"
                                                 value={poPaymentTerms}
                                                 onChange={(e) => setPOPaymentTerms(e.target.value)}
                                                 placeholder="e.g., Net 30 days"
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Reference No</label>
+                                            <label className="ui-label block">Reference no</label>
                                             <input
                                                 type="text"
                                                 value={poReferenceNo}
                                                 onChange={(e) => setPOReferenceNo(e.target.value)}
                                                 placeholder="Internal reference or file number"
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Billing Address</label>
+                                            <label className="ui-label block">Billing address</label>
                                             <textarea
                                                 value={poBillingAddress}
                                                 onChange={(e) => setPOBillingAddress(e.target.value)}
                                                 rows={2}
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input ui-textarea mt-1"
                                                 placeholder="Billing address"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Delivery Address</label>
+                                            <label className="ui-label block">Delivery address</label>
                                             <textarea
                                                 value={poShippingAddress}
                                                 onChange={(e) => setPOShippingAddress(e.target.value)}
                                                 rows={2}
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input ui-textarea mt-1"
                                                 placeholder="Delivery address"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Contact Name</label>
+                                            <label className="ui-label block">Contact name</label>
                                             <input
                                                 type="text"
                                                 value={poContactName}
                                                 onChange={(e) => setPOContactName(e.target.value)}
                                                 placeholder="Contact person"
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Contact Phone</label>
+                                            <label className="ui-label block">Contact phone</label>
                                             <input
                                                 type="text"
                                                 value={poContactPhone}
                                                 onChange={(e) => setPOContactPhone(e.target.value)}
                                                 placeholder="Contact phone"
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">Contact Email</label>
+                                            <label className="ui-label block">Contact email</label>
                                             <input
                                                 type="email"
                                                 value={poContactEmail}
                                                 onChange={(e) => setPOContactEmail(e.target.value)}
                                                 placeholder="Contact email"
-                                                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                                className="ui-input mt-1"
                                             />
                                         </div>
                                     </div>
@@ -1207,16 +1198,16 @@ const LetterManagement = () => {
 
                                 {/* Existing POs */}
                                 {existingPOs.length > 0 && (
-                                    <div className="border border-gray-200 rounded-lg p-4">
+                                    <div className="ui-card">
                                         <h4 className="font-medium text-gray-900 mb-3">
                                             <i className="fas fa-history mr-2 text-blue-600"></i>
-                                            Existing Purchase Orders ({existingPOs.length})
+                                            Existing purchase orders ({existingPOs.length})
                                         </h4>
                                         <div className="space-y-2">
                                             {existingPOs.map((po) => (
-                                                <div key={po.id} className="flex justify-between items-center bg-blue-50 p-3 rounded">
+                                                <div key={po.id} className="ui-callout flex justify-between items-center">
                                                     <div>
-                                                        <span className="font-medium text-blue-800">{po.po_number}</span>
+                                                        <span className="font-medium">{po.po_number}</span>
                                                         <span className="text-sm text-gray-600 ml-3">{po.supplier_name}</span>
                                                     </div>
                                                     <div className="text-right">
@@ -1238,8 +1229,8 @@ const LetterManagement = () => {
 
                                 {/* Select Supplier */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        Select Supplier for New PO
+                                    <label className="ui-label block mb-2">
+                                        Select supplier for new PO
                                     </label>
                                     <div className="grid gap-2">
                                         {awardedSuppliersForPO.map((supplier) => (
@@ -1274,34 +1265,34 @@ const LetterManagement = () => {
                                 {/* PO Items - show when supplier is selected */}
                                 {selectedSupplierForPO && (
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Enter Quantities for Items
+                                        <label className="ui-label block mb-2">
+                                            Enter quantities for items
                                         </label>
                                         <div className="border border-gray-200 rounded-lg overflow-hidden">
-                                            <table className="min-w-full divide-y divide-gray-200">
-                                                <thead className="bg-gray-50">
+                                            <table className="ui-table">
+                                                <thead>
                                                     <tr>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Unit Price</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Awarded Qty</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">PO Quantity</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                                                        <th className="text-left">Item</th>
+                                                        <th className="text-left">Unit price</th>
+                                                        <th className="text-left">Awarded qty</th>
+                                                        <th className="text-left">PO quantity</th>
+                                                        <th className="text-left">Total</th>
+                                                        <th className="text-left">Action</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                <tbody>
                                                     {poItems.map((item, index) => (
                                                         <tr key={index}>
-                                                            <td className="px-4 py-3">
+                                                            <td>
                                                                 <input
                                                                     type="text"
                                                                     value={item.itemName}
                                                                     onChange={(e) => handlePOItemNameChange(index, e.target.value)}
-                                                                    className="w-full px-2 py-1 border border-gray-300 rounded-md text-sm"
+                                                                    className="ui-input"
                                                                     placeholder="Item name"
                                                                 />
                                                             </td>
-                                                            <td className="px-4 py-3">
+                                                            <td>
                                                                 <div className="flex items-center space-x-2">
                                                                     <span className="text-xs text-gray-500">Rs</span>
                                                                     <input
@@ -1310,29 +1301,29 @@ const LetterManagement = () => {
                                                                         step="0.01"
                                                                         value={item.unitPrice}
                                                                         onChange={(e) => handlePOItemUnitPriceChange(index, e.target.value)}
-                                                                        className="w-28 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                                                                        className="ui-input w-28"
                                                                     />
                                                                 </div>
                                                             </td>
-                                                            <td className="px-4 py-3 text-sm text-gray-600">{item.awardedQuantity}</td>
-                                                            <td className="px-4 py-3">
+                                                            <td>{item.awardedQuantity}</td>
+                                                            <td>
                                                                 <input
                                                                     type="number"
                                                                     min="0"
                                                                     max={item.awardedQuantity > 0 ? item.awardedQuantity : undefined}
                                                                     value={item.quantity}
                                                                     onChange={(e) => handlePOItemQuantityChange(index, e.target.value)}
-                                                                    className="w-24 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                                                                    className="ui-input w-24"
                                                                 />
                                                             </td>
-                                                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                                            <td>
                                                                 Rs {(item.quantity * item.unitPrice).toLocaleString()}
                                                             </td>
-                                                            <td className="px-4 py-3">
+                                                            <td>
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => removePOItem(index)}
-                                                                    className="text-red-600 hover:text-red-800 text-sm"
+                                                                    className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm"
                                                                 >
                                                                     Remove
                                                                 </button>
@@ -1342,11 +1333,11 @@ const LetterManagement = () => {
                                                 </tbody>
                                                 <tfoot className="bg-gray-50">
                                                     <tr>
-                                                        <td colSpan="4" className="px-4 py-3 text-right text-sm font-medium text-gray-900">Total Amount:</td>
-                                                        <td className="px-4 py-3 text-sm font-bold text-green-600">
+                                                        <td colSpan="4" className="text-right">Total Amount:</td>
+                                                        <td>
                                                             Rs {poItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0).toLocaleString()}
                                                         </td>
-                                                        <td className="px-4 py-3"></td>
+                                                        <td></td>
                                                     </tr>
                                                 </tfoot>
                                             </table>
@@ -1355,10 +1346,10 @@ const LetterManagement = () => {
                                             <button
                                                 type="button"
                                                 onClick={addPOItem}
-                                                className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                                                className="ui-btn ui-btn--ghost ui-btn--sm"
                                             >
                                                 <i className="fas fa-plus mr-1"></i>
-                                                Add Item
+                                                Add item
                                             </button>
                                         </div>
                                     </div>
@@ -1367,14 +1358,14 @@ const LetterManagement = () => {
                                 {/* Remarks */}
                                 {selectedSupplierForPO && (
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Remarks (Optional)
+                                        <label className="ui-label block mb-2">
+                                            Remarks (optional)
                                         </label>
                                         <textarea
                                             value={poRemarks}
                                             onChange={(e) => setPORemarks(e.target.value)}
                                             rows={3}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                            className="ui-input ui-textarea"
                                             placeholder="Add any additional notes or remarks..."
                                         />
                                     </div>
@@ -1385,7 +1376,7 @@ const LetterManagement = () => {
                                     <button
                                         type="button"
                                         onClick={closePOModal}
-                                        className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                        className="ui-btn ui-btn--secondary"
                                     >
                                         Cancel
                                     </button>
@@ -1396,7 +1387,7 @@ const LetterManagement = () => {
                                             !selectedSupplierForPO ||
                                             poItems.filter(i => i.quantity > 0 && i.unitPrice > 0 && i.itemName.trim()).length === 0
                                         }
-                                        className="px-4 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="ui-btn ui-btn--primary"
                                     >
                                         {loadingPO ? (
                                             <>
@@ -1406,7 +1397,7 @@ const LetterManagement = () => {
                                         ) : (
                                             <>
                                                 <i className="fas fa-file-invoice mr-2"></i>
-                                                Create Purchase Order
+                                                Create purchase order
                                             </>
                                         )}
                                     </button>

@@ -1,27 +1,15 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const reports = require('../controllers/technicalReportController');
+
 const router = express.Router();
-const auth = require('../middleware/auth');
-const {
-    getArchivedEvaluations,
-    getTenderSuppliers,
-    downloadComparativeAnalysis,
-    downloadTechnicalEvaluation,
-    markEvaluationCompleted
-} = require('../controllers/technicalReportController');
 
-// Get archived technical evaluations
-router.get('/archived', auth, getArchivedEvaluations);
-
-// Get suppliers for a specific tender
-router.get('/tender/:tenderId/suppliers', auth, getTenderSuppliers);
-
-// Download comparative analysis Excel report
-router.get('/tender/:tenderId/supplier/:supplierName/comparative-analysis', auth, downloadComparativeAnalysis);
-
-// Download technical evaluation DOCX report
-router.get('/tender/:tenderId/supplier/:supplierName/technical-evaluation', auth, downloadTechnicalEvaluation);
-
-// Mark evaluation as completed
-router.post('/tender/:tenderId/complete', auth, markEvaluationCompleted);
+router.use(staffOnly, allow('technicalEvaluation', 'purchase'));
+router.get('/archived', reports.getArchivedEvaluations);
+router.get('/tender/:tenderId/suppliers', reports.getTenderSuppliers);
+router.get('/tender/:tenderId/supplier/:supplierName/comparative-analysis', reports.downloadComparativeAnalysis);
+router.get('/tender/:tenderId/supplier/:supplierName/technical-evaluation', reports.downloadTechnicalEvaluation);
+router.post('/tender/:tenderId/complete', reports.markEvaluationCompleted);
 
 module.exports = router;

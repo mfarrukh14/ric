@@ -1,6 +1,7 @@
-const { getDatabase } = require('../config/database');
+const { getDatabase, dbGet, dbRun } = require('../db');
 const path = require('path');
 const fs = require('fs');
+
 
 // Get supplier's won bids (awards)
 const getSupplierAwards = async (req, res) => {
@@ -113,19 +114,10 @@ const downloadAwardLetter = async (req, res) => {
         const db = getDatabase();
 
         // Verify that this award belongs to the requesting supplier
-        const award = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT sa.id, tl.letter_file_path, tl.letter_original_name
-                 FROM supplier_awards sa
-                 LEFT JOIN tender_letters tl ON sa.award_letter_id = tl.id
-                 WHERE sa.id = ? AND sa.supplier_id = ?`,
-                [awardId, supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const award = await dbGet(`SELECT sa.id, tl.letter_file_path, tl.letter_original_name
+         FROM supplier_awards sa
+         LEFT JOIN tender_letters tl ON sa.award_letter_id = tl.id
+         WHERE sa.id = ? AND sa.supplier_id = ?`, [awardId, supplierId]);
 
         if (!award) {
             return res.status(404).json({ error: 'Award not found' });
@@ -169,19 +161,12 @@ const updateAwardStatus = async (req, res) => {
         const { awardId } = req.params;
         const { status, notes, contractSignedAt, completionDate } = req.body;
         const supplierId = req.user.id;
-        const db = getDatabase();
 
         // Verify award belongs to supplier
-        const award = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT id FROM supplier_awards WHERE id = ? AND supplier_id = ?',
-                [awardId, supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const award = await dbGet(
+            'SELECT id FROM supplier_awards WHERE id = ? AND supplier_id = ?',
+            [awardId, supplierId]
+        );
 
         if (!award) {
             return res.status(404).json({ error: 'Award not found' });
@@ -217,16 +202,10 @@ const updateAwardStatus = async (req, res) => {
 
         updateValues.push(awardId);
 
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE supplier_awards SET ${updateFields.join(', ')} WHERE id = ?`,
-                updateValues,
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            `UPDATE supplier_awards SET ${updateFields.join(', ')} WHERE id = ?`,
+            updateValues
+        );
 
         res.json({ message: 'Award status updated successfully' });
     } catch (error) {
@@ -239,26 +218,16 @@ const updateAwardStatus = async (req, res) => {
 const getSupplierAwardStats = async (req, res) => {
     try {
         const supplierId = req.user.id;
-        const db = getDatabase();
 
-        const stats = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT 
-                    COUNT(*) as total_awards,
-                    COUNT(CASE WHEN award_status = 'awarded' THEN 1 END) as pending_awards,
-                    COUNT(CASE WHEN award_status = 'contract_signed' THEN 1 END) as contracts_signed,
-                    COUNT(CASE WHEN award_status = 'completed' THEN 1 END) as completed_awards,
-                    SUM(award_amount) as total_award_value,
-                    SUM(CASE WHEN award_status = 'completed' THEN award_amount ELSE 0 END) as completed_value
-                 FROM supplier_awards 
-                 WHERE supplier_id = ?`,
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const stats = await dbGet(`SELECT 
+            COUNT(*) as total_awards,
+            COUNT(CASE WHEN award_status = 'awarded' THEN 1 END) as pending_awards,
+            COUNT(CASE WHEN award_status = 'contract_signed' THEN 1 END) as contracts_signed,
+            COUNT(CASE WHEN award_status = 'completed' THEN 1 END) as completed_awards,
+            SUM(award_amount) as total_award_value,
+            SUM(CASE WHEN award_status = 'completed' THEN award_amount ELSE 0 END) as completed_value
+         FROM supplier_awards 
+         WHERE supplier_id = ?`, [supplierId]);
 
         res.json({
             total_awards: stats.total_awards || 0,

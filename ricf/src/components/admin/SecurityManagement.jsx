@@ -97,11 +97,6 @@ const SecurityManagement = () => {
     fetchSecurityData();
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Never';
-    return new Date(dateString).toLocaleDateString();
-  };
-
   const formatRole = (role) => {
     if (!role) return 'Unknown';
     return role.charAt(0).toUpperCase() + role.slice(1);
@@ -123,7 +118,7 @@ const SecurityManagement = () => {
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+      <div className="ui-callout ui-callout--danger">
         <div className="flex items-center">
           <svg className="w-5 h-5 text-red-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
@@ -132,7 +127,7 @@ const SecurityManagement = () => {
         </div>
         <button 
           onClick={refreshData}
-          className="mt-2 bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+          className="ui-btn ui-btn--danger-solid mt-2"
         >
           Retry
         </button>
@@ -142,31 +137,25 @@ const SecurityManagement = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg border border-white border-opacity-30 rounded-2xl shadow-lg p-6">
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">Security Settings</h2>
-        <p className="text-gray-600">Manage two-factor authentication and security policies for your organization.</p>
-      </div>
-
       {/* 2FA Enforcement Status */}
-      <div className="bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg border border-white border-opacity-30 rounded-2xl shadow-lg p-6">
+      <div className="ui-panel ui-panel--pad">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-800">Two-Factor Authentication</h3>
+          <h3 className="text-lg font-semibold text-gray-800">Two-factor authentication</h3>
           <button
             onClick={() => setShow2FASetup(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center"
+            className="ui-btn ui-btn--primary"
           >
             <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
-            My 2FA Settings
+            My 2FA settings
           </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Enforcement Status */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <h4 className="font-medium text-gray-800 mb-2">Organization Policy</h4>
+          <div className="ui-card">
+            <h4 className="font-medium text-gray-800 mb-2">Organization policy</h4>
             <div className="flex items-center space-x-3">
               <div className={`w-4 h-4 rounded-full ${enforcementStatus?.enforced ? 'bg-green-500' : 'bg-gray-400'}`}></div>
               <span className="text-sm text-gray-600">
@@ -179,8 +168,8 @@ const SecurityManagement = () => {
           </div>
 
           {/* Your 2FA Status */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <h4 className="font-medium text-gray-800 mb-2">Your 2FA Status</h4>
+          <div className="ui-card">
+            <h4 className="font-medium text-gray-800 mb-2">Your 2FA status</h4>
             <div className="flex items-center space-x-3">
               <div className={`w-4 h-4 rounded-full ${currentUser?.two_factor_enabled ? 'bg-green-500' : 'bg-red-500'}`}></div>
               <span className="text-sm text-gray-600">
@@ -197,14 +186,14 @@ const SecurityManagement = () => {
         </div>
 
         {/* Policy Explanation */}
-        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="ui-callout mt-6">
           <div className="flex items-start">
             <svg className="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div>
-              <h4 className="font-medium text-blue-800 mb-1">How 2FA Enforcement Works</h4>
-              <ul className="text-sm text-blue-700 space-y-1">
+              <h4 className="font-medium mb-1">How 2FA enforcement works</h4>
+              <ul className="text-sm space-y-1">
                 <li>• When you (superadmin) enable 2FA, it becomes mandatory for all users</li>
                 <li>• Users without 2FA will see a persistent popup requiring setup</li>
                 <li>• When you disable 2FA, it becomes optional for all users</li>
@@ -217,12 +206,12 @@ const SecurityManagement = () => {
 
       {/* Non-Compliant Users */}
       {enforcementStatus?.enforced && (
-        <div className="bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg border border-white border-opacity-30 rounded-2xl shadow-lg p-6">
+        <div className="ui-panel ui-panel--pad">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-800">Users Without 2FA</h3>
+            <h3 className="text-lg font-semibold text-gray-800">Users without 2FA</h3>
             <button
               onClick={refreshData}
-              className="text-blue-600 hover:text-blue-700 flex items-center"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
             >
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -233,26 +222,24 @@ const SecurityManagement = () => {
 
           {nonCompliantUsers.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 bg-opacity-50">
+              <table className="ui-table">
+                <thead>
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Name</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Username</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Role</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Department</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Last Login</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Status</th>
+                    <th className="text-left">Name</th>
+                    <th className="text-left">Username</th>
+                    <th className="text-left">Role</th>
+                    <th className="text-left">Team</th>
+                    <th className="text-left">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody>
                   {nonCompliantUsers.map((user) => (
                     <tr key={user.id} className="hover:bg-gray-50 hover:bg-opacity-50">
-                      <td className="px-4 py-2 text-gray-900">{user.name}</td>
-                      <td className="px-4 py-2 text-gray-600">{user.username}</td>
-                      <td className="px-4 py-2 text-gray-600">{formatRole(user.role)}</td>
-                      <td className="px-4 py-2 text-gray-600">{user.departmentName || 'N/A'}</td>
-                      <td className="px-4 py-2 text-gray-600">{formatDate(user.last_login)}</td>
-                      <td className="px-4 py-2">
+                      <td>{user.name}</td>
+                      <td>{user.username}</td>
+                      <td>{formatRole(user.role)}</td>
+                      <td>{user.departmentName || user.committeeName || '—'}</td>
+                      <td>
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
                           2FA Required
                         </span>
@@ -269,8 +256,8 @@ const SecurityManagement = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <h4 className="text-lg font-medium text-gray-800 mb-2">All Users Compliant</h4>
-              <p className="text-gray-600">All users have successfully set up two-factor authentication.</p>
+              <h4 className="text-lg font-medium text-gray-800 mb-2">All users compliant</h4>
+              
             </div>
           )}
         </div>

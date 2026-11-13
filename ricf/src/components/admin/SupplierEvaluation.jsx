@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiUrl } from '../../config/api';
+import { notify } from '../../lib/notify';
+import { PageHeader } from '../../ui';
 
+import { formatDate } from '../../lib/time';
 // ChecklistItem component moved outside to prevent recreation on every render
 const ChecklistItem = ({ criteriaKey, title, description, checklist, setChecklist }) => {
     const handleCheckboxChange = useCallback((checked) => {
@@ -24,7 +27,7 @@ const ChecklistItem = ({ criteriaKey, title, description, checklist, setChecklis
     }, [criteriaKey, setChecklist]);
 
     return (
-        <div className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
+        <div className="ui-card">
             <div className="flex items-start space-x-3">
                 <input
                     type="checkbox"
@@ -35,7 +38,7 @@ const ChecklistItem = ({ criteriaKey, title, description, checklist, setChecklis
                 <div className="flex-1">
                     <div className="flex items-center justify-between">
                         <h4 className="text-sm font-medium text-gray-900">{title}</h4>
-                        {checklist[criteriaKey]?.checked && <span className="text-green-600">✓</span>}
+                        {checklist[criteriaKey]?.checked && <span className="text-green-600"><i className="fas fa-check" aria-hidden="true"></i></span>}
                     </div>
                     <p className="text-xs text-gray-600 mt-1">{description}</p>
                     {!checklist[criteriaKey]?.checked && (
@@ -43,7 +46,7 @@ const ChecklistItem = ({ criteriaKey, title, description, checklist, setChecklis
                             placeholder="Add comments about issues..."
                             value={checklist[criteriaKey]?.comments || ''}
                             onChange={(e) => handleCommentsChange(e.target.value)}
-                            className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="ui-input ui-textarea mt-2"
                             rows={2}
                         />
                     )}
@@ -85,31 +88,31 @@ const SupplierEvaluation = () => {
     const evaluationSteps = [
         {
             title: 'Basic Information',
-            icon: '🏢',
+            icon: '',
             criteria: ['businessProfileComplete'],
             component: 'BasicInfo'
         },
         {
             title: 'Documents Verification',
-            icon: '📄',
+            icon: '',
             criteria: ['documentsSubmitted', 'businessLicenseValid', 'taxCertificateValid'],
             component: 'Documents'
         },
         {
             title: 'Qualifications & Experience',
-            icon: '🎓',
+            icon: '',
             criteria: ['qualificationMet', 'experienceAdequate'],
             component: 'Qualifications'
         },
         {
             title: 'Past Experience Record',
-            icon: '🏗️',
+            icon: '',
             criteria: ['pastExperienceValid', 'workProofAuthentic'],
             component: 'PastExperience'
         },
         {
             title: 'Financial & Compliance',
-            icon: '💰',
+            icon: '',
             criteria: ['financialStability', 'complianceRecords'],
             component: 'Financial'
         }
@@ -175,10 +178,6 @@ const SupplierEvaluation = () => {
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
             });
             const data = await response.json();
-            console.log('Supplier details received:', data);
-            console.log('Past experience data:', data.pastExperience);
-            console.log('Client references data:', data.clientReferences);
-            console.log('Work proof images data:', data.workProofImages);
             setSupplierDetails(response.ok ? data : null);
             setChecklist({
                 businessProfileComplete: { checked: false, comments: '' },
@@ -219,11 +218,11 @@ const SupplierEvaluation = () => {
             setEvaluating(true);
             const { response } = await apiRequest(`/suppliers/${selectedSupplier}/evaluate`, {
                 action: 'approve',
-                comments: 'All evaluation criteria met successfully',
+                comments: 'All evaluation criteria met',
                 checklist
             });
             if (response.ok) {
-                alert('Supplier approved successfully!');
+                notify('Supplier approved');
                 setChecklist({
                     businessProfileComplete: { checked: false, comments: '' },
                     documentsSubmitted: { checked: false, comments: '' },
@@ -286,7 +285,7 @@ const SupplierEvaluation = () => {
             });
 
             if (response.ok) {
-                alert('Resubmission request sent successfully!');
+                notify('Resubmission request sent');
                 setShowResubmitModal(false);
                 setResubmitMessage('');
                 setError(''); // Clear any previous errors
@@ -297,7 +296,7 @@ const SupplierEvaluation = () => {
                 setCurrentStep(0);
             }
         } catch (error) {
-            alert('Error sending resubmission request');
+            notify('Error sending resubmission request');
         } finally {
             setEvaluating(false);
         }
@@ -330,7 +329,7 @@ const SupplierEvaluation = () => {
         <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
-                    <h3 className="text-lg font-semibold text-gray-900">Company Details</h3>
+                    <h3 className="text-lg font-semibold text-gray-900">Company details</h3>
                     <InfoField label="Company Name" value={supplierDetails.supplier?.company_name || supplierDetails.businessProfile?.business_name} />
                     <InfoField label="Legal Structure" value={supplierDetails.businessProfile?.legal_structure} />
                     <InfoField label="Category" value={supplierDetails.businessProfile?.business_category} />
@@ -338,7 +337,7 @@ const SupplierEvaluation = () => {
                     <InfoField label="Registration Number" value={supplierDetails.businessProfile?.business_registration_number} />
                 </div>
                 <div className="space-y-3">
-                    <h3 className="text-lg font-semibold text-gray-900">Status & Verification</h3>
+                    <h3 className="text-lg font-semibold text-gray-900">Status & verification</h3>
                     <div className="text-sm">
                         <span className="font-medium text-gray-600">Email Verified:</span>
                         <StatusBadge status={supplierDetails.supplier?.email_verified ? 'verified' : 'pending'}>
@@ -386,10 +385,10 @@ const SupplierEvaluation = () => {
                     <button
                         key={index}
                         onClick={() => downloadDocument(doc.document_type)}
-                        className="p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-colors text-left"
+                        className="ui-btn ui-btn--secondary text-left"
                     >
                         <div className="flex items-center space-x-3">
-                            <span className="text-2xl">📄</span>
+                            <span className="text-2xl"><i className="fas fa-file-alt" aria-hidden="true"></i></span>
                             <div className="flex-1">
                                 <div className="text-sm font-medium text-blue-600">{getDocumentDisplayName(doc.document_type)}</div>
                                 <div className="text-xs text-gray-500 mt-1">{doc.document_name}</div>
@@ -418,13 +417,13 @@ const SupplierEvaluation = () => {
         <div className="space-y-6">
             {supplierDetails.registrationBodies?.length > 0 && (
                 <div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Registration Bodies</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Registration bodies</h3>
                     <div className="grid gap-3">
                         {supplierDetails.registrationBodies.map((body, index) => (
                             <div key={index} className="border border-green-200 rounded-lg p-3 bg-green-100">
                                 <InfoField label="Body" value={body.registrationBody} />
                                 <InfoField label="Registration #" value={body.registrationNumber} />
-                                <InfoField label="Registration Date" value={new Date(body.registrationDate).toLocaleDateString()} />
+                                <InfoField label="Registration Date" value={formatDate(body.registrationDate)} />
                             </div>
                         ))}
                     </div>
@@ -450,10 +449,10 @@ const SupplierEvaluation = () => {
             {/* Past Work Experience Records */}
             {supplierDetails.pastExperience?.length > 0 ? (
                 <div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Past Work Experience</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Past work experience</h3>
                     <div className="grid gap-4">
                         {supplierDetails.pastExperience.map((experience, index) => (
-                            <div key={index} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                            <div key={index} className="ui-callout">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-2">
                                         <InfoField label="Project/Work Title" value={experience.project_title || experience.projectTitle || 'Not specified'} />
@@ -463,8 +462,8 @@ const SupplierEvaluation = () => {
                                     </div>
                                     <div className="space-y-2">
                                         <InfoField label="Work Type" value={experience.work_type || experience.workType || experience.category || 'Not specified'} />
-                                        <InfoField label="Start Date" value={experience.start_date || experience.startDate ? new Date(experience.start_date || experience.startDate).toLocaleDateString() : 'Not specified'} />
-                                        <InfoField label="End Date" value={experience.end_date || experience.endDate ? new Date(experience.end_date || experience.endDate).toLocaleDateString() : 'Ongoing'} />
+                                        <InfoField label="Start Date" value={experience.start_date || experience.startDate ? formatDate(experience.start_date || experience.startDate) : 'Not specified'} />
+                                        <InfoField label="End Date" value={experience.end_date || experience.endDate ? formatDate(experience.end_date || experience.endDate) : 'Ongoing'} />
                                         <InfoField label="Status" value={experience.status || 'Completed'} />
                                     </div>
                                 </div>
@@ -478,9 +477,9 @@ const SupplierEvaluation = () => {
                     </div>
                 </div>
             ) : (
-                <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-                    <div className="text-gray-400 text-4xl mb-2">🏗️</div>
-                    <h3 className="text-lg font-medium text-gray-900 mb-1">No Past Experience Records</h3>
+                <div className="ui-callout text-center">
+                    <div className="text-gray-400 text-4xl mb-2"><i className="fas fa-building" aria-hidden="true"></i></div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-1">No past experience records</h3>
                     <p className="text-gray-500 text-sm">This supplier has not provided past work experience details</p>
                 </div>
             )}
@@ -488,7 +487,7 @@ const SupplierEvaluation = () => {
             {/* Work Proof Images */}
             {supplierDetails.workProofImages?.length > 0 ? (
                 <div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Work Proof Images</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Work proof images</h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {supplierDetails.workProofImages.map((image, index) => (
                             <div key={index} className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow">
@@ -502,7 +501,7 @@ const SupplierEvaluation = () => {
                                         />
                                     ) : (
                                         <div className="text-gray-400 text-center p-4">
-                                            <span className="text-2xl mb-2 block">🖼️</span>
+                                            <span className="text-2xl mb-2 block"><i className="fas fa-image" aria-hidden="true"></i></span>
                                             <span className="text-xs">Image not available</span>
                                         </div>
                                     )}
@@ -518,9 +517,9 @@ const SupplierEvaluation = () => {
                     </div>
                 </div>
             ) : (
-                <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-                    <div className="text-gray-400 text-4xl mb-2">🖼️</div>
-                    <h3 className="text-lg font-medium text-gray-900 mb-1">No Work Proof Images</h3>
+                <div className="ui-callout text-center">
+                    <div className="text-gray-400 text-4xl mb-2"><i className="fas fa-image" aria-hidden="true"></i></div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-1">No work proof images</h3>
                     <p className="text-gray-500 text-sm">This supplier has not uploaded work proof images</p>
                 </div>
             )}
@@ -528,10 +527,10 @@ const SupplierEvaluation = () => {
             {/* Client References */}
             {supplierDetails.clientReferences?.length > 0 && (
                 <div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Client References</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Client references</h3>
                     <div className="grid gap-3">
                         {supplierDetails.clientReferences.map((reference, index) => (
-                            <div key={index} className="border border-gray-200 rounded-lg p-3 bg-blue-50">
+                            <div key={index} className="ui-callout">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     <InfoField label="Reference Name" value={reference.contact_name || reference.contactName || 'Not specified'} />
                                     <InfoField label="Organization" value={reference.organization || 'Not specified'} />
@@ -569,13 +568,13 @@ const SupplierEvaluation = () => {
         <div className="space-y-6">
             {supplierDetails.ppraRegistrations?.length > 0 && (
                 <div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">PPRA Registrations</h3>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3">PPRA registrations</h3>
                     <div className="grid gap-3">
                         {supplierDetails.ppraRegistrations.map((ppra, index) => (
                             <div key={index} className="border border-green-200 rounded-lg p-3 bg-green-100">
                                 <InfoField label="Category" value={ppra.ppraType} />
                                 <InfoField label="Registration #" value={ppra.registrationNumber} />
-                                <InfoField label="Valid Until" value={new Date(ppra.expiryDate).toLocaleDateString()} />
+                                <InfoField label="Valid Until" value={formatDate(ppra.expiryDate)} />
                             </div>
                         ))}
                     </div>
@@ -599,15 +598,12 @@ const SupplierEvaluation = () => {
     const stepComponents = { BasicInfo: BasicInfoStep, Documents: DocumentsStep, Qualifications: QualificationsStep, PastExperience: PastExperienceStep, Financial: FinancialStep };
 
     return (
-        <div className="min-h-screen bg-gray-50 p-6">
-            <div className="max-w-7xl mx-auto">
-                <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900">Supplier Evaluation Dashboard</h1>
-                    <p className="text-gray-600 mt-2">Review and evaluate supplier applications step by step</p>
-                </div>
+        <div>
+            <div>
+                <PageHeader title="Supplier evaluation" />
 
                 {error && (
-                    <div className="mb-6 bg-red-50 border-l-4 border-red-400 p-4 rounded-md">
+                    <div className="ui-callout ui-callout--danger mb-6">
                         <div className="text-red-700">{error}</div>
                     </div>
                 )}
@@ -615,15 +611,15 @@ const SupplierEvaluation = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                     {/* Suppliers Sidebar */}
                     <div className="lg:col-span-1">
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+                        <div className="ui-panel">
                             <div className="p-6 border-b border-gray-200">
-                                <h2 className="text-lg font-semibold text-gray-900">Pending Applications</h2>
+                                <h2 className="text-lg font-semibold text-gray-900">Pending applications</h2>
                                 <p className="text-sm text-gray-500 mt-1">{suppliers.length} suppliers waiting</p>
                             </div>
                             <div className="p-4 max-h-96 overflow-y-auto">
                                 {loading ? (
                                     <div className="flex justify-center py-8">
-                                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                        <div className="ui-spin"></div>
                                     </div>
                                 ) : suppliers.length > 0 ? (
                                     <div className="space-y-3">
@@ -638,7 +634,7 @@ const SupplierEvaluation = () => {
                                                 <h3 className="font-medium text-gray-900 text-sm">{supplier.company_name}</h3>
                                                 <p className="text-xs text-gray-600 mt-1">{supplier.company_email}</p>
                                                 <p className="text-xs text-gray-500 mt-1">
-                                                    {new Date(supplier.created_at).toLocaleDateString()}
+                                                    {formatDate(supplier.created_at)}
                                                 </p>
                                             </div>
                                         ))}
@@ -655,7 +651,7 @@ const SupplierEvaluation = () => {
                         {supplierDetails ? (
                             <div className="space-y-6">
                                 {/* Header */}
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                                <div className="ui-panel ui-panel--pad">
                                     <div className="flex items-center justify-between">
                                         <div>
                                             <h2 className="text-2xl font-bold text-gray-900">
@@ -668,7 +664,7 @@ const SupplierEvaluation = () => {
                                 </div>
 
                                 {/* Progress Steps */}
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                                <div className="ui-panel ui-panel--pad">
                                     <div className="flex items-center justify-between mb-6">
                                         {evaluationSteps.map((step, index) => (
                                             <div key={index} className="flex items-center">
@@ -683,7 +679,7 @@ const SupplierEvaluation = () => {
                                                     <span className="text-xl">{step.icon}</span>
                                                     <span className="font-medium text-sm">{step.title}</span>
                                                     {step.criteria.every(c => checklist[c]?.checked) && (
-                                                        <span className="text-green-600">✓</span>
+                                                        <span className="text-green-600"><i className="fas fa-check" aria-hidden="true"></i></span>
                                                     )}
                                                 </button>
                                                 {index < evaluationSteps.length - 1 && (
@@ -710,14 +706,14 @@ const SupplierEvaluation = () => {
                                             <button
                                                 onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
                                                 disabled={currentStep === 0}
-                                                className="px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                                                className="ui-btn ui-btn--secondary"
                                             >
                                                 ← Previous
                                             </button>
                                             <button
                                                 onClick={() => setCurrentStep(Math.min(evaluationSteps.length - 1, currentStep + 1))}
                                                 disabled={currentStep === evaluationSteps.length - 1}
-                                                className="px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                                                className="ui-btn ui-btn--secondary"
                                             >
                                                 Next →
                                             </button>
@@ -728,9 +724,9 @@ const SupplierEvaluation = () => {
                                                 <button
                                                     onClick={handleApprove}
                                                     disabled={evaluating}
-                                                    className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+                                                    className="ui-btn ui-btn--primary"
                                                 >
-                                                    {evaluating ? 'Approving...' : '✓ Approve'}
+                                                    {evaluating ? 'Approving...' : 'Approve'}
                                                 </button>
                                             ) : (
                                                 <button
@@ -748,9 +744,9 @@ const SupplierEvaluation = () => {
                                                         setShowResubmitModal(true);
                                                     }}
                                                     disabled={evaluating}
-                                                    className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 font-medium"
+                                                    className="ui-btn ui-btn--primary"
                                                 >
-                                                    📝 Request Changes
+                                                    Request changes
                                                 </button>
                                             )}
                                         </div>
@@ -758,8 +754,8 @@ const SupplierEvaluation = () => {
                                 </div>
 
                                 {/* Progress Summary */}
-                                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Evaluation Progress</h3>
+                                <div className="ui-panel ui-panel--pad">
+                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Evaluation progress</h3>
                                     <div className="flex items-center justify-between mb-2">
                                         <span className="text-sm text-gray-600">Completion</span>
                                         <span className="text-sm font-medium text-gray-900">
@@ -768,16 +764,16 @@ const SupplierEvaluation = () => {
                                     </div>
                                     <div className="w-full bg-gray-200 rounded-full h-3">
                                         <div 
-                                            className="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-500" 
+                                            className="bg-blue-600 h-3 rounded-full transition-all duration-500" 
                                             style={{ width: `${(Object.values(checklist).filter(item => item.checked).length / Object.keys(checklist).length) * 100}%` }}
                                         ></div>
                                     </div>
                                 </div>
                             </div>
                         ) : (
-                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-                                <div className="text-gray-400 text-6xl mb-4">📋</div>
-                                <h3 className="text-lg font-medium text-gray-900 mb-2">Select a Supplier</h3>
+                            <div className="ui-panel ui-panel--pad text-center">
+                                <div className="text-gray-400 text-6xl mb-4"><i className="fas fa-clipboard-list" aria-hidden="true"></i></div>
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">Select a supplier</h3>
                                 <p className="text-gray-500">Choose a supplier from the list to begin evaluation</p>
                             </div>
                         )}
@@ -786,10 +782,10 @@ const SupplierEvaluation = () => {
 
                 {/* Resubmission Modal */}
                 {showResubmitModal && (
-                    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{backdropFilter: 'blur(8px)', background: 'rgba(255,255,255,0.2)'}}>
-                        <div className="bg-white rounded-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+                    <div className="ui-scrim" style={{backdropFilter: 'blur(8px)', background: 'rgba(255,255,255,0.2)'}}>
+                        <div className="ui-dialog ui-dialog--legacy ui-dialog--lg overflow-y-auto">
                             <div className="px-6 py-4 border-b border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900">Request Resubmission</h3>
+                                <h3 className="text-lg font-semibold text-gray-900">Request resubmission</h3>
                             </div>
                             <div className="p-6">
                                 <p className="text-sm text-gray-600 mb-4">Issues found that need to be addressed:</p>
@@ -816,20 +812,20 @@ const SupplierEvaluation = () => {
                                     })}
                                 </div>
                                 <div className="mb-4">
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Additional Message (Optional)</label>
+                                    <label className="ui-label block mb-2">Additional message (optional)</label>
                                     <textarea
                                         value={resubmitMessage}
                                         onChange={(e) => setResubmitMessage(e.target.value)}
                                         placeholder="Additional message to supplier..."
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        className="ui-input ui-textarea"
                                         rows={4}
                                     />
                                 </div>
                                 {/* Validation message */}
                                 {Object.keys(criteriaDetails).some(key => !checklist[key]?.checked && (!checklist[key]?.comments || checklist[key]?.comments.trim() === '')) && (
-                                    <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <div className="ui-callout ui-callout--warning mb-4">
                                         <div className="flex items-center space-x-2">
-                                            <span className="text-yellow-600">⚠️</span>
+                                            <span className="text-yellow-600"><i className="fas fa-exclamation-triangle" aria-hidden="true"></i></span>
                                             <span className="text-sm text-yellow-800 font-medium">
                                                 Please go back and add comments to all unchecked criteria before submitting.
                                             </span>
@@ -840,14 +836,14 @@ const SupplierEvaluation = () => {
                             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
                                 <button
                                     onClick={() => setShowResubmitModal(false)}
-                                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={handleResubmitRequest}
                                     disabled={evaluating || Object.keys(criteriaDetails).some(key => !checklist[key]?.checked && (!checklist[key]?.comments || checklist[key]?.comments.trim() === ''))}
-                                    className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     {evaluating ? 'Sending...' : 'Send Request'}
                                 </button>

@@ -1,18 +1,16 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const vetting = require('../controllers/vettingController');
+
 const router = express.Router();
-const auth = require('../middleware/auth');
-const vettingController = require('../controllers/vettingController');
 
-// Existing demand vetting routes
-router.get('/demands', auth, vettingController.getVettingDemands);
-router.put('/demands/:id/evaluate', auth, vettingController.evaluateDemandVetting);
-
-// New tender vetting routes
-router.get('/tenders/pending', auth, vettingController.getPendingTenders);
-router.get('/tenders/all', auth, vettingController.getAllVettingTenders);
-router.get('/tenders/:tenderId', auth, vettingController.getTenderForVetting);
-router.post('/tenders/:tenderId/evaluate', auth, vettingController.submitTenderVettingEvaluation);
-router.put('/tenders/:tenderId/update-items', auth, vettingController.updateTenderItems);
-router.get('/committee/members', auth, vettingController.getVettingCommitteeMembers);
+router.use(staffOnly, allow('vetting'));
+router.get('/tenders/pending', vetting.getPendingTenders);
+router.get('/tenders/all', vetting.getAllVettingTenders);
+router.get('/tenders/:tenderId', vetting.getTenderForVetting);
+router.post('/tenders/:tenderId/evaluate', vetting.submitTenderVettingEvaluation);
+router.put('/tenders/:tenderId/update-items', vetting.updateTenderItems);
+router.get('/committee/members', vetting.getVettingCommitteeMembers);
 
 module.exports = router;

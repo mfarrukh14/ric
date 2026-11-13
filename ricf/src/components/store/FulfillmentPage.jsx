@@ -1,26 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { apiUrl } from '../../config/api';
+import { apiUrl, downloadFile } from '../../config/api';
 import CostAnalysisChart from './CostAnalysisChart';
-import { generateDemandReport } from '../../utils/excelReportGenerator';
 
+import { formatDate } from '../../lib/time';
+import { humanize } from '../../ui/status';
+import { toast } from '../../lib/notify';
 // Shared availability logic: derives fulfillment status, how much store can
 // actually supply, and the reorder shortfall purely from actual stock/
 // consumption numbers - never assumes "available" by default. Zero stock in
 // hand is always "not available".
 //
-// - availableQuantity: how much of THIS demand's request store can fulfill
-//   right now - capped by both what's in stock and what was requested. Never
-//   exceeds stock in hand (this used to be a copy of the reorder shortfall,
-//   which could show a bogus "available" figure higher than stock on hand).
-// - calculatedRequiredQty: the reorder shortfall for restocking purposes
-//   (how far consumption exceeds stock in hand) - used to size the tender/
-//   purchase quantity, unrelated to availableQuantity.
+// - availableQuantity: how much of this request store can supply now (never more than stock).
+// - calculatedRequiredQty: how many units purchase must buy. Same rule as the server
+//   (storeController.procurementQuantity), so what store sees here is what gets saved:
+//     available → 0, not available → the full request, partial → (consumption or request) − stock.
+const procurementQuantity = (status, requested, stock, consumption) => {
+    if (status === 'available') return 0;
+    if (status === 'not_available') return Math.max(0, requested);
+    return Math.max(0, (consumption || requested) - stock);
+};
+
 const computeAutoFields = (stockInHand, consumptionAmount, requestedQuantity) => {
     const stock = parseInt(stockInHand || 0);
     const consumption = parseInt(consumptionAmount || 0);
     const requested = parseInt(requestedQuantity || 0);
-    const shortfall = consumption > stock ? consumption - stock : 0;
     const availableQuantity = Math.min(stock, requested);
 
     let status;
@@ -31,7 +35,7 @@ const computeAutoFields = (stockInHand, consumptionAmount, requestedQuantity) =>
         status = stock >= comparisonValue ? 'available' : 'partial';
     }
 
-    return { calculatedRequiredQty: shortfall, availableQuantity, status };
+    return { calculatedRequiredQty: procurementQuantity(status, requested, stock, consumption), availableQuantity, status };
 };
 
 const FulfillmentPage = () => {
@@ -50,7 +54,6 @@ const FulfillmentPage = () => {
     const [response, setResponse] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [activeView, setActiveView] = useState('fulfillment'); // 'fulfillment' or 'analytics'
-    const [showZeroQuantityAlert, setShowZeroQuantityAlert] = useState(false);
     const [showRemovalModal, setShowRemovalModal] = useState(false);
     const [removalReason, setRemovalReason] = useState('');
 
@@ -90,7 +93,6 @@ const FulfillmentPage = () => {
             }
             
             const demandData = await demandResponse.json();
-            console.log('Demand data received:', demandData);
             setDemand(demandData);
 
             // Fetch categories for filtering
@@ -248,25 +250,6 @@ const FulfillmentPage = () => {
                     updated.status = auto.status;
                 }
 
-                // Sync available quantity when calculated required quantity changes
-                if (field === 'calculatedRequiredQty') {
-                    updated.availableQuantity = parseInt(value || 0);
-                }
-
-                // Auto-adjust status based on available quantity
-                if (field === 'calculatedRequiredQty') {
-                    const requestedQty = updated.requestedQuantity;
-                    const availableQty = parseInt(value || 0);
-
-                    if (availableQty <= 0) {
-                        updated.status = 'not_available';
-                    } else if (availableQty < requestedQty) {
-                        updated.status = 'partial';
-                    } else {
-                        updated.status = 'available';
-                    }
-                }
-
                 return updated;
             }
             return status;
@@ -320,13 +303,10 @@ const FulfillmentPage = () => {
             if (statusItem.itemId === currentItem.id) {
                 const updated = { ...statusItem, status };
 
-                if (status === 'not_available') {
-                    updated.calculatedRequiredQty = 0;
-                    updated.availableQuantity = 0;
-                } else if (status === 'available') {
-                    updated.calculatedRequiredQty = updated.requestedQuantity;
-                    updated.availableQuantity = updated.requestedQuantity;
-                }
+                const requested = parseInt(updated.requestedQuantity || 0);
+                const stock = parseInt(updated.stockInHand || 0);
+                updated.availableQuantity = status === 'available' ? requested : status === 'not_available' ? 0 : Math.min(stock, requested);
+                updated.calculatedRequiredQty = procurementQuantity(status, requested, stock, parseInt(updated.consumptionAmount || 0));
 
                 return updated;
             }
@@ -342,30 +322,12 @@ const FulfillmentPage = () => {
         }
     };
 
-    const goToNextItem = () => {
-        const currentItemStatus = getCurrentItemStatus();
-        
-        // Check if calculated quantity is 0 and item is not removed
-        if (currentItemStatus && 
-            parseInt(currentItemStatus.calculatedRequiredQty || 0) === 0 && 
-            !currentItemStatus.isRemoved) {
-            setShowZeroQuantityAlert(true);
-            return;
-        }
-        
-        navigateToItem(currentItemIndex + 1);
-    };
+    const goToNextItem = () => navigateToItem(currentItemIndex + 1);
 
     const goToPreviousItem = () => {
         navigateToItem(currentItemIndex - 1);
     };
 
-    const jumpToItem = (itemId) => {
-        const index = filteredItems.findIndex(item => item.id === itemId);
-        if (index !== -1) {
-            setCurrentItemIndex(index);
-        }
-    };
 
     const validateForm = () => {
         if (!response.trim()) {
@@ -375,11 +337,6 @@ const FulfillmentPage = () => {
 
         for (let i = 0; i < itemStatuses.length; i++) {
             const item = itemStatuses[i];
-            
-            if (item.status === 'partial' && (item.calculatedRequiredQty <= 0 || item.calculatedRequiredQty >= item.requestedQuantity)) {
-                setError(`Item "${item.itemName}": Partial quantity must be between 1 and ${item.requestedQuantity - 1}`);
-                return false;
-            }
 
             if (item.calculatedRequiredQty < 0) {
                 setError(`Item "${item.itemName}": Required quantity cannot be negative`);
@@ -418,56 +375,10 @@ const FulfillmentPage = () => {
             }
 
             const result = await response_data.json();
-            const baseMessage = result.redirectsToHod === false
-                ? 'All items were in stock - demand fulfilled directly and the requester has been notified. No HOD approval needed.'
-                : 'Fulfillment submitted successfully! Sent to HOD for approval.';
-
-            // Generate Excel report after successful submission. Merge in what the
-            // store user actually just entered (stock/consumption/costs/status) -
-            // `items` alone is what was fetched before this review and doesn't
-            // reflect those edits.
-            const reportItems = items.map((item) => {
-                const s = itemStatuses.find((st) => st.itemId === item.id);
-                if (!s) return item;
-                return {
-                    ...item,
-                    quantity: s.requestedQuantity,
-                    unit: s.unit || item.unit,
-                    specifications: s.specifications ?? item.specifications,
-                    prev_year_cost: s.prevYearCost,
-                    current_year_cost: s.currentYearCost,
-                    estimated_cost: s.storeEstimatedCost,
-                    store_available_quantity: s.availableQuantity,
-                    store_status: s.status,
-                    stock_in_hand: s.stockInHand,
-                    consumption_type: s.consumptionType,
-                    consumption_amount: s.consumptionAmount,
-                    calculated_required_qty: s.calculatedRequiredQty
-                };
-            });
-
-            try {
-                const reportFilename = generateDemandReport(demand, reportItems);
-                console.log('Excel report generated:', reportFilename);
-
-                // Show success message with report info
-                navigate('/dashboard', {
-                    state: {
-                        message: `${baseMessage} Excel report "${reportFilename}" has been downloaded.`,
-                        type: 'success'
-                    }
-                });
-            } catch (reportError) {
-                console.error('Error generating report:', reportError);
-                // Still navigate with success, but mention report issue
-                navigate('/dashboard', {
-                    state: {
-                        message: `${baseMessage} (Report generation failed)`,
-                        type: 'success'
-                    }
-                });
-            }
-            
+            toast.success(result.redirectsToHod === false ? 'All items supplied from store; requester notified' : 'Sent to the store HOD for approval');
+            // The estimate is built on the server from what was just saved.
+            await downloadFile(`/demands/${demandId}/excel-report`, `Demand_${demandId}_estimate.xlsx`).catch(() => toast.error('Saved, but the Excel report could not be downloaded'));
+            navigate('/store/demands');
         } catch (err) {
             setError(err.message);
         } finally {
@@ -495,7 +406,7 @@ const FulfillmentPage = () => {
     };
 
     const getExpectedOutcome = () => {
-        const { fullyAvailable, partiallyAvailable, notAvailable, removedItems } = getFulfillmentSummary();
+        const { fullyAvailable, partiallyAvailable, notAvailable } = getFulfillmentSummary();
         const totalNonRemovedItems = fullyAvailable + partiallyAvailable + notAvailable;
         
         if (totalNonRemovedItems === 0) {
@@ -513,7 +424,7 @@ const FulfillmentPage = () => {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <div className="ui-spin mx-auto"></div>
                     <p className="mt-4 text-gray-600">Loading demand details...</p>
                 </div>
             </div>
@@ -527,9 +438,9 @@ const FulfillmentPage = () => {
                     <p className="text-red-600 mb-4">{error}</p>
                     <button
                         onClick={() => navigate('/dashboard')}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                        className="ui-btn ui-btn--secondary"
                     >
-                        Back to Dashboard
+                        Back to dashboard
                     </button>
                 </div>
             </div>
@@ -545,11 +456,11 @@ const FulfillmentPage = () => {
         <div className="min-h-screen bg-gray-50">
             <div className="max-w-7xl mx-auto px-4 py-8">
                 {/* Header */}
-                <div className="bg-white rounded-lg shadow-sm mb-6 p-6">
+                <div className="ui-panel ui-panel--pad mb-6">
                     <div className="flex justify-between items-start">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900">
-                                Manage Fulfillment - Demand #{demand?.id}
+                                Manage fulfillment - demand #{demand?.id}
                             </h1>
                             <p className="text-gray-600 mt-2">
                                 Review and update stock availability for each item in this demand
@@ -557,14 +468,14 @@ const FulfillmentPage = () => {
                         </div>
                         <button
                             onClick={() => navigate('/dashboard')}
-                            className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            className="ui-btn ui-btn--secondary"
                         >
-                            Back to Dashboard
+                            Back to dashboard
                         </button>
                     </div>
 
                     {/* Demand Info */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 p-4 bg-gray-50 rounded-lg text-sm">
+                    <div className="ui-callout grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
                         <div>
                             <span className="font-medium text-gray-700">Requested By:</span>
                             <p>{demand?.created_by_name}</p>
@@ -575,7 +486,7 @@ const FulfillmentPage = () => {
                         </div>
                         <div>
                             <span className="font-medium text-gray-700">Required By:</span>
-                            <p>{demand?.required_by ? new Date(demand.required_by).toLocaleDateString() : 'N/A'}</p>
+                            <p>{demand?.required_by ? formatDate(demand.required_by) : 'N/A'}</p>
                         </div>
                         <div>
                             <span className="font-medium text-gray-700">Urgency:</span>
@@ -600,7 +511,7 @@ const FulfillmentPage = () => {
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                         >
-                            Item Review & Fulfillment
+                            Item review & fulfillment
                         </button>
                         <button
                             onClick={() => setActiveView('analytics')}
@@ -610,14 +521,14 @@ const FulfillmentPage = () => {
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                         >
-                            Cost Analysis & Projections
+                            Cost analysis & projections
                         </button>
                     </div>
                 </div>
 
                 {/* Analytics View */}
                 {activeView === 'analytics' && (
-                    <div className="bg-white rounded-lg shadow-sm p-6">
+                    <div className="ui-panel ui-panel--pad">
                         <CostAnalysisChart 
                             itemStatuses={itemStatuses}
                             filteredItems={filteredItems}
@@ -627,7 +538,7 @@ const FulfillmentPage = () => {
                         <div className="fixed bottom-6 right-6 z-50">
                             <button
                                 onClick={() => setActiveView('fulfillment')}
-                                className="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-full shadow-lg transition-colors"
+                                className="ui-btn ui-btn--primary"
                                 title="Back to Item Review"
                             >
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -640,70 +551,15 @@ const FulfillmentPage = () => {
 
                 {/* Error Display */}
                 {error && activeView === 'fulfillment' && (
-                    <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md">
+                    <div className="ui-callout ui-callout--danger mb-6">
                         <p className="text-sm text-red-600">{error}</p>
-                    </div>
-                )}
-
-                {/* Zero Quantity Alert Modal */}
-                {showZeroQuantityAlert && (
-                    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
-                        <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-                            <div className="flex items-center mb-4">
-                                <div className="flex-shrink-0">
-                                    <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                                        <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                                        </svg>
-                                    </div>
-                                </div>
-                                <div className="ml-4">
-                                    <h3 className="text-lg font-medium text-gray-900">
-                                        Zero Quantity Detected
-                                    </h3>
-                                </div>
-                            </div>
-                            
-                            <div className="mb-6">
-                                <p className="text-sm text-gray-600 mb-3">
-                                    The calculated required quantity for this item is <strong>0</strong>. Since no quantity is needed, 
-                                    this item should be removed from the demand.
-                                </p>
-                                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                                    <p className="text-sm text-orange-800">
-                                        <strong>Current Item:</strong> {getCurrentItem()?.itemName}
-                                    </p>
-                                    <p className="text-sm text-orange-700 mt-1">
-                                        Please remove this item to continue, or adjust the stock/consumption values if needed.
-                                    </p>
-                                </div>
-                            </div>
-                            
-                            <div className="flex justify-end space-x-3">
-                                <button
-                                    onClick={() => setShowZeroQuantityAlert(false)}
-                                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
-                                >
-                                    Go Back & Adjust
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setShowZeroQuantityAlert(false);
-                                        openRemovalModal();
-                                    }}
-                                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
-                                >
-                                    Remove Item
-                                </button>
-                            </div>
-                        </div>
                     </div>
                 )}
 
                 {/* Removal Reason Modal */}
                 {showRemovalModal && (
-                    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50">
-                        <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+                    <div className="ui-scrim">
+                        <div className="ui-dialog ui-dialog--legacy ui-dialog--sm">
                             <div className="flex items-center mb-4">
                                 <div className="flex-shrink-0">
                                     <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
@@ -714,7 +570,7 @@ const FulfillmentPage = () => {
                                 </div>
                                 <div className="ml-4">
                                     <h3 className="text-lg font-medium text-gray-900">
-                                        Remove Item from Demand
+                                        Remove item from demand
                                     </h3>
                                 </div>
                             </div>
@@ -726,13 +582,13 @@ const FulfillmentPage = () => {
                                 </p>
                                 
                                 <div className="mb-4">
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        Reason for Removal *
+                                    <label className="ui-label block mb-2">
+                                        Reason for removal *
                                     </label>
                                     <textarea
                                         value={removalReason}
                                         onChange={(e) => setRemovalReason(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                                        className="ui-input ui-textarea"
                                         rows="3"
                                         placeholder="Please explain why this item is being removed from the demand..."
                                         required
@@ -744,7 +600,7 @@ const FulfillmentPage = () => {
                                     )}
                                 </div>
 
-                                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                                <div className="ui-callout ui-callout--danger">
                                     <div className="flex">
                                         <div className="flex-shrink-0">
                                             <svg className="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
@@ -766,16 +622,16 @@ const FulfillmentPage = () => {
                                         setShowRemovalModal(false);
                                         setRemovalReason('');
                                     }}
-                                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={handleRemovalConfirm}
                                     disabled={!removalReason.trim()}
-                                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="ui-btn ui-btn--danger-solid"
                                 >
-                                    Remove Item
+                                    Remove item
                                 </button>
                             </div>
                         </div>
@@ -786,9 +642,9 @@ const FulfillmentPage = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                     {/* Sidebar - Items List */}
                     <div className="lg:col-span-1">
-                        <div className="bg-white rounded-lg shadow-sm p-6">
+                        <div className="ui-panel ui-panel--pad">
                             <div className="flex justify-between items-center mb-4">
-                                <h2 className="text-lg font-semibold text-gray-900">Items List</h2>
+                                <h2 className="text-lg font-semibold text-gray-900">Items list</h2>
                                 <span className="text-sm text-gray-500">
                                     {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}
                                 </span>
@@ -802,14 +658,14 @@ const FulfillmentPage = () => {
                                         placeholder="Search items..."
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                        className="ui-input"
                                     />
                                 </div>
                                 <div>
                                     <select
                                         value={categoryFilter}
                                         onChange={(e) => setCategoryFilter(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                        className="ui-input"
                                     >
                                         <option value="">All Categories</option>
                                         {categories.map(category => (
@@ -843,7 +699,7 @@ const FulfillmentPage = () => {
                                                 </h3>
                                                 {itemStatus && (
                                                     <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusBadgeColor(itemStatus.status)}`}>
-                                                        {itemStatus.status.toUpperCase().replace('_', ' ')}
+                                                        {humanize(itemStatus.status)}
                                                     </span>
                                                 )}
                                             </div>
@@ -869,8 +725,8 @@ const FulfillmentPage = () => {
                         </div>
 
                         {/* Progress Summary */}
-                        <div className="mt-6 bg-white rounded-lg shadow-sm p-6">
-                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Progress Summary</h3>
+                        <div className="ui-panel ui-panel--pad mt-6">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Progress summary</h3>
                             <div className="space-y-3 text-sm">
                                 <div className="flex justify-between">
                                     <span className="text-green-600">Fully Available:</span>
@@ -896,39 +752,36 @@ const FulfillmentPage = () => {
                         </div>
 
                         {/* Quick Cost Summary */}
-                        <div className="mt-6 bg-white rounded-lg shadow-sm p-6">
+                        <div className="ui-panel ui-panel--pad mt-6">
                             <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-semibold text-gray-900">Cost Overview</h3>
+                                <h3 className="text-lg font-semibold text-gray-900">Cost overview</h3>
                                 <button
                                     onClick={() => setActiveView('analytics')}
-                                    className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                                    className="ui-btn ui-btn--ghost ui-btn--sm"
                                 >
-                                    View Details →
+                                    View details →
                                 </button>
                             </div>
                             <div className="space-y-3 text-sm">
                                 {(() => {
-                                    const totalCurrent = itemStatuses.reduce((sum, item) => sum + (item.currentYearCost || 0), 0);
-                                    const totalProjected = itemStatuses.reduce((sum, item) => {
-                                        const projectedCost = item.requestedQuantity > 0 ? 
-                                            (item.storeEstimatedCost / item.requestedQuantity) * item.calculatedRequiredQty : 0;
-                                        return sum + (isNaN(projectedCost) ? 0 : projectedCost);
-                                    }, 0);
+                                    // Rates are per unit: requested × rate vs to-procure × rate.
+                                    const totalCurrent = itemStatuses.reduce((sum, item) => sum + (Number(item.currentYearCost) || 0) * (Number(item.requestedQuantity) || 0), 0);
+                                    const totalProjected = itemStatuses.reduce((sum, item) => sum + (item.isRemoved ? 0 : (Number(item.currentYearCost) || 0) * (Number(item.calculatedRequiredQty) || 0)), 0);
                                     const savings = totalCurrent - totalProjected;
                                     
                                     return (
                                         <>
                                             <div className="flex justify-between">
-                                                <span className="text-gray-600">Requested Cost:</span>
+                                                <span className="text-gray-600">Requested:</span>
                                                 <span className="font-medium">Rs {totalCurrent.toLocaleString()}</span>
                                             </div>
                                             <div className="flex justify-between">
-                                                <span className="text-blue-600">Projected Cost:</span>
+                                                <span className="text-blue-600">To procure:</span>
                                                 <span className="font-medium">Rs {totalProjected.toLocaleString()}</span>
                                             </div>
                                             <div className="flex justify-between">
                                                 <span className={savings >= 0 ? "text-green-600" : "text-red-600"}>
-                                                    {savings >= 0 ? "Potential Savings:" : "Additional Cost:"}
+                                                    {savings >= 0 ? "Covered by store stock:" : "Above request:"}
                                                 </span>
                                                 <span className={`font-medium ${savings >= 0 ? "text-green-600" : "text-red-600"}`}>
                                                     Rs {Math.abs(savings).toLocaleString()}
@@ -944,7 +797,7 @@ const FulfillmentPage = () => {
                     {/* Main Content - Current Item */}
                     <div className="lg:col-span-3">
                         {currentItem && currentItemStatus ? (
-                            <div className="bg-white rounded-lg shadow-sm p-6">
+                            <div className="ui-panel ui-panel--pad">
                                 {/* Item Header */}
                                 <div className="flex justify-between items-start mb-6">
                                     <div>
@@ -957,7 +810,7 @@ const FulfillmentPage = () => {
                                     </div>
                                     <div className="flex space-x-2">
                                         <span className={`px-3 py-1 rounded text-sm font-medium ${getStatusBadgeColor(currentItemStatus.status)}`}>
-                                            {currentItemStatus.status.toUpperCase().replace('_', ' ')}
+                                            {humanize(currentItemStatus.status)}
                                         </span>
                                         {currentItemStatus.isRemoved && (
                                             <span className="px-3 py-1 rounded text-sm font-medium bg-red-100 text-red-800">
@@ -968,11 +821,11 @@ const FulfillmentPage = () => {
                                 </div>
 
                                 {/* Navigation */}
-                                <div className="flex justify-between items-center mb-6 p-4 bg-gray-50 rounded-lg">
+                                <div className="ui-callout flex justify-between items-center mb-6">
                                     <button
                                         onClick={goToPreviousItem}
                                         disabled={currentItemIndex === 0}
-                                        className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="ui-btn ui-btn--primary"
                                     >
                                         ← Previous
                                     </button>
@@ -984,16 +837,16 @@ const FulfillmentPage = () => {
                                     <button
                                         onClick={goToNextItem}
                                         disabled={currentItemIndex === filteredItems.length - 1}
-                                        className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="ui-btn ui-btn--primary"
                                     >
                                         Next →
                                     </button>
                                 </div>
 
                                 {/* Item Details */}
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
+                                <div className="ui-callout grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        <label className="ui-label block mb-1">
                                             Category
                                         </label>
                                         <div className="text-sm text-gray-600">
@@ -1001,16 +854,16 @@ const FulfillmentPage = () => {
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Requested Quantity
+                                        <label className="ui-label block mb-1">
+                                            Requested quantity
                                         </label>
                                         <div className="text-sm text-gray-600">
                                             {currentItem.quantity} {currentItem.unit}
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Previous Year Cost
+                                        <label className="ui-label block mb-1">
+                                            Last year's unit rate
                                         </label>
                                         <input
                                             type="number"
@@ -1018,13 +871,13 @@ const FulfillmentPage = () => {
                                             step="0.01"
                                             value={currentItemStatus.prevYearCost}
                                             onChange={(e) => updateCurrentItemStatus('prevYearCost', e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="ui-input"
                                         />
-                                        <div className="text-xs text-gray-500 mt-1">Rs (Editable)</div>
+                                        <div className="text-xs text-gray-500 mt-1">Rs per {currentItem.unit || 'unit'}</div>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Current Year Cost
+                                        <label className="ui-label block mb-1">
+                                            Unit rate
                                         </label>
                                         <input
                                             type="number"
@@ -1032,21 +885,21 @@ const FulfillmentPage = () => {
                                             step="0.01"
                                             value={currentItemStatus.currentYearCost}
                                             onChange={(e) => updateCurrentItemStatus('currentYearCost', e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="ui-input"
                                         />
-                                        <div className="text-xs text-gray-500 mt-1">Rs (Editable)</div>
+                                        <div className="text-xs text-gray-500 mt-1">Rs per {currentItem.unit || 'unit'}</div>
                                     </div>
                                 </div>
 
                                 {/* Item Specifications */}
-                                <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        Item Specifications (Editable by Store)
+                                <div className="ui-callout mb-6">
+                                    <label className="ui-label block mb-2">
+                                        Item specifications (editable by Store)
                                     </label>
                                     <textarea
                                         value={currentItemStatus.specifications}
                                         onChange={(e) => updateCurrentItemStatus('specifications', e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-vertical"
+                                        className="ui-input ui-textarea"
                                         placeholder="Enter or modify item specifications..."
                                         rows="4"
                                     />
@@ -1060,15 +913,15 @@ const FulfillmentPage = () => {
                                         {/* Stock Management Section */}
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Stock in Hand *
+                                                <label className="ui-label block mb-1">
+                                                    Stock in hand *
                                                 </label>
                                                 <input
                                                     type="number"
                                                     min="0"
                                                     value={currentItemStatus.stockInHand}
                                                     onChange={(e) => updateCurrentItemStatus('stockInHand', e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    className="ui-input"
                                                     required
                                                 />
                                                 <div className="text-xs text-gray-500 mt-1">{currentItem.unit}</div>
@@ -1088,13 +941,13 @@ const FulfillmentPage = () => {
                                             </div>
 
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Consumption Type *
+                                                <label className="ui-label block mb-1">
+                                                    Consumption type *
                                                 </label>
                                                 <select
                                                     value={currentItemStatus.consumptionType}
                                                     onChange={(e) => updateCurrentItemStatus('consumptionType', e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    className="ui-input"
                                                     required
                                                 >
                                                     <option value="monthly">Monthly</option>
@@ -1104,15 +957,15 @@ const FulfillmentPage = () => {
                                             </div>
 
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Consumption Amount *
+                                                <label className="ui-label block mb-1">
+                                                    Consumption amount *
                                                 </label>
                                                 <input
                                                     type="number"
                                                     min="0"
                                                     value={currentItemStatus.consumptionAmount}
                                                     onChange={(e) => updateCurrentItemStatus('consumptionAmount', e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    className="ui-input"
                                                     required
                                                 />
                                                 <div className="text-xs text-gray-500 mt-1">{currentItem.unit}</div>
@@ -1122,39 +975,22 @@ const FulfillmentPage = () => {
                                         {/* Calculated Requirements */}
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Calculated Required Qty
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    value={currentItemStatus.calculatedRequiredQty}
-                                                    onChange={(e) => updateCurrentItemStatus('calculatedRequiredQty', e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                                <div className="text-xs text-gray-500 mt-1">{currentItem.unit} (Auto-calculated, but editable)</div>
+                                                <label className="ui-label block mb-1">To procure</label>
+                                                <div className="ui-input ui-input--readonly">{currentItemStatus.calculatedRequiredQty || 0} {currentItem.unit}</div>
+                                                <div className="text-xs text-gray-500 mt-1">From status, stock and consumption</div>
                                             </div>
 
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    Store Estimated Cost
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={currentItemStatus.storeEstimatedCost}
-                                                    onChange={(e) => updateCurrentItemStatus('storeEstimatedCost', e.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                />
-                                                <div className="text-xs text-gray-500 mt-1">Rs</div>
+                                                <label className="ui-label block mb-1">Estimated cost</label>
+                                                <div className="ui-input ui-input--readonly">Rs {((Number(currentItemStatus.calculatedRequiredQty) || 0) * (Number(currentItemStatus.currentYearCost) || 0)).toLocaleString('en-PK', { maximumFractionDigits: 2 })}</div>
+                                                <div className="text-xs text-gray-500 mt-1">To procure × unit rate</div>
                                             </div>
                                         </div>
 
                                         {/* Status Selection */}
                                         <div className="mb-6">
-                                            <label className="block text-sm font-medium text-gray-700 mb-3">
-                                                Fulfillment Status
+                                            <label className="ui-label block mb-3">
+                                                Fulfillment status
                                             </label>
                                             <div className="flex flex-wrap gap-4">
                                                 <label className="flex items-center">
@@ -1166,7 +1002,7 @@ const FulfillmentPage = () => {
                                                         onChange={() => handleStatusChange('available')}
                                                         className="mr-2"
                                                     />
-                                                    <span className="text-green-600">Fully Available</span>
+                                                    <span className="text-green-600">Fully available</span>
                                                 </label>
                                                 <label className="flex items-center">
                                                     <input
@@ -1177,7 +1013,7 @@ const FulfillmentPage = () => {
                                                         onChange={() => handleStatusChange('partial')}
                                                         className="mr-2"
                                                     />
-                                                    <span className="text-yellow-600">Partially Available</span>
+                                                    <span className="text-yellow-600">Partially available</span>
                                                 </label>
                                                 <label className="flex items-center">
                                                     <input
@@ -1188,20 +1024,20 @@ const FulfillmentPage = () => {
                                                         onChange={() => handleStatusChange('not_available')}
                                                         className="mr-2"
                                                     />
-                                                    <span className="text-red-600">Not Available</span>
+                                                    <span className="text-red-600">Not available</span>
                                                 </label>
                                             </div>
                                         </div>
 
                                         {/* Remarks */}
                                         <div className="mb-6">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Remarks (Optional)
+                                            <label className="ui-label block mb-1">
+                                                Remarks (optional)
                                             </label>
                                             <textarea
                                                 value={currentItemStatus.remarks}
                                                 onChange={(e) => updateCurrentItemStatus('remarks', e.target.value)}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                className="ui-input ui-textarea"
                                                 rows="3"
                                                 placeholder="Any additional comments for this item..."
                                             />
@@ -1212,15 +1048,15 @@ const FulfillmentPage = () => {
                                             <button
                                                 type="button"
                                                 onClick={openRemovalModal}
-                                                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                                className="ui-btn ui-btn--danger-solid"
                                             >
-                                                Remove Item from Demand
+                                                Remove item from demand
                                             </button>
                                         </div>
                                     </>
                                 ) : (
                                     /* Removed Item Display */
-                                    <div className="p-6 bg-red-50 border border-red-200 rounded-lg mb-6">
+                                    <div className="ui-callout ui-callout--danger mb-6">
                                         <div className="flex justify-between items-start">
                                             <div>
                                                 <p className="text-red-800 font-medium text-lg">This item has been removed from the demand</p>
@@ -1229,9 +1065,9 @@ const FulfillmentPage = () => {
                                             <button
                                                 type="button"
                                                 onClick={() => handleItemRemoval(false, '')}
-                                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                                                className="ui-btn ui-btn--primary"
                                             >
-                                                Restore Item
+                                                Restore item
                                             </button>
                                         </div>
                                     </div>
@@ -1240,17 +1076,17 @@ const FulfillmentPage = () => {
                                 {/* Final Actions - Only show on last item */}
                                 {currentItemIndex === filteredItems.length - 1 && (
                                     <div className="border-t pt-6">
-                                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Final Review & Submission</h3>
+                                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Final review & submission</h3>
                                         
                                         {/* Store Response */}
                                         <div className="mb-6">
-                                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                Store Response/Comments *
+                                            <label className="ui-label block mb-2">
+                                                Store response/comments *
                                             </label>
                                             <textarea
                                                 value={response}
                                                 onChange={(e) => setResponse(e.target.value)}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                className="ui-input ui-textarea"
                                                 rows="4"
                                                 placeholder="Provide your overall response and any additional comments about this demand..."
                                                 required
@@ -1262,14 +1098,14 @@ const FulfillmentPage = () => {
                                             <button
                                                 type="button"
                                                 onClick={() => navigate('/dashboard')}
-                                                className="px-6 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                                                className="ui-btn ui-btn--secondary"
                                                 disabled={submitting}
                                             >
                                                 Cancel
                                             </button>
                                             <button
                                                 onClick={handleSubmit}
-                                                className="px-8 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                                                className="ui-btn ui-btn--primary"
                                                 disabled={submitting}
                                             >
                                                 {submitting ? 'Submitting...' : 'Submit Fulfillment'}
@@ -1279,7 +1115,7 @@ const FulfillmentPage = () => {
                                 )}
                             </div>
                         ) : (
-                            <div className="bg-white rounded-lg shadow-sm p-6 text-center">
+                            <div className="ui-panel ui-panel--pad text-center">
                                 <p className="text-gray-500">
                                     {filteredItems.length === 0 
                                         ? 'No items match your search criteria.' 

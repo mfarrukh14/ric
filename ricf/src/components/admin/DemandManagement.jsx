@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiUrl } from '../../config/api';
+import { PageHeader } from '../../ui';
 
-const DemandManagement = () => {
+import { formatDate, formatDateTime } from '../../lib/time';
+import { StatusBadge } from '../../ui/status';
+const DemandManagement = ({ embedded = false }) => {
     const navigate = useNavigate();
     const [demands, setDemands] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -61,38 +64,7 @@ const DemandManagement = () => {
         navigate(`/store/fulfillment/${demand.id}`);
     };
 
-    const getStatusBadge = (status) => {
-        const statusColors = {
-            'pending': 'bg-yellow-100 text-yellow-800',
-            'store_pending': 'bg-blue-100 text-blue-800',
-            'available': 'bg-green-100 text-green-800',
-            'not_available': 'bg-red-100 text-red-800',
-            'purchase_pending': 'bg-indigo-100 text-indigo-800',
-            'purchase_approved': 'bg-green-100 text-green-800',
-            'tender_created': 'bg-blue-100 text-blue-800',
-            'rejected': 'bg-red-100 text-red-800'
-        };
-
-        const statusLabels = {
-            'pending': 'Pending Review',
-            'store_pending': 'Store Review',
-            'available': 'Available',
-            'not_available': 'Not Available',
-            'vetting_pending': 'Vetting Review',
-            'vetting_approved': 'Vetting Approved',
-            'vetting_rejected': 'Vetting Rejected',
-            'purchase_pending': 'Purchase Review',
-            'purchase_approved': 'Purchase Approved',
-            'tender_created': 'Tender Created',
-            'rejected': 'Rejected'
-        };
-
-        return (
-            <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[status] || 'bg-gray-100 text-gray-800'}`}>
-                {statusLabels[status] || status}
-            </span>
-        );
-    };
+    const getStatusBadge = (status) => <StatusBadge status={status} />;
 
     const getUrgencyBadge = (urgency) => {
         const urgencyColors = {
@@ -115,44 +87,16 @@ const DemandManagement = () => {
     };
 
     const canManageFulfillment = (demand) => {
-        // HODs should not see manage fulfillment - they only approve/reject
-        if (isHod) {
-            return false;
-        }
-        
-        // Check if store has already responded to this demand
-        const hasStoreResponse = demand.store_response_by || demand.store_response_at;
-        
-        // Non-HOD store users can manage fulfillment if:
-        // 1. Status is pending or store_pending, OR
-        // 2. Status is any other status BUT store hasn't actually responded yet
-        if (demand.status === 'pending' || demand.status === 'store_pending') {
-            return true;
-        }
-        
-        // Allow management if no store response exists yet, regardless of status
-        return !hasStoreResponse;
+        // HODs approve or reject; they do not fulfil.
+        if (isHod) return false;
+        // The API only accepts a store response while the demand is waiting for store.
+        return demand.status === 'pending';
     };
 
     const getActionButtonMessage = (demand) => {
-        const hasStoreResponse = demand.store_response_by || demand.store_response_at;
-        
-        if (isHod && demand.status === 'pending_hod_approval') {
-            return 'Pending HOD Approval - Check HOD Dashboard';
-        }
-        if (demand.status === 'pending_hod_approval') {
-            return 'Store response submitted - Pending HOD approval';
-        }
-        if (hasStoreResponse) {
-            return 'Response already submitted';
-        }
-        
-        // If no store response but status suggests it should have one
-        if (demand.status === 'purchase_pending' || demand.status === 'available') {
-            return 'Status inconsistency - You can re-submit fulfillment';
-        }
-        
-        return 'Response already submitted';
+        if (demand.status === 'pending_hod_approval') return 'Waiting for the department HOD';
+        if (demand.status === 'pending_store_hod_approval') return 'Waiting for the store HOD';
+        return 'Store has responded';
     };
 
     const handleMergeDemandsClick = () => {
@@ -255,7 +199,7 @@ const DemandManagement = () => {
                 return;
             }
 
-            toast.success(`Successfully merged ${selectedDemands.length} demands into a new demand (ID: ${result.newDemandId})`);
+            toast.success(`Merged ${selectedDemands.length} demands into a new demand (ID: ${result.newDemandId})`);
             setShowMergeModal(false);
             setSelectedDemands([]);
             setValidationResult(null);
@@ -267,62 +211,45 @@ const DemandManagement = () => {
         }
     };
 
-    const getItemStatusSummary = (items) => {
-        if (!items || items.length === 0) return null;
-        
-        const statusCounts = items.reduce((acc, item) => {
-            const status = item.store_status || 'pending';
-            acc[status] = (acc[status] || 0) + 1;
-            return acc;
-        }, {});
-
-        return statusCounts;
-    };
 
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
-                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div>
+                <div className="ui-spin"></div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                <div className="px-4 py-6 sm:px-0">
-                    <div className="mb-6">
-                        <h1 className="text-3xl font-bold text-gray-900">
-                            Store Department - {isHod ? 'HOD Review' : 'Demand Management'}
-                        </h1>
-                        <p className="text-gray-600">
-                            {isHod 
-                                ? 'Review store fulfillment responses and approve/reject demands. Use the HOD Dashboard for approval actions.'
-                                : 'Review and manage fulfillment for incoming demands'
-                            }
-                        </p>
-                    </div>
+        <div>
+            <div>
+                <div>
+                    {!embedded && (
+                        <PageHeader
+                            title={isHod ? 'Fulfilment review' : 'All demands'}
+                        />
+                    )}
 
                     {error && (
-                        <div className="mb-4 rounded-md bg-red-50 p-4">
+                        <div className="ui-callout ui-callout--danger mb-4">
                             <div className="text-sm text-red-700">{error}</div>
                         </div>
                     )}
 
-                    <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                    <div className="ui-panel">
                         <div className="px-4 py-5 sm:p-6">
                             <div className="flex justify-between items-center mb-4">
-                                <h2 className="text-lg font-medium text-gray-900">Pending Demands</h2>
+                                <h2 className="text-lg font-medium text-gray-900">Pending demands</h2>
                                 
                                 {/* Merge Controls */}
                                 <div className="flex space-x-2">
                                     {!mergeMode ? (
                                         <button
                                             onClick={handleMergeDemandsClick}
-                                            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            className="ui-btn ui-btn--primary"
                                         >
                                             <i className="fas fa-code-merge mr-2"></i>
-                                            Merge Demands
+                                            Merge demands
                                         </button>
                                     ) : (
                                         <>
@@ -333,13 +260,13 @@ const DemandManagement = () => {
                                             <button
                                                 onClick={handleProceedToMerge}
                                                 disabled={selectedDemands.length < 2}
-                                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                className="ui-btn ui-btn--primary"
                                             >
-                                                Proceed to Merge
+                                                Proceed to merge
                                             </button>
                                             <button
                                                 onClick={handleCancelMerge}
-                                                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+                                                className="ui-btn ui-btn--secondary"
                                             >
                                                 Cancel
                                             </button>
@@ -392,7 +319,7 @@ const DemandManagement = () => {
                                             </div>
 
                                             {/* Demand Summary */}
-                                            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                                            <div className="ui-callout mb-4">
                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                                                     <div>
                                                         <span className="font-medium text-gray-700">Total Items:</span>
@@ -404,11 +331,11 @@ const DemandManagement = () => {
                                                     </div>
                                                     <div>
                                                         <span className="font-medium text-gray-700">Required By:</span>
-                                                        <span className="ml-2">{new Date(demand.required_by).toLocaleDateString()}</span>
+                                                        <span className="ml-2">{formatDate(demand.required_by)}</span>
                                                     </div>
                                                     <div>
                                                         <span className="font-medium text-gray-700">Created:</span>
-                                                        <span className="ml-2">{new Date(demand.created_at).toLocaleDateString()}</span>
+                                                        <span className="ml-2">{formatDate(demand.created_at)}</span>
                                                     </div>
                                                 </div>
                                                 {demand.description && (
@@ -422,25 +349,13 @@ const DemandManagement = () => {
                                             {/* Items Display */}
                                             {demand.items && demand.items.length > 0 ? (
                                                 <div className="mb-4">
-                                                    <h4 className="font-medium text-gray-900 mb-3">Items Requested:</h4>
+                                                    <h4 className="font-medium text-gray-900 mb-3">Items requested:</h4>
                                                     <div className="space-y-3">
                                                         {demand.items.map((item, index) => (
-                                                            <div key={item.id} className="bg-white border rounded-lg p-4">
+                                                            <div key={item.id} className="ui-panel ui-panel--pad">
                                                                 <div className="flex justify-between items-start mb-2">
                                                                     <h5 className="font-medium text-gray-900">{item.item_name}</h5>
-                                                                    {item.store_status && (
-                                                                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                                                            item.store_status === 'available' ? 'bg-green-100 text-green-800' :
-                                                                            item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-                                                                            item.store_status === 'not_available' ? 'bg-red-100 text-red-800' :
-                                                                            'bg-gray-100 text-gray-800'
-                                                                        }`}>
-                                                                            {item.store_status === 'available' ? 'AVAILABLE' :
-                                                                             item.store_status === 'partial' ? 'PARTIAL' :
-                                                                             item.store_status === 'not_available' ? 'NOT AVAILABLE' :
-                                                                             'PENDING'}
-                                                                        </span>
-                                                                    )}
+                                                                    {item.store_status && <StatusBadge status={item.store_status} />}
                                                                 </div>
                                                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
                                                                     <div>
@@ -482,8 +397,8 @@ const DemandManagement = () => {
                                             ) : (
                                                 // Fallback for old single-item demands
                                                 <div className="mb-4">
-                                                    <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
-                                                    <div className="bg-white border rounded-lg p-4">
+                                                    <h4 className="font-medium text-gray-900 mb-3">Item details:</h4>
+                                                    <div className="ui-panel ui-panel--pad">
                                                         <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
                                                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
                                                             <div>
@@ -502,11 +417,11 @@ const DemandManagement = () => {
 
                                             {/* Store Response Display */}
                                             {demand.store_response && (
-                                                <div className="mb-4 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                <div className="ui-callout mb-4">
                                                     <p className="text-sm font-medium text-gray-900">Store Response:</p>
                                                     <p className="text-sm text-gray-700 mt-1">{demand.store_response}</p>
                                                     <p className="text-xs text-gray-500 mt-2">
-                                                        Responded by {demand.store_response_by_name} on {new Date(demand.store_response_at).toLocaleString()}
+                                                        Responded by {demand.store_response_by_name} on {formatDateTime(demand.store_response_at)}
                                                     </p>
                                                 </div>
                                             )}
@@ -516,9 +431,9 @@ const DemandManagement = () => {
                                                 {canManageFulfillment(demand) ? (
                                                     <button
                                                         onClick={() => handleManageFulfillment(demand)}
-                                                        className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                        className="ui-btn ui-btn--primary"
                                                     >
-                                                        Manage Fulfillment
+                                                        Manage fulfillment
                                                     </button>
                                                 ) : (
                                                     <div className="text-sm text-gray-500">
@@ -537,14 +452,14 @@ const DemandManagement = () => {
 
             {/* Merge Demands Modal */}
             {showMergeModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-lg max-w-2xl w-full max-h-full overflow-y-auto">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg overflow-y-auto">
                         <div className="p-6">
                             <div className="flex justify-between items-center mb-6">
-                                <h2 className="text-2xl font-bold text-gray-900">Merge Demands</h2>
+                                <h2 className="text-2xl font-bold text-gray-900">Merge demands</h2>
                                 <button
                                     onClick={() => setShowMergeModal(false)}
-                                    className="text-gray-400 hover:text-gray-600"
+                                    className="ui-btn ui-btn--ghost ui-btn--sm"
                                 >
                                     <i className="fas fa-times text-xl"></i>
                                 </button>
@@ -552,12 +467,12 @@ const DemandManagement = () => {
 
                             {/* Validation Results */}
                             {validationResult && (
-                                <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                <div className="ui-callout mb-6">
                                     <div className="flex items-center">
                                         <i className="fas fa-check-circle text-green-500 mr-2"></i>
                                         <div>
-                                            <h3 className="text-sm font-medium text-green-800">Validation Successful</h3>
-                                            <p className="text-sm text-green-700 mt-1">{validationResult.message}</p>
+                                            <h3 className="text-sm font-medium">Validation successful</h3>
+                                            <p className="text-sm mt-1">{validationResult.message}</p>
                                             <div className="text-xs text-green-600 mt-2">
                                                 <span className="font-medium">Category:</span> {validationResult.category} | 
                                                 <span className="font-medium ml-2">Total Items:</span> {validationResult.itemCount} | 
@@ -572,14 +487,14 @@ const DemandManagement = () => {
                             <form onSubmit={handleMergeSubmit}>
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Merged Demand Description *
+                                        <label className="ui-label block mb-2">
+                                            Merged demand description *
                                         </label>
                                         <textarea
                                             value={mergeForm.description}
                                             onChange={(e) => setMergeForm(prev => ({ ...prev, description: e.target.value }))}
                                             placeholder={`Enter description for merged ${validationResult?.category || 'demand'} items`}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            className="ui-input ui-textarea"
                                             rows="3"
                                             required
                                         />
@@ -587,13 +502,13 @@ const DemandManagement = () => {
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            <label className="ui-label block mb-2">
                                                 Urgency *
                                             </label>
                                             <select
                                                 value={mergeForm.urgency}
                                                 onChange={(e) => setMergeForm(prev => ({ ...prev, urgency: e.target.value }))}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                className="ui-input"
                                                 required
                                             >
                                                 <option value="normal">Normal</option>
@@ -603,14 +518,14 @@ const DemandManagement = () => {
                                         </div>
 
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                Required By *
+                                            <label className="ui-label block mb-2">
+                                                Required by *
                                             </label>
                                             <input
                                                 type="date"
                                                 value={mergeForm.requiredBy}
                                                 onChange={(e) => setMergeForm(prev => ({ ...prev, requiredBy: e.target.value }))}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                className="ui-input"
                                                 required
                                             />
                                         </div>
@@ -621,16 +536,16 @@ const DemandManagement = () => {
                                     <button
                                         type="button"
                                         onClick={() => setShowMergeModal(false)}
-                                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                                        className="ui-btn ui-btn--secondary"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
-                                        className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        className="ui-btn ui-btn--primary"
                                     >
                                         <i className="fas fa-code-merge mr-2"></i>
-                                        Merge Demands
+                                        Merge demands
                                     </button>
                                 </div>
                             </form>

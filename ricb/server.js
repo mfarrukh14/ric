@@ -1,143 +1,117 @@
-require('dotenv').config();
+const env = require('./src/config/env');
 const express = require('express');
 const cors = require('cors');
-const { connectDatabase, ensureDatabaseConnection } = require('./src/config/database');
+const { connectDatabase, ensureDatabaseConnection, isDatabaseConnected, databaseClient } = require('./src/db');
+const { uploadDir, uploadErrorHandler } = require('./src/middleware/uploads');
 const auditCleanupService = require('./src/services/auditCleanupService');
+const { markExpiredTendersForOpening } = require('./src/controllers/tenderController');
 
-const authRoutes = require('./src/routes/auth');
-const adminRoutes = require('./src/routes/admin');
-const demandRoutes = require('./src/routes/demands');
-const supplierRoutes = require('./src/routes/suppliers');
-const supplierAwardRoutes = require('./src/routes/supplierAwards');
-const technicalEvaluationRoutes = require('./src/routes/technicalEvaluation');
-const grievanceRoutes = require('./src/routes/grievanceRoutes');
-const purchaseGrievanceRoutes = require('./src/routes/purchaseGrievances');
-const financialOpeningRoutes = require('./src/routes/financialOpening');
-const financialGrievanceRoutes = require('./src/routes/financialGrievance');
-const preBidMeetingRoutes = require('./src/routes/preBidMeeting');
-const letterRoutes = require('./src/routes/letters');
-const itemRoutes = require('./src/routes/items');
-const twoFactorRoutes = require('./src/routes/twoFactor');
-const twoFactorEnforcementRoutes = require('./src/routes/twoFactorEnforcement');
-const supplierTwoFactorRoutes = require('./src/routes/supplierTwoFactor');
-const itemCategorizationRoutes = require('./src/routes/itemCategorization');
-const auditRoutes = require('./src/routes/audit');
-const technicalReportsRoutes = require('./src/routes/technicalReports');
-const testEmailRoutes = require('./src/routes/testEmail');
-const debugRoutes = require('./src/routes/debugRoutes');
-const vettingRoutes = require('./src/routes/vetting');
-const demandMergeRoutes = require('./src/routes/demandMerge');
-const marketSurveyRoutes = require('./src/routes/marketSurvey');
-const purchaseOrderRoutes = require('./src/routes/purchaseOrders');
-const hmsStockRoutes = require('./src/routes/hmsStock');
+const routes = {
+    '/api/auth': require('./src/routes/auth'),
+    '/api/admin': require('./src/routes/admin'),
+    '/api/demands': require('./src/routes/demands'),
+    '/api/suppliers': require('./src/routes/suppliers'),
+    '/api/supplier-awards': require('./src/routes/supplierAwards'),
+    '/api/technical-evaluation': require('./src/routes/technicalEvaluation'),
+    '/api/grievances': require('./src/routes/grievanceRoutes'),
+    '/api/purchase-grievances': require('./src/routes/purchaseGrievances'),
+    '/api/financial-opening': require('./src/routes/financialOpening'),
+    '/api/financial-grievance': require('./src/routes/financialGrievance'),
+    '/api/pre-bid-meetings': require('./src/routes/preBidMeeting'),
+    '/api/letters': require('./src/routes/letters'),
+    '/api/items': require('./src/routes/items'),
+    '/api/2fa': require('./src/routes/twoFactor'),
+    '/api/2fa-enforcement': require('./src/routes/twoFactorEnforcement'),
+    '/api/supplier-2fa': require('./src/routes/supplierTwoFactor'),
+    '/api/audit': require('./src/routes/audit'),
+    '/api/technical-reports': require('./src/routes/technicalReports'),
+    '/api/vetting': require('./src/routes/vetting'),
+    '/api/demand-merge': require('./src/routes/demandMerge'),
+    '/api/market-survey': require('./src/routes/marketSurvey'),
+    '/api/purchase-orders': require('./src/routes/purchaseOrders'),
+    '/api/hms-stock': require('./src/routes/hmsStock'),
+};
+
+const UPLOAD_DIRS = [
+    'uploads/knockout-documents',
+    'uploads/grievance-minutes',
+    'uploads/market-survey',
+    'tender-documents',
+    'tender-letters',
+    'meeting-minutes',
+    'reports/technical',
+    'financial-reports',
+    'grievance-letters',
+    'audit_logs',
+];
 
 const app = express();
-const PORT = 5000;
-const HOST = process.env.HOST || '0.0.0.0';
+app.disable('x-powered-by');
 
-// Allow all origins, methods, and headers
+app.use(cors({
+    origin: env.CORS_ORIGINS.length ? env.CORS_ORIGINS : true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'X-Finance-Token'],
+    exposedHeaders: ['Content-Disposition'],
+}));
+
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*"); // Allow everyone
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-
-  // Handle preflight requests
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
+    res.set({
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'SAMEORIGIN',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+    });
+    next();
 });
 
-// If the database isn't connected yet, kick off a background reconnect
-// attempt on every request (i.e. every browser refresh) without ever
-// delaying or failing the request itself.
+// While the database is down, every request nudges a background reconnect.
+// It never delays or fails the request itself.
 app.use((req, res, next) => {
-  ensureDatabaseConnection();
-  next();
+    ensureDatabaseConnection();
+    next();
 });
 
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/demands', demandRoutes);
-app.use('/api/suppliers', supplierRoutes);
-app.use('/api/supplier-awards', supplierAwardRoutes);
-app.use('/api/technical-evaluation', technicalEvaluationRoutes);
-app.use('/api/grievances', grievanceRoutes);
-app.use('/api/purchase-grievances', purchaseGrievanceRoutes);
-app.use('/api/financial-opening', financialOpeningRoutes);
-app.use('/api/financial-grievance', financialGrievanceRoutes);
-app.use('/api/pre-bid-meetings', preBidMeetingRoutes);
-app.use('/api/letters', letterRoutes);
-app.use('/api/items', itemRoutes);
-app.use('/api/2fa', twoFactorRoutes);
-app.use('/api/2fa-enforcement', twoFactorEnforcementRoutes);
-app.use('/api/supplier-2fa', supplierTwoFactorRoutes);
-app.use('/api/item-categorization', itemCategorizationRoutes);
-app.use('/api/audit', auditRoutes);
-app.use('/api/technical-reports', technicalReportsRoutes);
-app.use('/api/test-email', testEmailRoutes);
-app.use('/api/debug', debugRoutes);
-app.use('/api/vetting', vettingRoutes);
-app.use('/api/demand-merge', demandMergeRoutes);
-app.use('/api/market-survey', marketSurveyRoutes);
-app.use('/api/purchase-orders', purchaseOrderRoutes);
-app.use('/api/hms-stock', hmsStockRoutes);
+for (const [path, router] of Object.entries(routes)) app.use(path, router);
 
-// Test route
-app.get('/', (req, res) => {
-  res.json({ message: 'Server is running' });
+const health = (req, res) => res.json({ status: 'ok', database: databaseClient() ?? 'unavailable' });
+app.get('/', health);
+app.get('/api/health', health);
+
+app.use('/api', (req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.originalUrl}` }));
+
+app.use(uploadErrorHandler);
+
+// Last resort: never leak stack traces, always answer JSON.
+app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+    console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, error);
+    const status = error.status || error.statusCode || 500;
+    res.status(status).json({ error: status === 500 ? 'Internal server error' : error.message });
 });
 
-// Tender expiry processing
-const { markExpiredTendersForOpening } = require('./src/controllers/tenderController');
+// Moves tenders whose bidding window has closed into "pending opening".
+// Skips a tick while the database is down or the previous run is still going.
+let expiryRunning = false;
 setInterval(async () => {
-  try {
-    console.log('Checking for expired tenders...');
-    await markExpiredTendersForOpening();
-  } catch (error) {
-    console.error('Error in automatic tender processing:', error);
-  }
-}, 60000);
-console.log('Automatic tender expiry processing started (checks every minute)');
+    if (expiryRunning || !isDatabaseConnected()) return;
+    expiryRunning = true;
+    try {
+        await markExpiredTendersForOpening();
+    } catch (error) {
+        console.error('Tender expiry processing failed:', error.message);
+    } finally {
+        expiryRunning = false;
+    }
+}, 60_000).unref();
 
-// Connect DB and start server
-connectDatabase()
-  .then(() => {
-    // Ensure required upload directories exist
-    const fs = require('fs');
-    const path = require('path');
-    
-    const uploadDirs = [
-      'uploads',
-      'uploads/knockout-documents',
-      'uploads/grievance-minutes',
-      'uploads/market-survey',
-      'tender-documents',
-      'meeting-minutes',
-      'reports',
-      'reports/technical',
-      'grievance-letters',
-      'audit_logs'
-    ];
-    
-    uploadDirs.forEach(dir => {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-        console.log(`Created directory: ${dir}`);
-      }
-    });
-    
-    // Initialize audit cleanup service with 365 days retention
-    auditCleanupService.initialize(365);
-    
-    app.listen(PORT, HOST, () => {
-      console.log(`Server is running on http://${HOST}:${PORT}`);
-    });
-  });
-// Note: connectDatabase() never rejects - a failed initial connection just
-// leaves the DB disconnected and the server starts anyway; the request
-// middleware above keeps retrying in the background.
+UPLOAD_DIRS.forEach(uploadDir);
+auditCleanupService.initialize(365);
+
+// connectDatabase() never rejects: when the database is unreachable the server
+// still starts and the middleware above keeps retrying in the background.
+connectDatabase().then(() => {
+    app.listen(env.PORT, env.HOST, () => console.log(`Server is running on http://${env.HOST}:${env.PORT}`));
+});

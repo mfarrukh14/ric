@@ -1,18 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowsClockwise, Hourglass } from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
-import api, { apiUrl } from '../../config/api';
-import { generateDemandReport } from '../../utils/excelReportGenerator';
+import api, { apiUrl, downloadFile } from '../../config/api';
 import TenderCreationWizard from '../purchase/TenderCreationWizard';
 import PreBidMeetingManagement from '../purchase/PreBidMeetingManagement';
 import LetterManagement from '../purchase/LetterManagement';
 import TenderVettingManagement from '../purchase/TenderVettingManagement';
 import PurchaseOrdersManagement from '../purchase/PurchaseOrdersManagement';
+import { useRouteTab } from '../../lib/useRouteTab';
+import { setNavBadge } from '../../lib/navBadges';
+import { PURCHASE_TABS } from '../../app/navigation';
+import { Button, EmptyState, LoadingBlock, Modal, PageHeader, Panel } from '../../ui';
+import { Countdown, TenderProgress, TenderStatus } from '../../ui/tender';
 
+const PURCHASE_PAGES = {
+    demands: { title: 'Pending demands' },
+    'supply-orders': { title: 'Letters' },
+    'purchase-orders': { title: 'Purchase orders' },
+    'pending-tenders': { title: 'Tender opening' },
+    'financial-opening': { title: 'Financial opening' },
+    'grievance-management': { title: 'Grievances' },
+    'pre-bid-meetings': { title: 'Pre-bid meetings' },
+    'vetting-management': { title: 'Vetting' },
+    'market-survey': { title: 'Market survey' },
+    'tender-management': { title: 'Tender management' },
+};
+import { notify } from '../../lib/notify';
+
+import { formatDate, formatDateTime, fromInputValue, inputValueFromNow, toDate, toInputValue } from '../../lib/time';
+import { humanize } from '../../ui/status';
 const PurchaseDepartment = () => {
     const navigate = useNavigate();
     const [demands, setDemands] = useState([]);
-    const [supplyOrders, setSupplyOrders] = useState([]);
     const [readyTenders, setReadyTenders] = useState([]);
     const [scheduledOpenings, setScheduledOpenings] = useState([]);
     const [pendingTenders, setPendingTenders] = useState([]);
@@ -20,7 +40,7 @@ const PurchaseDepartment = () => {
     const [allGrievances, setAllGrievances] = useState([]);
     const [selectedDemand, setSelectedDemand] = useState(null);
     const [selectedTender, setSelectedTender] = useState(null);
-    const [activeTab, setActiveTab] = useState('demands');
+    const [activeTab, setActiveTab] = useRouteTab(PURCHASE_TABS, 'demands');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [processingTenderIds, setProcessingTenderIds] = useState([]);
@@ -90,7 +110,7 @@ const PurchaseDepartment = () => {
         if (!tender.financial_grievance_details?.meeting_datetime) {
             return false;
         }
-        const meetingTime = new Date(tender.financial_grievance_details.meeting_datetime);
+        const meetingTime = toDate(tender.financial_grievance_details.meeting_datetime) || new Date(0);
         const now = new Date();
         return meetingTime <= now;
     };
@@ -116,13 +136,20 @@ const PurchaseDepartment = () => {
         return 'grievance_initiated'; // Grievance initiated, waiting for meeting time
     }; useEffect(() => {
         fetchPurchaseDemands();
-        fetchSupplyOrders();
         fetchReadyTenders();
         fetchScheduledOpenings();
         fetchPendingTenders();
         fetchGrievances();
         fetchManagableTenders();
     }, []);
+
+    // Live counts beside the sidebar's Purchase items.
+    useEffect(() => {
+        setNavBadge('purchase.demands', demands.length);
+        setNavBadge('purchase.opening', pendingTenders.length);
+        setNavBadge('purchase.financial', readyTenders.length + (scheduledOpenings.ready_to_open?.length || 0) + (scheduledOpenings.scheduled_future?.length || 0));
+        setNavBadge('purchase.grievances', pendingGrievances.length);
+    }, [demands, pendingTenders, readyTenders, scheduledOpenings, pendingGrievances]);
 
     // Auto-redirect after success modal
     useEffect(() => {
@@ -169,26 +196,6 @@ const PurchaseDepartment = () => {
         } finally {
             setLoading(false);
         }
-    }; const fetchSupplyOrders = async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/demands/supply-orders/all`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch supply orders');
-            }
-
-            const data = await response.json();
-            setSupplyOrders(data);
-        } catch (err) {
-            console.error('Error fetching supply orders:', err);
-            // Don't set error for supply orders as it's secondary functionality
-        }
     }; const fetchReadyTenders = async () => {
         try {
             const token = localStorage.getItem('token');
@@ -200,7 +207,7 @@ const PurchaseDepartment = () => {
             });
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error('❌ API Error:', errorText);
+                console.error('API Error:', errorText);
                 throw new Error('Failed to fetch ready tenders');
             }
 
@@ -343,7 +350,7 @@ const PurchaseDepartment = () => {
             return;
         }
 
-        if (new Date(timeExtensionForm.newBiddingEndTime).getTime() < Date.now() + 2 * 60 * 1000) {
+        if ((toDate(timeExtensionForm.newBiddingEndTime)?.getTime() ?? 0) < Date.now() + 2 * 60 * 1000) {
             toast.error('New bidding end time must be at least 2 minutes from now');
             return;
         }
@@ -356,11 +363,12 @@ const PurchaseDepartment = () => {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(timeExtensionForm)
+                // The box holds Pakistan time.
+                body: JSON.stringify({ ...timeExtensionForm, newBiddingEndTime: fromInputValue(timeExtensionForm.newBiddingEndTime) })
             });
 
             if (response.ok) {
-                toast.success('Tender time updated successfully');
+                toast.success('Tender time updated');
                 setShowTimeExtensionModal(false);
                 fetchManagableTenders(); // Refresh the list
             } else {
@@ -385,7 +393,7 @@ const PurchaseDepartment = () => {
             }
         } catch (error) {
             console.error('Error checking existing tender:', error);
-            toast.error('Error checking existing tender. Please try again.');
+            toast.error('Error checking existing tender');
             return;
         }
         
@@ -479,7 +487,6 @@ const PurchaseDepartment = () => {
     };
 
     const handleTenderCreated = (tender) => {
-        console.log('Tender created successfully:', tender);
         // Refresh the data
         fetchPurchaseDemands();
         fetchPendingTenders();
@@ -523,7 +530,7 @@ const PurchaseDepartment = () => {
 
         // Bidding expiry must be a real future time, at least 2 minutes out.
         if (evaluationForm.status === 'approved' && evaluationForm.biddingExpiryTime) {
-            const expiryTime = new Date(evaluationForm.biddingExpiryTime);
+            const expiryTime = toDate(evaluationForm.biddingExpiryTime) || new Date(0);
             const minTime = new Date(Date.now() + 2 * 60 * 1000);
 
             if (expiryTime < minTime) {
@@ -585,7 +592,6 @@ const PurchaseDepartment = () => {
             setShowEvaluationModal(false);
             fetchPurchaseDemands(); // Refresh the list
             fetchPendingTenders(); // Refresh pending tenders
-            fetchSupplyOrders(); // Refresh supply orders in case new ones were created
 
             // Show success modal
             setShowSuccessModal(true);
@@ -617,47 +623,20 @@ const PurchaseDepartment = () => {
             }
 
             const data = await response.json();
-            alert(data.message);
+            notify(data.message);
             
             // Refresh the lists
             fetchPendingTenders();
             fetchReadyTenders();
         } catch (err) {
             setError(err.message);
-            alert(`Error: ${err.message}`);
+            notify(`Error: ${err.message}`);
         } finally {
             // Remove tender ID from processing list when done
             setProcessingTenderIds(prev => prev.filter(id => id !== tenderId));
         }
     };
 
-    const downloadSupplyOrderPDF = async (orderId, itemName, supplierName) => {
-        try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/demands/supply-orders/${orderId}/pdf`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to generate PDF');
-            }
-
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = `supply-order-${orderId}-${itemName}-${supplierName}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-        } catch (err) {
-            setError('Failed to download PDF: ' + err.message);
-        }
-    };
 
     // Financial Opening Handlers
     const handleScheduleFinancialOpening = (tender) => {
@@ -699,13 +678,12 @@ const PurchaseDepartment = () => {
         }
 
         // Validate that opening time is in future (Pakistan time UTC+5)
-        const now = new Date();
-        const utcTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000));
-        const pakistanTime = new Date(utcTime.getTime() + (5 * 60 * 60 * 1000));
-        const scheduledTime = new Date(scheduleForm.openingDateTime);
+        // The box holds Pakistan time; compare real instants.
+        const pakistanTime = new Date();
+        const scheduledTime = toDate(scheduleForm.openingDateTime) || new Date(0);
 
         if (scheduledTime <= pakistanTime) {
-            setError('Opening time must be in the future (Pakistan time UTC+5)');
+            setError('Opening time must be in the future');
             return;
         }
 
@@ -732,7 +710,7 @@ const PurchaseDepartment = () => {
             fetchScheduledOpenings();
 
             // Show success message
-            alert('Financial opening scheduled successfully!');
+            notify('Financial opening scheduled');
         } catch (err) {
             setError(err.message);
         }
@@ -749,7 +727,7 @@ const PurchaseDepartment = () => {
 
         // Validate that meeting time is in future
         const now = new Date();
-        const meetingTime = new Date(financialGrievanceForm.meetingDateTime);
+        const meetingTime = toDate(financialGrievanceForm.meetingDateTime) || new Date(0);
 
         if (meetingTime <= now) {
             setError('Meeting time must be in the future');
@@ -781,7 +759,7 @@ const PurchaseDepartment = () => {
             fetchReadyTenders(); // Refresh to show grievance status
 
             // Show success message
-            toast.success(`Financial grievance initiated successfully! Emails sent to ${data.emails_sent} approved suppliers.`);
+            toast.success(`Financial grievance initiated. Emails sent to ${data.emails_sent} approved suppliers.`);
         } catch (err) {
             setError(err.message);
         }
@@ -820,7 +798,7 @@ const PurchaseDepartment = () => {
             fetchReadyTenders(); // Refresh to show completion status
 
             // Show success message
-            toast.success(`Meeting minutes uploaded and distributed successfully! Emails sent to ${data.emails_sent} suppliers.`);
+            toast.success(`Meeting minutes uploaded and distributed. Emails sent to ${data.emails_sent} suppliers.`);
         } catch (err) {
             setError(err.message);
         }
@@ -849,10 +827,9 @@ const PurchaseDepartment = () => {
             setFinancialOpeningData(data);
             setShowFinancialOpeningModal(true);
             fetchScheduledOpenings();
-            fetchSupplyOrders(); // Refresh supply orders in case new ones were created
         } catch (err) {
             setError(err.message);
-            alert(`Error: ${err.message}`);
+            notify(`Error: ${err.message}`);
         } finally {
             // Remove tender ID from processing list when done
             setProcessingTenderIds(prev => prev.filter(id => id !== tenderId));
@@ -882,7 +859,7 @@ const PurchaseDepartment = () => {
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
         } catch (err) {
-            alert(`Error downloading financial bid: ${err.message}`);
+            notify(`Error downloading financial bid: ${err.message}`);
         }
     };
 
@@ -909,7 +886,7 @@ const PurchaseDepartment = () => {
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
         } catch (err) {
-            alert(`Error downloading technical bid: ${err.message}`);
+            notify(`Error downloading technical bid: ${err.message}`);
         }
     };
 
@@ -947,7 +924,7 @@ const PurchaseDepartment = () => {
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
         } catch (err) {
-            alert(`Error downloading bid CDR document: ${err.message}`);
+            notify(`Error downloading bid CDR document: ${err.message}`);
         }
     };
 
@@ -974,33 +951,13 @@ const PurchaseDepartment = () => {
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
         } catch (err) {
-            alert(`Error downloading report: ${err.message}`);
+            notify(`Error downloading report: ${err.message}`);
         }
     };
 
-    const downloadDemandReport = async (demand) => {
-        try {
-            const token = localStorage.getItem('token');
-            // Fetch detailed demand data with items
-            const response = await fetch(`${apiUrl}/demands/${demand.id}/with-items`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            
-            if (!response.ok) {
-                throw new Error('Failed to fetch demand details');
-            }
-            
-            const demandData = await response.json();
-            
-            // Generate Excel report
-            const reportFilename = generateDemandReport(demandData, demandData.items || []);
-            console.log('Excel report downloaded:', reportFilename);
-            
-        } catch (error) {
-            console.error('Error downloading demand report:', error);
-            setError('Failed to download demand report');
-        }
-    };
+    // The estimate is built on the server from saved data (the same file store downloads).
+    const downloadDemandReport = (demand) =>
+        downloadFile(`/demands/${demand.id}/excel-report`, `Demand_${demand.id}_estimate.xlsx`).catch((err) => toast.error(err?.message || err?.error || 'Failed to download the report'));
 
     const handleFormChange = (e) => {
         const { name, value } = e.target;
@@ -1102,10 +1059,6 @@ const PurchaseDepartment = () => {
         return items.reduce((total, item) => total + parseFloat(item.estimated_cost || 0), 0);
     };
 
-    const getTotalQuantity = (items) => {
-        if (!items || items.length === 0) return 0;
-        return items.reduce((total, item) => total + parseInt(item.quantity || 0), 0);
-    };
 
     // Market Survey Functions
     const fetchMarketSurveyTenders = async () => {
@@ -1184,8 +1137,7 @@ const PurchaseDepartment = () => {
                 throw new Error(errorData.message || 'Failed to send tender for market survey');
             }
 
-            const data = await response.json();
-            toast.success('Tender sent for market survey successfully');
+            toast.success('Tender sent for market survey');
             
             // Reset form and close modal
             setMarketSurveyForm({ notes: '', documents: [] });
@@ -1230,7 +1182,6 @@ const PurchaseDepartment = () => {
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
             
-            toast.success('Document downloaded successfully');
         } catch (err) {
             console.error('Error downloading document:', err);
             toast.error('Failed to download document');
@@ -1239,14 +1190,12 @@ const PurchaseDepartment = () => {
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
-                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div>
-            </div>
+            <LoadingBlock label="Loading purchase workspace…" />
         );
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div>
             {/* Show Tender Creation Wizard as integrated view */}
             {showTenderWizard && selectedDemandForTender ? (
                 <TenderCreationWizard
@@ -1256,133 +1205,33 @@ const PurchaseDepartment = () => {
                 />
             ) : (
                 /* Main Dashboard Content */
-                <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                    <div className="px-4 py-6 sm:px-0">
-                        <div className="mb-6">
-                            <h1 className="text-3xl font-bold text-gray-900">Purchase Department</h1>
-                            <p className="text-gray-600">Review and process demands from store department</p>
-                        </div>
+                <div>
+                    <div>
+                        <PageHeader title={PURCHASE_PAGES[activeTab]?.title || 'Purchase'} />
 
                         {error && (
-                            <div className="mb-4 rounded-md bg-red-50 p-4">
+                            <div className="ui-callout ui-callout--danger mb-4">
                                 <div className="text-sm text-red-700">{error}</div>
                             </div>
                         )}
 
-                    {/* Sidebar + Content */}
-                    <div className="flex gap-6">
-                        {/* Mobile menu */}
-                        <div className="w-full md:hidden mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Menu</label>
-                            <select
-                                value={activeTab}
-                                onChange={(e) => setActiveTab(e.target.value)}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                                <option value="demands">Pending Demands</option>
-                                <option value="supply-orders">Letters</option>
-                                <option value="purchase-orders">Purchase Orders</option>
-                                <option value="pending-tenders">Tender Opening</option>
-                                <option value="financial-opening">Financial Opening</option>
-                                <option value="grievance-management">Grievance Management</option>
-                                <option value="pre-bid-meetings">Pre-Bid Meetings</option>
-                                <option value="vetting-management">Vetting Management</option>
-                                <option value="market-survey">Market Survey</option>
-                                <option value="tender-management">Tender Management</option>
-                            </select>
-                        </div>
+                    <div>
 
-                        {/* Sidebar */}
-                        <aside className="hidden md:block w-64">
-                            <div className="bg-white border border-gray-200 rounded-lg p-3 sticky top-24">
-                                <nav className="space-y-1" aria-label="Sidebar">
-                                    {[
-                                        {
-                                            id: 'demands',
-                                            label: 'Pending Demands',
-                                            icon: 'fas fa-clipboard-list',
-                                            count: demands.length,
-                                            badgeClass: 'bg-indigo-100 text-indigo-800'
-                                        },
-                                        {
-                                            id: 'supply-orders',
-                                            label: 'Letters',
-                                            icon: 'fas fa-envelope',
-                                            count: supplyOrders.length,
-                                            badgeClass: 'bg-green-100 text-green-800'
-                                        },
-                                        {
-                                            id: 'purchase-orders',
-                                            label: 'Purchase Orders',
-                                            icon: 'fas fa-file-invoice',
-                                            badgeClass: 'bg-teal-100 text-teal-800'
-                                        },
-                                        {
-                                            id: 'pending-tenders',
-                                            label: 'Tender Opening',
-                                            icon: 'fas fa-folder-open',
-                                            count: pendingTenders.length,
-                                            badgeClass: 'bg-yellow-100 text-yellow-800'
-                                        },
-                                        {
-                                            id: 'financial-opening',
-                                            label: 'Financial Opening',
-                                            icon: 'fas fa-coins',
-                                            count: (readyTenders.length + (scheduledOpenings.ready_to_open?.length || 0) + (scheduledOpenings.scheduled_future?.length || 0)),
-                                            badgeClass: 'bg-orange-100 text-orange-800'
-                                        },
-                                        {
-                                            id: 'grievance-management',
-                                            label: 'Grievance Management',
-                                            icon: 'fas fa-exclamation-triangle',
-                                            count: pendingGrievances.length,
-                                            badgeClass: 'bg-red-100 text-red-800'
-                                        },
-                                        { id: 'pre-bid-meetings', label: 'Pre-Bid Meetings', icon: 'fas fa-calendar-alt' },
-                                        { id: 'vetting-management', label: 'Vetting Management', icon: 'fas fa-clipboard-check' },
-                                        { id: 'market-survey', label: 'Market Survey', icon: 'fas fa-chart-line' },
-                                        { id: 'tender-management', label: 'Tender Management', icon: 'fas fa-clock' }
-                                    ].map(item => (
-                                        <button
-                                            key={item.id}
-                                            onClick={() => setActiveTab(item.id)}
-                                            className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                                                activeTab === item.id
-                                                    ? 'bg-indigo-50 text-indigo-700'
-                                                    : 'text-gray-700 hover:bg-gray-50'
-                                            }`}
-                                        >
-                                            <span className="flex items-center">
-                                                <i className={`${item.icon} mr-2 text-gray-500`}></i>
-                                                {item.label}
-                                            </span>
-                                            {typeof item.count === 'number' && item.count > 0 && (
-                                                <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${item.badgeClass}`}>
-                                                    {item.count}
-                                                </span>
-                                            )}
-                                        </button>
-                                    ))}
-                                </nav>
-                            </div>
-                        </aside>
-
-                        {/* Content Area */}
-                        <div className="flex-1">
+                        <div className="purchase-content">
                             {/* Section Content */}
                             {activeTab === 'demands' && (
-                        <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                        <div className="ui-panel">
                             <div className="px-4 py-5 sm:p-6">
-                                <h2 className="text-lg font-medium text-gray-900 mb-4">Demands for Purchase Review & Excel Reports</h2>
+                                <h2 className="text-lg font-medium text-gray-900 mb-4">Demands for Purchase review & Excel reports</h2>
 
                                 {demands.length === 0 ? (
                                     <div className="text-center py-12">
-                                        <div className="text-gray-500">No demands available for purchase review at this time. Store department will submit fulfillment reports that appear here with downloadable Excel reports.</div>
+                                        <div className="text-gray-500">No demands to review.</div>
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
                                         {demands.map((demand) => (
-                                            <div key={demand.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+                                            <div key={demand.id} className="ui-card">
                                                 <div className="flex justify-between items-start mb-4">
                                                     <div>
                                                         <h3 className="text-xl font-semibold text-gray-900">
@@ -1400,7 +1249,7 @@ const PurchaseDepartment = () => {
                                                 </div>
 
                                                 {/* Demand Summary */}
-                                                <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                                                <div className="ui-callout mb-4">
                                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                                                         <div>
                                                             <span className="font-medium text-gray-700">Total Items:</span>
@@ -1412,7 +1261,7 @@ const PurchaseDepartment = () => {
                                                         </div>
                                                         <div>
                                                             <span className="font-medium text-gray-700">Required By:</span>
-                                                            <span className="ml-2">{new Date(demand.required_by).toLocaleDateString()}</span>
+                                                            <span className="ml-2">{formatDate(demand.required_by)}</span>
                                                         </div>
                                                     </div>
                                                     <div className="mt-3">
@@ -1424,10 +1273,10 @@ const PurchaseDepartment = () => {
                                                 {/* Items Display */}
                                                 {demand.items && demand.items.length > 0 ? (
                                                     <div className="mb-4">
-                                                        <h4 className="font-medium text-gray-900 mb-3">Items Requested:</h4>
+                                                        <h4 className="font-medium text-gray-900 mb-3">Items requested:</h4>
                                                         <div className="space-y-3">
                                                             {demand.items.map((item, index) => (
-                                                                <div key={item.id} className="bg-white border rounded-lg p-4">
+                                                                <div key={item.id} className="ui-panel ui-panel--pad">
                                                                     <div className="flex justify-between items-start mb-2">
                                                                         <h5 className="font-medium text-gray-900">{item.item_name}</h5>
                                                                         {item.store_status && (
@@ -1435,7 +1284,7 @@ const PurchaseDepartment = () => {
                                                                                     item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
                                                                                         'bg-red-100 text-red-800'
                                                                                 }`}>
-                                                                                {item.store_status.toUpperCase()}
+                                                                                {humanize(item.store_status)}
                                                                             </span>
                                                                         )}
                                                                     </div>
@@ -1474,8 +1323,8 @@ const PurchaseDepartment = () => {
                                                 ) : (
                                                     // Fallback for old single-item demands
                                                     <div className="mb-4">
-                                                        <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
-                                                        <div className="bg-white border rounded-lg p-4">
+                                                        <h4 className="font-medium text-gray-900 mb-3">Item details:</h4>
+                                                        <div className="ui-panel ui-panel--pad">
                                                             <h5 className="font-medium text-gray-900 mb-2">{demand.item_name}</h5>
                                                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm text-gray-600">
                                                                 <div>
@@ -1493,11 +1342,11 @@ const PurchaseDepartment = () => {
                                                 )}
 
                                                 {demand.store_response && (
-                                                    <div className="mb-4 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                                                    <div className="ui-callout mb-4">
                                                         <p className="text-sm font-medium text-gray-900">Store Response:</p>
                                                         <p className="text-sm text-gray-700 mt-1">{demand.store_response}</p>
                                                         <p className="text-xs text-gray-500 mt-2">
-                                                            Responded by {demand.store_response_by_name} on {new Date(demand.store_response_at).toLocaleString()}
+                                                            Responded by {demand.store_response_by_name} on {formatDateTime(demand.store_response_at)}
                                                         </p>
                                                     </div>
                                                 )}
@@ -1505,15 +1354,15 @@ const PurchaseDepartment = () => {
                                                 <div className="flex justify-end space-x-3">
                                                     <button
                                                         onClick={() => downloadDemandReport(demand)}
-                                                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        className="ui-btn ui-btn--secondary"
                                                     >
-                                                        📊 Download Excel Report
+                                                        Download Excel report
                                                     </button>
                                                     <button
                                                         onClick={() => handleEvaluate(demand)}
-                                                        className="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                        className="ui-btn ui-btn--primary"
                                                     >
-                                                        Create Tender
+                                                        Create tender
                                                     </button>
                                                 </div>
                                             </div>
@@ -1525,12 +1374,9 @@ const PurchaseDepartment = () => {
                     )}
 
                     {activeTab === 'pending-tenders' && (
-                        <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                        <div className="ui-panel">
                             <div className="px-4 py-5 sm:p-6">
-                                <h2 className="text-lg font-medium text-gray-900 mb-4">Tenders Pending Opening</h2>
-                                <p className="text-gray-600 mb-6">
-                                    These tenders have expired and are awaiting opening by the purchase department before forwarding to technical evaluation.
-                                </p>
+                                <h2 className="text-lg font-medium text-gray-900 mb-4">Tenders pending opening</h2>
 
                                 {pendingTenders.length === 0 ? (
                                     <div className="text-center py-12">
@@ -1539,7 +1385,7 @@ const PurchaseDepartment = () => {
                                 ) : (
                                     <div className="space-y-6">
                                         {pendingTenders.map((tender) => (
-                                            <div key={tender.id} className="border border-gray-200 rounded-lg p-6 bg-yellow-50">
+                                            <div key={tender.id} className="ui-callout ui-callout--warning">
                                                 <div className="flex justify-between items-start mb-4">
                                                     <div>
                                                         <h3 className="text-lg font-semibold text-gray-900">
@@ -1554,7 +1400,7 @@ const PurchaseDepartment = () => {
                                                             <span>Department: {tender.creator_department}</span>
                                                         </div>
                                                         <div className="mt-2 text-sm text-gray-600">
-                                                            <span>Bidding Ended: {new Date(tender.bidding_end_time).toLocaleString()}</span>
+                                                            <span>Bidding Ended: {formatDateTime(tender.bidding_end_time)}</span>
                                                             <span className="mx-2">•</span>
                                                             <span>Total Bids: {tender.bid_count}</span>
                                                         </div>
@@ -1565,9 +1411,9 @@ const PurchaseDepartment = () => {
                                                         </span>
                                                         <button
                                                             onClick={() => navigate(`/purchase-department/tender-opening/${tender.id}`)}
-                                                            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium transition-colors"
+                                                            className="ui-btn ui-btn--secondary"
                                                         >
-                                                            View Details
+                                                            View details
                                                         </button>
                                                         <button
                                                             onClick={() => handleOpenTender(tender.id)}
@@ -1596,11 +1442,11 @@ const PurchaseDepartment = () => {
                                                 {tender.bid_count > 0 && (
                                                     <div className="border-t border-gray-200 pt-4">
                                                         <h4 className="text-sm font-medium text-gray-900 mb-3">
-                                                            Submitted Bids ({tender.bid_count})
+                                                            Submitted bids ({tender.bid_count})
                                                         </h4>
                                                         <div className="space-y-2">
                                                             {tender.bids.map((bid) => (
-                                                                <div key={bid.id} className="flex justify-between items-center bg-white p-3 rounded border">
+                                                                <div key={bid.id} className="ui-panel ui-panel--pad flex justify-between items-center">
                                                                     <div className="flex-1">
                                                                         <span className="font-medium text-sm">{bid.company_name}</span>
                                                                         <div className="text-xs text-gray-500">
@@ -1633,25 +1479,19 @@ const PurchaseDepartment = () => {
                         <div className="space-y-6">
                             {/* Ready for Financial Opening or Financial Grievance */}
                             {readyTenders.length > 0 && (
-                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                <div className="ui-panel">
                                     <div className="px-4 py-5 sm:p-6">
                                         <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                                            <i className="fas fa-clipboard-check mr-2 text-green-600"></i>
-                                            All Suppliers Finalized - Ready for Financial Opening
+                                            Ready for financial opening
                                         </h2>
 
                                         <div className="space-y-4">
                                             {readyTenders.map((tender) => (
-                                                <div key={tender.id} className={`border rounded-lg p-4 ${
-                                                    tender.is_financially_opened ? 'border-purple-200 bg-purple-50' : 'border-green-200 bg-green-50'
-                                                }`}>
+                                                <div key={tender.id} className="ui-card">
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
-                                                                {tender.is_financially_opened 
-                                                                    ? `Financial opening completed for ${getTenderDisplayName(tender)}`
-                                                                    : `All suppliers for ${getTenderDisplayName(tender)} finalized`
-                                                                }
+                                                                {getTenderDisplayName(tender)}{tender.is_financially_opened ? ' · opened' : ''}
                                                             </h3>
                                                             <p className="text-sm text-gray-600 mt-1">
                                                                 {tender.description || tender.item_name}
@@ -1691,20 +1531,20 @@ const PurchaseDepartment = () => {
                                                                                 : 'fa-clock'
                                                                         } mr-1`}></i>
                                                                         {tender.is_financially_opened 
-                                                                            ? `Financial opening completed: ${new Date(tender.financial_opening.opened_at).toLocaleString('en-PK')}`
-                                                                            : `Financial opening scheduled for: ${new Date(tender.financial_opening.scheduled_opening_time).toLocaleString('en-PK')}`
+                                                                            ? `Financial opening completed: ${formatDateTime(tender.financial_opening.opened_at)}`
+                                                                            : `Financial opening scheduled for: ${formatDateTime(tender.financial_opening.scheduled_opening_time)}`
                                                                         }
                                                                     </p>
                                                                 </div>
                                                             )}
                                                             {tender.financial_grievance_details && (
-                                                                <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-200">
+                                                                <div className="ui-callout ui-callout--warning mt-2">
                                                                     <p className="text-sm text-yellow-800">
                                                                         <i className="fas fa-exclamation-triangle mr-1"></i>
-                                                                        Financial grievance meeting scheduled: {new Date(tender.financial_grievance_details.meeting_datetime).toLocaleString('en-PK')}
+                                                                        Financial grievance meeting scheduled: {formatDateTime(tender.financial_grievance_details.meeting_datetime)}
                                                                     </p>
                                                                     <p className="text-xs text-yellow-700 mt-1">
-                                                                        Grievance period: 10 days from {new Date(tender.financial_grievance_details.sent_at).toLocaleDateString('en-PK')}
+                                                                        Grievance period: 10 days from {formatDate(tender.financial_grievance_details.sent_at)}
                                                                     </p>
                                                                 </div>
                                                             )}
@@ -1718,10 +1558,10 @@ const PurchaseDepartment = () => {
                                                                         return (
                                                                             <button
                                                                                 onClick={() => handleScheduleFinancialOpening(tender)}
-                                                                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                                className="ui-btn ui-btn--primary"
                                                                             >
                                                                                 <i className="fas fa-calendar-plus mr-2"></i>
-                                                                                {tender.financial_opening ? 'Reschedule' : 'Schedule'} Financial Opening
+                                                                                {tender.financial_opening ? 'Reschedule' : 'Schedule'} financial opening
                                                                             </button>
                                                                         );
                                                                     
@@ -1729,10 +1569,10 @@ const PurchaseDepartment = () => {
                                                                         return (
                                                                             <button
                                                                                 onClick={() => handleInitiateFinancialGrievance(tender)}
-                                                                                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                                                className="ui-btn ui-btn--primary"
                                                                             >
                                                                                 <i className="fas fa-gavel mr-2"></i>
-                                                                                Initiate Financial Grievance
+                                                                                Initiate financial grievance
                                                                             </button>
                                                                         );
                                                                     
@@ -1740,10 +1580,10 @@ const PurchaseDepartment = () => {
                                                                         return (
                                                                             <button
                                                                                 onClick={() => handleUploadMinutes(tender)}
-                                                                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                                                className="ui-btn ui-btn--primary"
                                                                             >
                                                                                 <i className="fas fa-upload mr-2"></i>
-                                                                                Upload Minutes & Distribute
+                                                                                Upload minutes & distribute
                                                                             </button>
                                                                         );
                                                                     
@@ -1754,7 +1594,7 @@ const PurchaseDepartment = () => {
                                                                                 className="px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed"
                                                                             >
                                                                                 <i className="fas fa-clock mr-2"></i>
-                                                                                Awaiting Meeting Time
+                                                                                Awaiting meeting time
                                                                             </button>
                                                                         );
                                                                     
@@ -1765,7 +1605,7 @@ const PurchaseDepartment = () => {
                                                                                 className="px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed"
                                                                             >
                                                                                 <i className="fas fa-check-circle mr-2"></i>
-                                                                                Financial Complete
+                                                                                Financial complete
                                                                             </button>
                                                                         );
                                                                     
@@ -1773,10 +1613,10 @@ const PurchaseDepartment = () => {
                                                                         return (
                                                                             <button
                                                                                 onClick={() => handleScheduleFinancialOpening(tender)}
-                                                                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                                className="ui-btn ui-btn--primary"
                                                                             >
                                                                                 <i className="fas fa-calendar-plus mr-2"></i>
-                                                                                Schedule Financial Opening
+                                                                                Schedule financial opening
                                                                             </button>
                                                                         );
                                                                 }
@@ -1792,16 +1632,16 @@ const PurchaseDepartment = () => {
 
                             {/* Scheduled Financial Openings */}
                             {scheduledOpenings.ready_to_open?.length > 0 && (
-                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                <div className="ui-panel">
                                     <div className="px-4 py-5 sm:p-6">
                                         <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
                                             <i className="fas fa-folder-open mr-2 text-red-600"></i>
-                                            Ready to Open - Time Passed
+                                            Ready to open - time passed
                                         </h2>
 
                                         <div className="space-y-4">
                                             {scheduledOpenings.ready_to_open.map((opening) => (
-                                                <div key={opening.id} className="border border-red-200 rounded-lg p-4 bg-red-50">
+                                                <div key={opening.id} className="ui-callout ui-callout--danger">
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
@@ -1809,7 +1649,7 @@ const PurchaseDepartment = () => {
                                                             </h3>
                                                             <p className="text-sm text-red-600 mt-1">
                                                                 <i className="fas fa-exclamation-triangle mr-1"></i>
-                                                                Scheduled time has passed: {new Date(opening.scheduled_opening_time).toLocaleString('en-PK')}
+                                                                Scheduled time has passed: {formatDateTime(opening.scheduled_opening_time)}
                                                             </p>
                                                         </div>
                                                         <div className="ml-4">
@@ -1838,16 +1678,16 @@ const PurchaseDepartment = () => {
 
                             {/* Future Scheduled Openings */}
                             {scheduledOpenings.scheduled_future?.length > 0 && (
-                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                <div className="ui-panel">
                                     <div className="px-4 py-5 sm:p-6">
                                         <h2 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
                                             <i className="fas fa-clock mr-2 text-blue-600"></i>
-                                            Scheduled for Future
+                                            Scheduled for future
                                         </h2>
 
                                         <div className="space-y-4">
                                             {scheduledOpenings.scheduled_future.map((opening) => (
-                                                <div key={opening.id} className="border border-blue-200 rounded-lg p-4 bg-blue-50">
+                                                <div key={opening.id} className="ui-callout">
                                                     <div className="flex justify-between items-start">
                                                         <div className="flex-1">
                                                             <h3 className="text-lg font-semibold text-gray-900">
@@ -1855,13 +1695,13 @@ const PurchaseDepartment = () => {
                                                             </h3>
                                                             <p className="text-sm text-blue-600 mt-1">
                                                                 <i className="fas fa-calendar mr-1"></i>
-                                                                Scheduled for: {new Date(opening.scheduled_opening_time).toLocaleString('en-PK')}
+                                                                Scheduled for: {formatDateTime(opening.scheduled_opening_time)}
                                                             </p>
                                                         </div>
                                                         <div className="ml-4">
                                                             <button
                                                                 onClick={() => handleScheduleFinancialOpening({ id: opening.tender_id, ...opening })}
-                                                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                                className="ui-btn ui-btn--primary"
                                                             >
                                                                 <i className="fas fa-edit mr-2"></i>
                                                                 Reschedule
@@ -1875,11 +1715,11 @@ const PurchaseDepartment = () => {
                                 </div>
                             )}                            {/* No Financial Openings Available */}
                             {readyTenders.length === 0 && (!scheduledOpenings.ready_to_open || scheduledOpenings.ready_to_open.length === 0) && (!scheduledOpenings.scheduled_future || scheduledOpenings.scheduled_future.length === 0) && (
-                                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                                <div className="ui-panel">
                                     <div className="px-4 py-12 text-center">
                                         <i className="fas fa-folder-open text-4xl text-gray-400 mb-4"></i>
-                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Financial Openings Available</h3>
-                                        <p className="text-gray-600">All grievances must be resolved and suppliers finalized before financial openings can be scheduled.</p>
+                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No financial openings available</h3>
+                                        <p className="text-gray-600">Resolve all grievances before scheduling a financial opening.</p>
                                     </div>
                                 </div>
                             )}
@@ -1889,12 +1729,12 @@ const PurchaseDepartment = () => {
                     {/* Grievance Management Tab */}
                     {activeTab === 'grievance-management' && (
                 <div className="space-y-6">
-                    <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                    <div className="ui-panel">
                         <div className="px-4 py-5 sm:p-6">
                             <div className="flex justify-between items-center mb-6">
                                 <h2 className="text-lg font-medium text-gray-900">
                                     <i className="fas fa-exclamation-triangle mr-2 text-yellow-600"></i>
-                                    Pending Grievance Notifications ({pendingGrievances.length})
+                                    Pending grievance notifications ({pendingGrievances.length})
                                 </h2>
                                 {pendingGrievances.length > 0 && (
                                     <button
@@ -1905,10 +1745,10 @@ const PurchaseDepartment = () => {
                                                 handleBulkApproveGrievances(selectedIds, comments);
                                             }
                                         }}
-                                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium"
+                                        className="ui-btn ui-btn--primary"
                                     >
                                         <i className="fas fa-check-double mr-2"></i>
-                                        Approve All
+                                        Approve all
                                     </button>
                                 )}
                             </div>
@@ -1917,14 +1757,14 @@ const PurchaseDepartment = () => {
                                 <div className="text-center py-12">
                                     <div className="text-gray-500">
                                         <i className="fas fa-check-circle text-4xl text-green-400 mb-4"></i>
-                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Pending Grievances</h3>
+                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No pending grievances</h3>
                                         <p>All grievance notifications have been processed.</p>
                                     </div>
                                 </div>
                             ) : (
                                 <div className="space-y-4">
                                     {pendingGrievances.map((grievance) => (
-                                        <div key={grievance.id} className="border border-yellow-200 rounded-lg p-6 bg-yellow-50">
+                                        <div key={grievance.id} className="ui-callout ui-callout--warning">
                                             <div className="flex justify-between items-start mb-4">
                                                 <div className="flex-1">
                                                     <h3 className="text-lg font-semibold text-gray-900">
@@ -1948,7 +1788,7 @@ const PurchaseDepartment = () => {
                                                         </div>
                                                         <div>
                                                             <span className="font-medium text-gray-700">Submitted:</span>
-                                                            <span className="ml-2">{new Date(grievance.created_at).toLocaleString()}</span>
+                                                            <span className="ml-2">{formatDateTime(grievance.created_at)}</span>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1960,10 +1800,10 @@ const PurchaseDepartment = () => {
                                                                 handleApproveGrievance(grievance.id, comments);
                                                             }
                                                         }}
-                                                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium"
+                                                        className="ui-btn ui-btn--primary"
                                                     >
                                                         <i className="fas fa-check mr-2"></i>
-                                                        Approve & Send
+                                                        Approve & send
                                                     </button>
                                                     <button
                                                         onClick={() => {
@@ -1972,7 +1812,7 @@ const PurchaseDepartment = () => {
                                                                 handleRejectGrievance(grievance.id, comments);
                                                             }
                                                         }}
-                                                        className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-medium"
+                                                        className="ui-btn ui-btn--danger-solid"
                                                     >
                                                         <i className="fas fa-times mr-2"></i>
                                                         Reject
@@ -1980,7 +1820,7 @@ const PurchaseDepartment = () => {
                                                 </div>
                                             </div>
                                             <div className="border-t border-yellow-300 pt-3">
-                                                <h4 className="font-medium text-gray-900 mb-2">Rejection Reason:</h4>
+                                                <h4 className="font-medium text-gray-900 mb-2">Rejection reason:</h4>
                                                 <p className="text-gray-700 bg-white p-3 rounded border">
                                                     {grievance.rejection_reason}
                                                 </p>
@@ -1997,11 +1837,11 @@ const PurchaseDepartment = () => {
                     </div>
 
                     {/* All Grievances History */}
-                    <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                    <div className="ui-panel">
                         <div className="px-4 py-5 sm:p-6">
                             <h2 className="text-lg font-medium text-gray-900 mb-4">
                                 <i className="fas fa-history mr-2 text-blue-600"></i>
-                                All Grievances History
+                                All grievances history
                             </h2>
 
                             {allGrievances.length === 0 ? (
@@ -2010,30 +1850,30 @@ const PurchaseDepartment = () => {
                                 </div>
                             ) : (
                                 <div className="overflow-x-auto">
-                                    <table className="min-w-full divide-y divide-gray-200">
-                                        <thead className="bg-gray-50">
+                                    <table className="ui-table">
+                                        <thead>
                                             <tr>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Tender & Supplier
+                                                <th className="text-left">
+                                                    Tender & supplier
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Item & Reason
+                                                <th className="text-left">
+                                                    Item & reason
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                <th className="text-left">
                                                     Status
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Review Details
+                                                <th className="text-left">
+                                                    Review details
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                <th className="text-left">
                                                     Date
                                                 </th>
                                             </tr>
                                         </thead>
-                                        <tbody className="bg-white divide-y divide-gray-200">
+                                        <tbody>
                                             {allGrievances.map((grievance) => (
                                                 <tr key={grievance.id} className="hover:bg-gray-50">
-                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                    <td className="whitespace-nowrap">
                                                         <div>
                                                             <div className="text-sm font-medium text-gray-900">
                                                                 {grievance.tender_title}
@@ -2046,7 +1886,7 @@ const PurchaseDepartment = () => {
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="px-6 py-4">
+                                                    <td>
                                                         <div>
                                                             <div className="text-sm font-medium text-gray-900">
                                                                 {grievance.item_name}
@@ -2056,7 +1896,7 @@ const PurchaseDepartment = () => {
                                                             </div>
                                                         </div>
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                    <td className="whitespace-nowrap">
                                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                                                             grievance.status === 'pending' 
                                                                 ? 'bg-yellow-100 text-yellow-800'
@@ -2064,16 +1904,16 @@ const PurchaseDepartment = () => {
                                                                 ? 'bg-green-100 text-green-800'
                                                                 : 'bg-red-100 text-red-800'
                                                         }`}>
-                                                            {grievance.status.toUpperCase()}
+                                                            {humanize(grievance.status)}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4">
+                                                    <td>
                                                         {grievance.reviewed_by && (
                                                             <div className="text-sm text-gray-900">
                                                                 <div>By: {grievance.reviewed_by}</div>
                                                                 {grievance.reviewed_at && (
                                                                     <div className="text-xs text-gray-500">
-                                                                        {new Date(grievance.reviewed_at).toLocaleString()}
+                                                                        {formatDateTime(grievance.reviewed_at)}
                                                                     </div>
                                                                 )}
                                                                 {grievance.approval_comments && (
@@ -2084,8 +1924,8 @@ const PurchaseDepartment = () => {
                                                             </div>
                                                         )}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                        {new Date(grievance.created_at).toLocaleDateString()}
+                                                    <td className="whitespace-nowrap">
+                                                        {formatDate(grievance.created_at)}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -2110,19 +1950,19 @@ const PurchaseDepartment = () => {
 
             {/* Market Survey Tab */}
             {activeTab === 'market-survey' && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-medium text-gray-900">
                                 <i className="fas fa-chart-line mr-2"></i>
-                                Market Survey Management
+                                Market survey management
                             </h3>
                             <button
                                 onClick={() => {
                                     fetchMarketSurveyTenders();
                                     fetchCompletedSurveys();
                                 }}
-                                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                                className="ui-btn ui-btn--secondary"
                             >
                                 <i className="fas fa-sync-alt mr-2"></i>
                                 Refresh
@@ -2132,43 +1972,43 @@ const PurchaseDepartment = () => {
                         {marketSurveyTenders.length === 0 ? (
                             <div className="text-center py-12">
                                 <i className="fas fa-chart-line text-gray-400 text-4xl mb-4"></i>
-                                <h3 className="text-lg font-medium text-gray-900 mb-2">No Active Tenders</h3>
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">No active tenders</h3>
                                 <p className="text-gray-500">There are no active tenders available for market survey.</p>
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                                <table className="ui-table">
+                                    <thead>
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Tender Details
+                                            <th className="text-left">
+                                                Tender details
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Item Information
+                                            <th className="text-left">
+                                                Item information
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Deadline
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Survey Status
+                                            <th className="text-left">
+                                                Survey status
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Actions
                                             </th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody>
                                         {marketSurveyTenders.map((tender) => (
                                             <tr key={tender.id} className="hover:bg-gray-50">
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <div className="text-sm font-medium text-gray-900">
-                                                        Tender #{tender.id}
+                                                        {tender.tender_number || `Tender #${tender.id}`}
                                                     </div>
                                                     <div className="text-sm text-gray-500">
                                                         Status: {tender.status}
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4">
+                                                <td>
                                                     <div className="text-sm font-medium text-gray-900">
                                                         {tender.item_name}
                                                     </div>
@@ -2179,10 +2019,10 @@ const PurchaseDepartment = () => {
                                                         {tender.description}
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                    {new Date(tender.bidding_end_time).toLocaleDateString()}
+                                                <td className="whitespace-nowrap">
+                                                    {formatDate(tender.bidding_end_time)}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     {tender.survey_status ? (
                                                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                                                             tender.survey_status === 'completed' 
@@ -2200,14 +2040,14 @@ const PurchaseDepartment = () => {
                                                         </span>
                                                     )}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                <td className="whitespace-nowrap">
                                                     {!tender.survey_status ? (
                                                         <button
                                                             onClick={() => handleSendForMarketSurvey(tender)}
-                                                            className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                                            className="ui-btn ui-btn--primary"
                                                         >
                                                             <i className="fas fa-paper-plane mr-1"></i>
-                                                            Send for Market Survey
+                                                            Send for market survey
                                                         </button>
                                                     ) : tender.survey_status === 'completed' ? (
                                                         <span className="text-green-600 font-medium">
@@ -2232,48 +2072,48 @@ const PurchaseDepartment = () => {
                         <div className="mt-8">
                             <h4 className="text-lg font-medium text-gray-900 mb-4">
                                 <i className="fas fa-check-circle mr-2"></i>
-                                Completed Market Surveys
+                                Completed market surveys
                             </h4>
                             
                             {completedSurveys.length === 0 ? (
-                                <div className="text-center py-8 bg-gray-50 rounded-lg">
+                                <div className="ui-callout text-center">
                                     <i className="fas fa-clipboard-check text-gray-400 text-3xl mb-3"></i>
                                     <p className="text-gray-500">No completed market surveys yet.</p>
                                 </div>
                             ) : (
                                 <div className="overflow-x-auto">
-                                    <table className="min-w-full divide-y divide-gray-200">
-                                        <thead className="bg-gray-50">
+                                    <table className="ui-table">
+                                        <thead>
                                             <tr>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Tender Details
+                                                <th className="text-left">
+                                                    Tender details
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Item Information
+                                                <th className="text-left">
+                                                    Item information
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Survey Details
+                                                <th className="text-left">
+                                                    Survey details
                                                 </th>
-                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    Evaluation Documents
+                                                <th className="text-left">
+                                                    Evaluation documents
                                                 </th>
                                             </tr>
                                         </thead>
-                                        <tbody className="bg-white divide-y divide-gray-200">
+                                        <tbody>
                                             {completedSurveys.map((survey) => (
                                                 <tr key={survey.survey_id} className="hover:bg-gray-50">
-                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                    <td className="whitespace-nowrap">
                                                         <div className="text-sm font-medium text-gray-900">
                                                             Tender #{survey.tender_id}
                                                         </div>
                                                         <div className="text-sm text-gray-500">
-                                                            Sent: {new Date(survey.sent_at).toLocaleDateString()}
+                                                            Sent: {formatDate(survey.sent_at)}
                                                         </div>
                                                         <div className="text-sm text-gray-500">
-                                                            Completed: {new Date(survey.completed_at).toLocaleDateString()}
+                                                            Completed: {formatDate(survey.completed_at)}
                                                         </div>
                                                     </td>
-                                                    <td className="px-6 py-4">
+                                                    <td>
                                                         <div className="text-sm font-medium text-gray-900">
                                                             {survey.item_name}
                                                         </div>
@@ -2284,7 +2124,7 @@ const PurchaseDepartment = () => {
                                                             {survey.description}
                                                         </div>
                                                     </td>
-                                                    <td className="px-6 py-4">
+                                                    <td>
                                                         <div className="text-sm text-gray-900">
                                                             <strong>Sent by:</strong> {survey.sent_by_name}
                                                         </div>
@@ -2299,7 +2139,7 @@ const PurchaseDepartment = () => {
                                                             </div>
                                                         )}
                                                     </td>
-                                                    <td className="px-6 py-4">
+                                                    <td>
                                                         {survey.documents && survey.documents.length > 0 ? (
                                                             <div className="space-y-2">
                                                                 {survey.documents
@@ -2308,12 +2148,12 @@ const PurchaseDepartment = () => {
                                                                     <div key={doc.id} className="flex items-center">
                                                                         <button
                                                                             onClick={() => downloadMarketSurveyDocument(doc.id, doc.original_filename)}
-                                                                            className="text-sm text-indigo-600 hover:text-indigo-800 flex items-center"
+                                                                            className="ui-btn ui-btn--ghost ui-btn--sm"
                                                                         >
                                                                             <i className="fas fa-download mr-1"></i>
                                                                             {doc.original_filename}
                                                                         </button>
-                                                                        <span className="ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                                                                        <span className="ml-2 px-2 py-1 text-xs bg-green-100 rounded">
                                                                             Evaluation
                                                                         </span>
                                                                     </div>
@@ -2324,12 +2164,12 @@ const PurchaseDepartment = () => {
                                                                     <div key={doc.id} className="flex items-center">
                                                                         <button
                                                                             onClick={() => downloadMarketSurveyDocument(doc.id, doc.original_filename)}
-                                                                            className="text-sm text-gray-600 hover:text-gray-800 flex items-center"
+                                                                            className="ui-btn ui-btn--ghost ui-btn--sm"
                                                                         >
                                                                             <i className="fas fa-paperclip mr-1"></i>
                                                                             {doc.original_filename}
                                                                         </button>
-                                                                        <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                                                                        <span className="ml-2 px-2 py-1 text-xs bg-blue-100 rounded">
                                                                             Supporting
                                                                         </span>
                                                                     </div>
@@ -2350,164 +2190,55 @@ const PurchaseDepartment = () => {
                 </div>
             )}
 
-            {/* Tender Management Tab */}
+            {/* Tender Management Tab: tenders still in approval or bidding */}
             {activeTab === 'tender-management' && (
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
-                    <div className="px-4 py-5 sm:p-6">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-lg font-medium text-gray-900">
-                                <i className="fas fa-clock mr-2"></i>
-                                Tender Time Management
-                            </h3>
-                            <button
-                                onClick={fetchManagableTenders}
-                                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                            >
-                                <i className="fas fa-sync-alt mr-2"></i>
-                                Refresh
-                            </button>
-                        </div>
-
-                        {loading ? (
-                            <div className="text-center py-12">
-                                <i className="fas fa-spinner fa-spin text-gray-400 text-4xl mb-4"></i>
-                                <p className="text-gray-500">Loading tenders...</p>
-                            </div>
-                        ) : managableTenders.length === 0 ? (
-                            <div className="text-center py-12">
-                                <i className="fas fa-clock text-gray-400 text-4xl mb-4"></i>
-                                <h3 className="text-lg font-medium text-gray-900 mb-2">No Manageable Tenders</h3>
-                                <p className="text-gray-500">There are no approved tenders available for time management.</p>
-                            </div>
-                        ) : (
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Tender Details
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Item Information
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Current Timing
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Extension History
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Actions
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {managableTenders.map((tender) => (
-                                            <tr key={tender.id} className="hover:bg-gray-50">
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <div className="text-sm font-medium text-gray-900">
-                                                        Tender #{tender.id}
-                                                    </div>
-                                                    <div className="text-sm text-gray-500">
-                                                        Status: <span className={`font-medium ${
-                                                            tender.tender_status === 'active' ? 'text-blue-600' :
-                                                            tender.tender_status === 'vetting_approved' ? 'text-green-600' :
-                                                            'text-gray-600'
-                                                        }`}>{tender.tender_status?.replace(/_/g, ' ')}</span>
-                                                    </div>
-                                                    <div className="text-sm text-gray-500">
-                                                        Created: {new Date(tender.created_at).toLocaleDateString()}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="text-sm font-medium text-gray-900">
-                                                        {tender.item_name}
-                                                    </div>
-                                                    <div className="text-sm text-gray-500">
-                                                        Qty: {tender.quantity}
-                                                    </div>
-                                                    <div className="text-sm text-gray-500 max-w-xs truncate">
-                                                        {tender.description}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <div className="text-sm text-gray-900">
-                                                        <div className="flex items-center mb-1">
-                                                            <i className="fas fa-calendar-start mr-1 text-green-600"></i>
-                                                            <span className="font-medium">Start:</span>
-                                                        </div>
-                                                        <div className="text-sm text-gray-600 mb-2">
-                                                            {new Date(tender.bidding_start_time).toLocaleString()}
-                                                        </div>
-                                                        <div className="flex items-center mb-1">
-                                                            <i className="fas fa-calendar-times mr-1 text-red-600"></i>
-                                                            <span className="font-medium">End:</span>
-                                                        </div>
-                                                        <div className="text-sm text-gray-600">
-                                                            {new Date(tender.bidding_end_time).toLocaleString()}
-                                                        </div>
-                                                        {new Date(tender.bidding_end_time) < new Date() ? (
-                                                            <span className="mt-2 px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800">
-                                                                Expired
-                                                            </span>
-                                                        ) : new Date(tender.bidding_end_time) - new Date() < 24 * 60 * 60 * 1000 ? (
-                                                            <span className="mt-2 px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800">
-                                                                Ending Soon
-                                                            </span>
-                                                        ) : (
-                                                            <span className="mt-2 px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
-                                                                Active
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    {tender.time_extension_reason ? (
-                                                        <div className="text-sm">
-                                                            <div className="text-gray-900 font-medium mb-1">
-                                                                <i className="fas fa-history mr-1 text-blue-600"></i>
-                                                                Extended
-                                                            </div>
-                                                            <div className="text-gray-600 mb-1">
-                                                                <strong>Reason:</strong> {tender.time_extension_reason}
-                                                            </div>
-                                                            <div className="text-gray-600 mb-1">
-                                                                <strong>By:</strong> {tender.extension_by_name}
-                                                            </div>
-                                                            <div className="text-gray-600">
-                                                                <strong>At:</strong> {new Date(tender.time_extension_at).toLocaleString()}
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-sm text-gray-400">No extensions</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-y-2">
-                                                    {tender.tender_status === 'vetting_approved' && (
-                                                        <button
-                                                            onClick={() => submitForFinanceApproval(tender)}
-                                                            className="w-full inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-                                                        >
-                                                            <i className="fas fa-paper-plane mr-1"></i>
-                                                            Submit for Finance/MS Approval
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => handleTimeExtension(tender)}
-                                                        className="w-full inline-flex items-center justify-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                                                    >
-                                                        <i className="fas fa-clock mr-1"></i>
-                                                        Manage Time
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                <Panel
+                    title="Live tenders"
+                    actions={<Button size="sm" icon={<ArrowsClockwise size={15} />} onClick={fetchManagableTenders}>Refresh</Button>}
+                    flush
+                >
+                    {loading ? (
+                        <LoadingBlock />
+                    ) : managableTenders.length === 0 ? (
+                        <EmptyState icon={<Hourglass size={26} />} title="No live tenders" />
+                    ) : (
+                        <ul className="tender-list">
+                            {managableTenders.map((tender) => {
+                                const bidding = ['active', 'published'].includes(tender.tender_status);
+                                const canChangeDeadline = (bidding || tender.tender_status === 'pending_opening') && !tender.opened_at;
+                                return (
+                                    <li key={tender.id} className="tender-row">
+                                        <div className="tender-row__main">
+                                            <div className="tender-row__title">
+                                                <h3>{tender.item_name}</h3>
+                                                <TenderStatus status={tender.tender_status} />
+                                            </div>
+                                            <p className="tender-row__meta">
+                                                {[tender.tender_number || `Tender #${tender.id}`, tender.quantity && `Qty ${tender.quantity}`, `Created ${formatDate(tender.created_at)}`].filter(Boolean).join(' · ')}
+                                            </p>
+                                            {tender.time_extension_reason && (
+                                                <p className="tender-row__desc">
+                                                    Deadline changed {formatDateTime(tender.time_extension_at)}{tender.extension_by_name ? ` by ${tender.extension_by_name}` : ''}: {tender.time_extension_reason}
+                                                </p>
+                                            )}
+                                            <TenderProgress status={tender.tender_status} className="tender-row__progress" />
+                                        </div>
+                                        <div className="tender-row__side">
+                                            <span className="tender-row__deadline">Closes {formatDateTime(tender.bidding_end_time)}</span>
+                                            {bidding && <Countdown until={tender.bidding_end_time} />}
+                                            <div className="ui-actions">
+                                                {tender.tender_status === 'vetting_approved' && (
+                                                    <Button size="sm" variant="primary" onClick={() => submitForFinanceApproval(tender)}>Send to Finance & MS</Button>
+                                                )}
+                                                {canChangeDeadline && <Button size="sm" onClick={() => handleTimeExtension(tender)}>Change deadline</Button>}
+                                            </div>
+                                        </div>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </Panel>
             )}
 
                         </div>{/* End Content Area */}
@@ -2516,152 +2247,78 @@ const PurchaseDepartment = () => {
             </div>
             )}
 
-            {/* Time Extension Modal */}
-            {showTimeExtensionModal && selectedTender && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-bold text-gray-900">
-                                Manage Tender Time - #{selectedTender.id}
-                            </h3>
-                            <button
+            {/* Bidding deadline change */}
+            <Modal
+                show={showTimeExtensionModal && Boolean(selectedTenderForExtension)}
+                onClose={() => setShowTimeExtensionModal(false)}
+                title="Change bidding deadline"
+                size="sm"
+                footer={(
+                    <>
+                        <Button onClick={() => setShowTimeExtensionModal(false)}>Cancel</Button>
+                        <Button variant="primary" type="submit" form="deadline-form">Save</Button>
+                    </>
+                )}
+            >
+                <form id="deadline-form" className="ui-form" onSubmit={(e) => { e.preventDefault(); submitTimeExtension(); }}>
+                    <p className="ui-hint">
+                        {selectedTenderForExtension?.item_name}: closes {formatDateTime(selectedTenderForExtension?.bidding_end_time)}
+                    </p>
+                    <label className="ui-field">
+                        <span className="ui-label">New deadline (Pakistan time)</span>
+                        <input
+                            type="datetime-local"
+                            className="ui-input"
+                            min={inputValueFromNow(2)}
+                            value={timeExtensionForm.newBiddingEndTime}
+                            onChange={(e) => setTimeExtensionForm((f) => ({ ...f, newBiddingEndTime: e.target.value }))}
+                            required
+                        />
+                    </label>
+                    <div className="ui-actions">
+                        {[1, 3, 7].map((days) => (
+                            <Button
+                                key={days}
+                                size="sm"
+                                variant="ghost"
                                 onClick={() => {
-                                    setShowTimeExtensionModal(false);
-                                    setSelectedTender(null);
-                                    setTimeExtensionForm({ action: 'extend', hours: '', reason: '' });
+                                    const base = Math.max(Date.now(), toDate(selectedTenderForExtension?.bidding_end_time)?.getTime() || 0);
+                                    setTimeExtensionForm((f) => ({ ...f, newBiddingEndTime: toInputValue(base + days * 86_400_000) }));
                                 }}
-                                className="text-gray-400 hover:text-gray-600"
                             >
-                                <i className="fas fa-times text-xl"></i>
-                            </button>
-                        </div>
-
-                        <form onSubmit={submitTimeExtension}>
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Current End Time
-                                </label>
-                                <div className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
-                                    {new Date(selectedTender.bidding_end_time).toLocaleString()}
-                                </div>
-                            </div>
-
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Action
-                                </label>
-                                <select
-                                    value={timeExtensionForm.action}
-                                    onChange={(e) => setTimeExtensionForm({...timeExtensionForm, action: e.target.value})}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    required
-                                >
-                                    <option value="extend">Extend Time</option>
-                                    <option value="reduce">Reduce Time</option>
-                                </select>
-                            </div>
-
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Hours to {timeExtensionForm.action === 'extend' ? 'Add' : 'Subtract'}
-                                </label>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    value={timeExtensionForm.hours}
-                                    onChange={(e) => setTimeExtensionForm({...timeExtensionForm, hours: e.target.value})}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    placeholder="Enter hours (1-168)"
-                                    required
-                                />
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Maximum: 168 hours (7 days)
-                                </p>
-                            </div>
-
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Reason for Time Change
-                                </label>
-                                <textarea
-                                    value={timeExtensionForm.reason}
-                                    onChange={(e) => setTimeExtensionForm({...timeExtensionForm, reason: e.target.value})}
-                                    rows="3"
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    placeholder="Explain why you need to change the tender time..."
-                                    required
-                                />
-                            </div>
-
-                            {timeExtensionForm.hours && (
-                                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                                    <div className="text-sm font-medium text-blue-800 mb-1">
-                                        Preview New End Time:
-                                    </div>
-                                    <div className="text-sm text-blue-700">
-                                        {(() => {
-                                            const currentEnd = new Date(selectedTender.bidding_end_time);
-                                            const hoursToChange = parseInt(timeExtensionForm.hours) || 0;
-                                            const newEnd = new Date(currentEnd);
-                                            
-                                            if (timeExtensionForm.action === 'extend') {
-                                                newEnd.setHours(newEnd.getHours() + hoursToChange);
-                                            } else {
-                                                newEnd.setHours(newEnd.getHours() - hoursToChange);
-                                            }
-                                            
-                                            return newEnd.toLocaleString();
-                                        })()}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex justify-end space-x-3">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setShowTimeExtensionModal(false);
-                                        setSelectedTender(null);
-                                        setTimeExtensionForm({ action: 'extend', hours: '', reason: '' });
-                                    }}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className={`px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                                        timeExtensionForm.action === 'extend' 
-                                            ? 'bg-green-600 hover:bg-green-700' 
-                                            : 'bg-orange-600 hover:bg-orange-700'
-                                    }`}
-                                >
-                                    <i className={`fas ${timeExtensionForm.action === 'extend' ? 'fa-plus' : 'fa-minus'} mr-2`}></i>
-                                    {timeExtensionForm.action === 'extend' ? 'Extend' : 'Reduce'} Time
-                                </button>
-                            </div>
-                        </form>
+                                +{days} {days === 1 ? 'day' : 'days'}
+                            </Button>
+                        ))}
                     </div>
-                </div>
-            )}
+                    <label className="ui-field">
+                        <span className="ui-label">Reason</span>
+                        <textarea
+                            className="ui-input ui-textarea"
+                            rows={3}
+                            value={timeExtensionForm.reason}
+                            onChange={(e) => setTimeExtensionForm((f) => ({ ...f, reason: e.target.value }))}
+                            required
+                        />
+                    </label>
+                </form>
+            </Modal>
 
             {/* Evaluation Modal */}
             {showEvaluationModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <h3 className="text-lg font-bold text-gray-900 mb-4">
-                            Purchase Review: Demand #{selectedDemand?.id}
+                            Purchase review: demand #{selectedDemand?.id}
                         </h3>
 
                         <form onSubmit={handleEvaluationSubmit}>
                             {/* Show all items in the demand */}
                             {selectedDemand?.items && selectedDemand.items.length > 0 ? (
                                 <div className="mb-6">
-                                    <h4 className="font-medium text-gray-900 mb-3">Items in this Demand:</h4>
+                                    <h4 className="font-medium text-gray-900 mb-3">Items in this demand:</h4>
                                     <div className="space-y-3 max-h-60 overflow-y-auto">
                                         {selectedDemand.items.map((item, index) => (
-                                            <div key={item.id} className="bg-gray-50 rounded-lg p-4">
+                                            <div key={item.id} className="ui-callout">
                                                 <div className="flex justify-between items-start mb-2">
                                                     <h5 className="font-medium text-gray-900">{item.item_name}</h5>
                                                     {item.store_status && (
@@ -2669,7 +2326,7 @@ const PurchaseDepartment = () => {
                                                                 item.store_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
                                                                     'bg-red-100 text-red-800'
                                                             }`}>
-                                                            {item.store_status.toUpperCase()}
+                                                            {humanize(item.store_status)}
                                                         </span>
                                                     )}
                                                 </div>
@@ -2698,8 +2355,8 @@ const PurchaseDepartment = () => {
                             ) : (
                                 // Fallback for old single-item demands
                                 <div className="mb-6">
-                                    <h4 className="font-medium text-gray-900 mb-3">Item Details:</h4>
-                                    <div className="bg-gray-50 rounded-lg p-4">
+                                    <h4 className="font-medium text-gray-900 mb-3">Item details:</h4>
+                                    <div className="ui-callout">
                                         <h5 className="font-medium text-gray-900 mb-2">{selectedDemand?.item_name}</h5>
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-600">
                                             <div>
@@ -2719,22 +2376,22 @@ const PurchaseDepartment = () => {
                             {/* Demand Details (Editable) */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-700">Description</label>
+                                    <label className="ui-label block">Description</label>
                                     <textarea
                                         name="demand_description"
                                         value={evaluationForm.updatedDemand.description}
                                         onChange={handleFormChange}
                                         rows={3}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        className="ui-input ui-textarea mt-1"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Urgency</label>
+                                    <label className="ui-label block">Urgency</label>
                                     <select
                                         name="demand_urgency"
                                         value={evaluationForm.updatedDemand.urgency}
                                         onChange={handleFormChange}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        className="ui-input mt-1"
                                     >
                                         <option value="low">Low</option>
                                         <option value="normal">Normal</option>
@@ -2742,20 +2399,20 @@ const PurchaseDepartment = () => {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Required By</label>
+                                    <label className="ui-label block">Required by</label>
                                     <input
                                         type="date"
                                         name="demand_required_by"
                                         value={evaluationForm.updatedDemand.required_by}
                                         onChange={handleFormChange}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        className="ui-input mt-1"
                                     />
                                 </div>
                             </div>
 
                             {/* Evaluation Decision */}
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700">Purchase Decision</label>
+                                <label className="ui-label block">Purchase decision</label>
                                 <div className="mt-2 space-x-4">
                                     <label className="inline-flex items-center">
                                         <input
@@ -2783,26 +2440,26 @@ const PurchaseDepartment = () => {
                             </div>                            {/* Bidding Expiry Time (only for approved) */}
                             {evaluationForm.status === 'approved' && (
                                 <div className="mb-6">
-                                    <label className="block text-sm font-medium text-gray-700">
-                                        Bidding Expiry Date & Time <span className="text-red-500">*</span>
+                                    <label className="ui-label block">
+                                        Bidding expiry date & time <span className="text-red-500">*</span>
                                     </label>
                                     <input
                                         type="datetime-local"
                                         name="biddingExpiryTime" value={evaluationForm.biddingExpiryTime}
                                         onChange={handleFormChange}
-                                        min={new Date(Date.now() + 1 * 60 * 1000).toISOString().slice(0, 16)} // Minimum 1 minute from now
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        min={inputValueFromNow(1)}
+                                        className="ui-input mt-1"
                                         required
                                     />
                                     <p className="mt-1 text-sm text-gray-500">
-                                        Set the deadline for suppliers to submit their bids. Minimum 1 minute required (for testing).
+                                        Pakistan time, at least 2 minutes from now.
                                     </p>
                                 </div>
                             )}
 
                             {/* Comments */}
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700">
+                                <label className="ui-label block">
                                     Comments {evaluationForm.status === 'rejected' && <span className="text-red-500">*</span>}
                                 </label>
                                 <textarea
@@ -2811,18 +2468,18 @@ const PurchaseDepartment = () => {
                                     onChange={handleFormChange}
                                     rows={3}
                                     placeholder={evaluationForm.status === 'rejected' ? 'Please provide reason for purchase rejection' : 'Optional comments about the purchase decision'}
-                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    className="ui-input ui-textarea mt-1"
                                 />
                             </div>
 
                             {/* File Uploads (only for approved) */}
                             {evaluationForm.status === 'approved' && (
                                 <div className="mb-6">
-                                    <h4 className="font-medium text-gray-900 mb-3">Required Documents:</h4>
+                                    <h4 className="font-medium text-gray-900 mb-3">Required documents:</h4>
                                     <div className="space-y-4">
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">
-                                                Tender Document (PDF) <span className="text-red-500">*</span>
+                                            <label className="ui-label block">
+                                                Tender document (PDF) <span className="text-red-500">*</span>
                                             </label>
                                             <input
                                                 type="file"
@@ -2837,8 +2494,8 @@ const PurchaseDepartment = () => {
                                             </p>
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">
-                                                Items List (Excel/CSV) <span className="text-red-500">*</span>
+                                            <label className="ui-label block">
+                                                Items list (Excel/CSV) <span className="text-red-500">*</span>
                                             </label>
                                             <input
                                                 type="file"
@@ -2860,15 +2517,15 @@ const PurchaseDepartment = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowEvaluationModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
-                                    Submit Review
+                                    Submit review
                                 </button>
                             </div>
                         </form>
@@ -2878,16 +2535,16 @@ const PurchaseDepartment = () => {
 
             {/* Success Modal */}
             {showSuccessModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-                    <div className="relative p-8 border w-96 shadow-lg rounded-md bg-white text-center">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--sm text-center">
                         <div className="flex flex-col items-center">
                             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
                                 <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
                                 </svg>
                             </div>
-                            <h3 className="text-lg font-bold text-gray-900 mb-2">Evaluation Submitted!</h3>
-                            <p className="text-gray-600 mb-4">Your purchase review has been successfully submitted.</p>
+                            <h3 className="text-lg font-bold text-gray-900 mb-2">Evaluation submitted!</h3>
+                            <p className="text-gray-600 mb-4">Review submitted.</p>
                             <p className="text-sm text-gray-500">Redirecting to dashboard in 3 seconds...</p>
                         </div>
                     </div>
@@ -2896,25 +2553,25 @@ const PurchaseDepartment = () => {
 
             {/* Financial Opening Schedule Modal */}
             {showFinancialScheduleModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Schedule Financial Opening - Tender {selectedTender?.id}
+                                Schedule financial opening: {selectedTender?.tender_number || `tender #${selectedTender?.id}`}
                             </h3>
                             <button
                                 onClick={() => setShowFinancialScheduleModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times text-xl"></i>
                             </button>
                         </div>
 
                         {selectedTender && (
-                            <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-                                <h4 className="font-medium text-blue-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
-                                <p className="text-sm text-blue-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
-                                <div className="grid grid-cols-2 gap-4 text-sm text-blue-800">
+                            <div className="ui-callout mb-6">
+                                <h4 className="font-medium mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                                <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <span className="font-medium text-gray-700">Total Grievances:</span> {selectedTender.grievances_count}
                                     </div>
@@ -2939,35 +2596,33 @@ const PurchaseDepartment = () => {
                             )}
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Financial Opening Date & Time (Pakistan Time UTC+5) *
+                                <label className="ui-label block mb-2">
+                                    Financial opening date & time (Pakistan time) *
                                 </label>
                                 <input
                                     type="datetime-local"
                                     value={scheduleForm.openingDateTime}
+                                    min={inputValueFromNow(1)}
                                     onChange={(e) => setScheduleForm({ ...scheduleForm, openingDateTime: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                                    className="ui-input"
                                     required
                                 />
-                                <p className="mt-1 text-sm text-gray-500">
-                                    Select when the financial bids should be opened. This must be a future date and time.
-                                </p>
                             </div>
 
                             <div className="flex justify-end space-x-3">
                                 <button
                                     type="button"
                                     onClick={() => setShowFinancialScheduleModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-orange-600 hover:bg-orange-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <i className="fas fa-calendar-plus mr-2"></i>
-                                    Schedule Opening
+                                    Schedule opening
                                 </button>
                             </div>
                         </form>
@@ -2977,25 +2632,25 @@ const PurchaseDepartment = () => {
 
             {/* Financial Grievance Modal */}
             {showFinancialGrievanceModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Initiate Financial Grievance - {getTenderDisplayName(selectedTender)}
+                                Initiate financial grievance - {getTenderDisplayName(selectedTender)}
                             </h3>
                             <button
                                 onClick={() => setShowFinancialGrievanceModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times text-xl"></i>
                             </button>
                         </div>
 
                         {selectedTender && (
-                            <div className="mb-6 p-4 bg-purple-50 rounded-lg">
-                                <h4 className="font-medium text-purple-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
-                                <p className="text-sm text-purple-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
-                                <div className="grid grid-cols-2 gap-4 text-sm text-purple-800">
+                            <div className="ui-callout mb-6">
+                                <h4 className="font-medium mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                                <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <span className="font-medium">Financial Opening:</span> Completed
                                     </div>
@@ -3003,7 +2658,7 @@ const PurchaseDepartment = () => {
                                         <span className="font-medium">Approved Suppliers:</span> {selectedTender.approved_suppliers_count || 'Multiple'}
                                     </div>
                                 </div>
-                                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                                <div className="ui-callout ui-callout--warning mt-2">
                                     <p className="text-sm text-yellow-800">
                                         <i className="fas fa-info-circle mr-1"></i>
                                         This will send financial grievance notifications to all approved suppliers with the financial opening report.
@@ -3021,27 +2676,28 @@ const PurchaseDepartment = () => {
                             )}
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Grievance Meeting Date & Time (Pakistan Time UTC+5) *
+                                <label className="ui-label block mb-2">
+                                    Grievance meeting date & time (Pakistan time) *
                                 </label>
                                 <input
                                     type="datetime-local"
                                     value={financialGrievanceForm.meetingDateTime}
+                                    min={inputValueFromNow(1)}
                                     onChange={(e) => setFinancialGrievanceForm({ 
                                         ...financialGrievanceForm, 
                                         meetingDateTime: e.target.value 
                                     })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    className="ui-input"
                                     required
                                 />
                                 <p className="mt-1 text-sm text-gray-500">
-                                    Select when the grievance meeting should be held. This will be included in the email to suppliers.
+                                    Pakistan time. Included in the email to suppliers.
                                 </p>
                             </div>
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Meeting Location
+                                <label className="ui-label block mb-2">
+                                    Meeting location
                                 </label>
                                 <input
                                     type="text"
@@ -3050,14 +2706,14 @@ const PurchaseDepartment = () => {
                                         ...financialGrievanceForm, 
                                         meetingLocation: e.target.value 
                                     })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    className="ui-input"
                                     placeholder="Conference Room - Rawalpindi Institute of Cardiology"
                                 />
                             </div>
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Additional Message (Optional)
+                                <label className="ui-label block mb-2">
+                                    Additional message (optional)
                                 </label>
                                 <textarea
                                     value={financialGrievanceForm.customMessage}
@@ -3066,18 +2722,18 @@ const PurchaseDepartment = () => {
                                         customMessage: e.target.value 
                                     })}
                                     rows={4}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    className="ui-input ui-textarea"
                                     placeholder="Any additional instructions or information for suppliers regarding the financial grievance..."
                                 />
                             </div>
 
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                                <h5 className="font-medium text-blue-900 mb-2">Email Content Preview:</h5>
-                                <div className="text-sm text-blue-800">
+                            <div className="ui-callout mb-6">
+                                <h5 className="font-medium mb-2">Email content preview:</h5>
+                                <div className="text-sm">
                                     <p className="mb-2">
                                         <strong>Subject:</strong> Financial Grievance Period - {getTenderDisplayName(selectedTender)} - Rawalpindi Institute of Cardiology
                                     </p>
-                                    <div className="bg-white p-3 rounded border text-gray-700">
+                                    <div className="ui-panel ui-panel--pad">
                                         <p>Dear Supplier,</p>
                                         <p className="mt-2">
                                             This is to inform you that the financial opening for {getTenderDisplayName(selectedTender)} has been completed.
@@ -3085,7 +2741,7 @@ const PurchaseDepartment = () => {
                                         </p>
                                         <p className="mt-2">
                                             <strong>Financial Grievance Period:</strong> 10 days from the date of this email<br/>
-                                            <strong>Meeting Date:</strong> {financialGrievanceForm.meetingDateTime ? new Date(financialGrievanceForm.meetingDateTime).toLocaleString('en-PK') : '[To be scheduled]'}<br/>
+                                            <strong>Meeting Date:</strong> {financialGrievanceForm.meetingDateTime ? formatDateTime(financialGrievanceForm.meetingDateTime) : '[To be scheduled]'}<br/>
                                             <strong>Location:</strong> {financialGrievanceForm.meetingLocation || 'Conference Room - Rawalpindi Institute of Cardiology'}
                                         </p>
                                         {financialGrievanceForm.customMessage && (
@@ -3111,16 +2767,16 @@ const PurchaseDepartment = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowFinancialGrievanceModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <i className="fas fa-paper-plane mr-2"></i>
-                                    Send Financial Grievances
+                                    Send financial grievances
                                 </button>
                             </div>
                         </form>
@@ -3130,25 +2786,25 @@ const PurchaseDepartment = () => {
 
             {/* Financial Grievance Modal */}
             {showFinancialGrievanceModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Initiate Financial Grievance - {getTenderDisplayName(selectedTender)}
+                                Initiate financial grievance - {getTenderDisplayName(selectedTender)}
                             </h3>
                             <button
                                 onClick={() => setShowFinancialGrievanceModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times text-xl"></i>
                             </button>
                         </div>
 
                         {selectedTender && (
-                            <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-200">
-                                <h4 className="font-medium text-purple-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
-                                <p className="text-sm text-purple-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
-                                <div className="text-sm text-purple-700">
+                            <div className="ui-callout mb-6">
+                                <h4 className="font-medium mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                                <div className="text-sm">
                                     <p className="mb-2">
                                         <i className="fas fa-info-circle mr-2"></i>
                                         This will send financial grievance notifications to all approved suppliers
@@ -3168,17 +2824,18 @@ const PurchaseDepartment = () => {
                             )}
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Grievance Meeting Date & Time *
+                                <label className="ui-label block mb-2">
+                                    Grievance meeting date & time *
                                 </label>
                                 <input
                                     type="datetime-local"
                                     value={financialGrievanceForm.meetingDateTime}
+                                    min={inputValueFromNow(1)}
                                     onChange={(e) => setFinancialGrievanceForm({ 
                                         ...financialGrievanceForm, 
                                         meetingDateTime: e.target.value 
                                     })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    className="ui-input"
                                     required
                                 />
                                 <p className="mt-1 text-sm text-gray-500">
@@ -3187,8 +2844,8 @@ const PurchaseDepartment = () => {
                             </div>
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Meeting Location *
+                                <label className="ui-label block mb-2">
+                                    Meeting location *
                                 </label>
                                 <input
                                     type="text"
@@ -3197,15 +2854,15 @@ const PurchaseDepartment = () => {
                                         ...financialGrievanceForm, 
                                         meetingLocation: e.target.value 
                                     })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    className="ui-input"
                                     placeholder="Conference Room - Rawalpindi Institute of Cardiology"
                                     required
                                 />
                             </div>
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Additional Message (Optional)
+                                <label className="ui-label block mb-2">
+                                    Additional message (optional)
                                 </label>
                                 <textarea
                                     value={financialGrievanceForm.customMessage}
@@ -3214,7 +2871,7 @@ const PurchaseDepartment = () => {
                                         customMessage: e.target.value 
                                     })}
                                     rows={3}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                                    className="ui-input ui-textarea"
                                     placeholder="Any additional instructions or information for suppliers..."
                                 />
                                 <p className="mt-1 text-sm text-gray-500">
@@ -3226,16 +2883,16 @@ const PurchaseDepartment = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowFinancialGrievanceModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <i className="fas fa-gavel mr-2"></i>
-                                    Send Financial Grievances
+                                    Send financial grievances
                                 </button>
                             </div>
                         </form>
@@ -3245,29 +2902,29 @@ const PurchaseDepartment = () => {
 
             {/* Upload Minutes Modal */}
             {showUploadMinutesModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Upload Meeting Minutes - {getTenderDisplayName(selectedTender)}
+                                Upload meeting minutes - {getTenderDisplayName(selectedTender)}
                             </h3>
                             <button
                                 onClick={() => setShowUploadMinutesModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times text-xl"></i>
                             </button>
                         </div>
 
                         {selectedTender && (
-                            <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
-                                <h4 className="font-medium text-green-900 mb-2">{getTenderDisplayName(selectedTender)}</h4>
-                                <p className="text-sm text-green-800 mb-2">{selectedTender.description || selectedTender.item_name}</p>
+                            <div className="ui-callout mb-6">
+                                <h4 className="font-medium mb-2">{getTenderDisplayName(selectedTender)}</h4>
+                                <p className="text-sm mb-2">{selectedTender.description || selectedTender.item_name}</p>
                                 {selectedTender.financial_grievance_details && (
-                                    <div className="text-sm text-green-700">
+                                    <div className="text-sm">
                                         <p className="mb-1">
                                             <i className="fas fa-calendar-check mr-2"></i>
-                                            Meeting was scheduled for: {new Date(selectedTender.financial_grievance_details.meeting_datetime).toLocaleString('en-PK')}
+                                            Meeting was scheduled for: {formatDateTime(selectedTender.financial_grievance_details.meeting_datetime)}
                                         </p>
                                         <p className="mb-2">
                                             <i className="fas fa-map-marker-alt mr-2"></i>
@@ -3289,8 +2946,8 @@ const PurchaseDepartment = () => {
                             )}
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Meeting Minutes File *
+                                <label className="ui-label block mb-2">
+                                    Meeting minutes file *
                                 </label>
                                 <input
                                     type="file"
@@ -3308,8 +2965,8 @@ const PurchaseDepartment = () => {
                             </div>
 
                             <div className="mb-6">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Distribution Message (Optional)
+                                <label className="ui-label block mb-2">
+                                    Distribution message (optional)
                                 </label>
                                 <textarea
                                     value={minutesForm.distributionMessage}
@@ -3318,7 +2975,7 @@ const PurchaseDepartment = () => {
                                         distributionMessage: e.target.value 
                                     })}
                                     rows={3}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                                    className="ui-input ui-textarea"
                                     placeholder="Any additional message to include with the meeting minutes distribution..."
                                 />
                                 <p className="mt-1 text-sm text-gray-500">
@@ -3330,16 +2987,16 @@ const PurchaseDepartment = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowUploadMinutesModal(false)}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <i className="fas fa-upload mr-2"></i>
-                                    Upload & Distribute Minutes
+                                    Upload & distribute minutes
                                 </button>
                             </div>
                         </form>
@@ -3349,24 +3006,24 @@ const PurchaseDepartment = () => {
 
             {/* Market Survey Modal */}
             {showMarketSurveyModal && selectedMarketSurveyTender && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--sm">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-medium text-gray-900">
                                 <i className="fas fa-chart-line mr-2"></i>
-                                Send for Market Survey
+                                Send for market survey
                             </h3>
                             <button
                                 onClick={() => setShowMarketSurveyModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times"></i>
                             </button>
                         </div>
 
-                        <div className="mb-4 p-3 bg-gray-50 rounded">
+                        <div className="ui-callout mb-4">
                             <p className="text-sm font-medium text-gray-900">
-                                Tender #{selectedMarketSurveyTender.id}
+                                {selectedMarketSurveyTender.tender_number || `Tender #${selectedMarketSurveyTender.id}`}
                             </p>
                             <p className="text-sm text-gray-600">{selectedMarketSurveyTender.item_name}</p>
                             <p className="text-xs text-gray-500">Quantity: {selectedMarketSurveyTender.quantity}</p>
@@ -3374,21 +3031,21 @@ const PurchaseDepartment = () => {
 
                         <form onSubmit={handleMarketSurveySubmit}>
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                <label className="ui-label block mb-2">
                                     Notes <span className="text-gray-500">(Optional)</span>
                                 </label>
                                 <textarea
                                     value={marketSurveyForm.notes}
                                     onChange={(e) => setMarketSurveyForm(prev => ({ ...prev, notes: e.target.value }))}
                                     rows={3}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    className="ui-input ui-textarea"
                                     placeholder="Add any specific instructions or requirements for the market survey..."
                                 />
                             </div>
 
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Supporting Documents <span className="text-gray-500">(Optional)</span>
+                                <label className="ui-label block mb-2">
+                                    Supporting documents <span className="text-gray-500">(Optional)</span>
                                 </label>
                                 <input
                                     type="file"
@@ -3419,16 +3076,16 @@ const PurchaseDepartment = () => {
                                         setShowMarketSurveyModal(false);
                                         setMarketSurveyForm({ notes: '', documents: [] });
                                     }}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <i className="fas fa-paper-plane mr-2"></i>
-                                    Send for Market Survey
+                                    Send for market survey
                                 </button>
                             </div>
                         </form>
@@ -3438,42 +3095,42 @@ const PurchaseDepartment = () => {
 
             {/* Financial Opening Results Modal */}
             {showFinancialOpeningModal && financialOpeningData && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-5/6 lg:w-4/5 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--xl">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-bold text-gray-900">
-                                Financial Opening Results - Tender {financialOpeningData.tender?.id}
+                                Financial opening results - tender {financialOpeningData.tender?.id}
                             </h3>
                             <button
                                 onClick={() => setShowFinancialOpeningModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times text-xl"></i>
                             </button>
                         </div>
 
                         <div className="mb-6">
-                            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                                <h4 className="text-green-800 font-medium mb-2">
+                            <div className="ui-callout">
+                                <h4 className="font-medium mb-2">
                                     <i className="fas fa-trophy mr-2"></i>
-                                    Financial Bids Opened & Tender Automatically Awarded!
+                                    Financial bids opened & tender automatically awarded!
                                 </h4>
-                                <p className="text-green-700 text-sm mb-2">
-                                    Opened at: {new Date(financialOpeningData.opened_at).toLocaleString('en-PK')}
+                                <p className="text-sm mb-2">
+                                    Opened at: {formatDateTime(financialOpeningData.opened_at)}
                                 </p>
                                 {financialOpeningData.awarded && (
-                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3">
-                                        <h5 className="text-blue-800 font-medium mb-2">
+                                    <div className="ui-callout mt-3">
+                                        <h5 className="font-medium mb-2">
                                             <i className="fas fa-check-circle mr-2"></i>
-                                            Automatic Award Summary:
+                                            Automatic award summary:
                                         </h5>
-                                        <p className="text-blue-700 text-sm mb-2">
+                                        <p className="text-sm mb-2">
                                             • Tender automatically awarded to optimal supplier combination (lowest cost + best delivery)
                                         </p>
-                                        <p className="text-blue-700 text-sm mb-2">
+                                        <p className="text-sm mb-2">
                                             • Supply orders created and emails sent to winning suppliers with PDF attachments
                                         </p>
-                                        <p className="text-blue-700 text-sm">
+                                        <p className="text-sm">
                                             • {financialOpeningData.supply_orders?.length || 0} supply order(s) generated - check Supply Orders tab
                                         </p>
                                     </div>
@@ -3481,10 +3138,10 @@ const PurchaseDepartment = () => {
                                 {financialOpeningData.report_file && (
                                     <button
                                         onClick={() => downloadFinancialOpeningReport(financialOpeningData.report_file)}
-                                        className="mt-3 px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                                        className="ui-btn ui-btn--secondary ui-btn--sm mt-3"
                                     >
                                         <i className="fas fa-download mr-1"></i>
-                                        Download Full Report
+                                        Download full report
                                     </button>
                                 )}
                             </div>
@@ -3494,7 +3151,7 @@ const PurchaseDepartment = () => {
                         <div className="mb-6">
                             <h4 className="text-lg font-medium text-gray-900 mb-4">
                                 <i className="fas fa-trophy mr-2 text-yellow-500"></i>
-                                Top Optimal Supplier Combinations ({financialOpeningData.optimal_combinations?.length || 0} total)
+                                Top optimal supplier combinations ({financialOpeningData.optimal_combinations?.length || 0} total)
                             </h4>
                             <div className="space-y-3">
                                 {financialOpeningData.optimal_combinations?.slice(0, 5).map((combo, index) => (
@@ -3520,7 +3177,7 @@ const PurchaseDepartment = () => {
                                                     <span className="ml-4 text-sm text-gray-600">
                                                         Avg Delivery: {combo.average_delivery_time} days
                                                     </span>
-                                                    <span className="ml-4 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                    <span className="ml-4 text-xs bg-blue-100 px-2 py-1 rounded">
                                                         {combo.items_count || combo.suppliers?.length || 0} items
                                                     </span>
                                                 </div>
@@ -3529,7 +3186,7 @@ const PurchaseDepartment = () => {
                                                 </div>
                                                 <div className="grid grid-cols-1 gap-2">
                                                     {combo.suppliers?.map((supplier, supplierIndex) => (
-                                                        <div key={supplierIndex} className="flex justify-between items-center bg-white p-2 rounded border">
+                                                        <div key={supplierIndex} className="ui-panel ui-panel--pad flex justify-between items-center">
                                                             <div className="flex-1">
                                                                 <span className="font-medium text-gray-900">{supplier.item_name}</span>
                                                                 <span className="mx-2 text-gray-500">→</span>
@@ -3558,29 +3215,29 @@ const PurchaseDepartment = () => {
                         <div className="mb-6">
                             <h4 className="text-lg font-medium text-gray-900 mb-4">
                                 <i className="fas fa-list mr-2 text-blue-500"></i>
-                                Item-wise Approved Suppliers
+                                Item-wise approved suppliers
                             </h4>
                             <div className="space-y-4">
                                 {financialOpeningData.items_with_suppliers?.map((itemCombo, index) => (
-                                    <div key={index} className="border rounded-lg p-4">
+                                    <div key={index} className="ui-card">
                                         <h5 className="font-medium text-gray-900 mb-3">
                                             {itemCombo.item.item_name}
                                         </h5>
                                         <div className="overflow-x-auto">
-                                            <table className="min-w-full divide-y divide-gray-200">
-                                                <thead className="bg-gray-50">
+                                            <table className="ui-table">
+                                                <thead>
                                                     <tr>
-                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
-                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total Cost</th>
-                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Delivery Days</th>
-                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Contact</th>
-                                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Documents</th>
+                                                        <th className="text-left">Company</th>
+                                                        <th className="text-left">Total cost</th>
+                                                        <th className="text-left">Delivery days</th>
+                                                        <th className="text-left">Contact</th>
+                                                        <th className="text-left">Documents</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                <tbody>
                                                     {itemCombo.approved_suppliers.map((supplier, supplierIndex) => (
                                                         <tr key={supplierIndex} className={supplierIndex === 0 ? 'bg-green-50' : ''}>
-                                                            <td className="px-4 py-2 text-sm">
+                                                            <td>
                                                                 <div>
                                                                     <div className="font-medium text-gray-900">{supplier.company_name}</div>
                                                                     {supplierIndex === 0 && (
@@ -3588,34 +3245,34 @@ const PurchaseDepartment = () => {
                                                                     )}
                                                                 </div>
                                                             </td>
-                                                            <td className="px-4 py-2 text-sm text-gray-900">
+                                                            <td>
                                                                 Rs {(supplier.item_total_cost || supplier.total_cost).toLocaleString()}
                                                             </td>
-                                                            <td className="px-4 py-2 text-sm text-gray-900">
+                                                            <td>
                                                                 {supplier.delivery_days} days
                                                             </td>
-                                                            <td className="px-4 py-2 text-sm text-gray-900">
+                                                            <td>
                                                                 {supplier.company_email}
                                                             </td>
-                                                            <td className="px-4 py-2 text-sm">
+                                                            <td>
                                                                 <div className="flex flex-col space-y-1">
                                                                     <button
                                                                         onClick={() => downloadTechnicalBid(supplier.bid_id, supplier.company_name)}
-                                                                        className="text-blue-600 hover:text-blue-800 text-xs"
+                                                                        className="ui-btn ui-btn--ghost ui-btn--sm"
                                                                     >
                                                                         <i className="fas fa-download mr-1"></i>
-                                                                        Technical Bid
+                                                                        Technical bid
                                                                     </button>
                                                                     <button
                                                                         onClick={() => downloadFinancialBid(supplier.bid_id, supplier.company_name)}
-                                                                        className="text-green-600 hover:text-green-800 text-xs"
+                                                                        className="ui-btn ui-btn--ghost ui-btn--sm"
                                                                     >
                                                                         <i className="fas fa-download mr-1"></i>
-                                                                        Financial Bid
+                                                                        Financial bid
                                                                     </button>
                                                                     <button
                                                                         onClick={() => downloadBidCdrDocument(supplier.bid_id, supplier.company_name)}
-                                                                        className="text-purple-600 hover:text-purple-800 text-xs"
+                                                                        className="ui-btn ui-btn--ghost ui-btn--sm"
                                                                     >
                                                                         <i className="fas fa-download mr-1"></i>
                                                                         Bid CDR 2%
@@ -3635,7 +3292,7 @@ const PurchaseDepartment = () => {
                         <div className="flex justify-end">
                             <button
                                 onClick={() => setShowFinancialOpeningModal(false)}
-                                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                className="ui-btn ui-btn--secondary"
                             >
                                 Close
                             </button>

@@ -1,345 +1,141 @@
-const { getDatabase } = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { dbGet } = require('../db');
+const { JWT_SECRET } = require('../config/env');
 const auditLogger = require('../utils/auditLogger');
+const { verifySecondFactor } = require('./twoFactorController');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const SESSION_TTL = '24h';
+const CHALLENGE_TTL = '5m';
+
+// Compared against when the username is unknown, so a miss takes as long as a wrong password.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
+
+/**
+ * Active accounts only: a removed (deactivated) user signs in like an unknown username.
+ * @param {'id'|'username'} column
+ */
+const findUser = (column, value) =>
+    dbGet(
+        `SELECT u.*, d.name AS department_name, c.name AS committee_name
+         FROM users u
+         LEFT JOIN departments d ON u.department_id = d.id
+         LEFT JOIN committees c ON u.committee_id = c.id
+         WHERE u.${column} = ? AND u.deactivated_at IS NULL`,
+        [value],
+    );
+
+/** The user object the frontend keeps in its session. */
+const publicUser = (user) => ({
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    department_id: user.department_id,
+    committee_id: user.committee_id,
+    departmentName: user.department_name,
+    committeeName: user.committee_name,
+    eligibleForDemandCreation: !!user.eligible_for_demand_creation,
+    twoFactorEnabled: !!user.two_factor_enabled,
+    isHod: !!user.is_hod,
+});
+
+const issueSession = (user) => ({
+    token: jwt.sign(
+        {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            name: user.name,
+            department_id: user.department_id,
+            committee_id: user.committee_id,
+            department_name: user.department_name,
+            committee_name: user.committee_name,
+        },
+        JWT_SECRET,
+        { expiresIn: SESSION_TTL }
+    ),
+    user: publicUser(user),
+});
+
+const audit = (user, action, details, req) => auditLogger.record(req, action, details, user);
 
 exports.login = async (req, res) => {
     const { username, password } = req.body;
-    const db = getDatabase();
 
     if (!username || !password) {
-        // Log failed login attempt
-        await auditLogger.logAuth(
-            'Unknown',
-            'unknown',
-            username || 'Unknown',
-            'LOGIN_FAILED - Missing credentials',
-            'Username or password not provided',
-            req
-        );
+        await audit({ name: username }, 'LOGIN_FAILED - Missing credentials', 'Username or password not provided', req);
         return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    try {        const user = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, u.password, u.eligible_for_demand_creation,
-                        u.two_factor_enabled, u.is_hod, u.is_finance_user, u.plain_password, d.name as department_name, c.name as committee_name
-                 FROM users u 
-                 LEFT JOIN departments d ON u.department_id = d.id
-                 LEFT JOIN committees c ON u.committee_id = c.id
-                 WHERE u.username = ?`,
-                [username],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
-
-        if (!user) {
-            // Log failed login attempt - user not found
-            await auditLogger.logAuth(
-                'Unknown',
-                'unknown',
-                username,
-                'LOGIN_FAILED - User not found',
-                'Invalid username provided',
-                req
-            );
+    try {
+        const user = await findUser('username', username);
+        const valid = (await bcrypt.compare(password, user?.password || DUMMY_HASH)) && Boolean(user);
+        if (!valid) {
+            await audit(user || { name: username }, user ? 'LOGIN_FAILED - Invalid password' : 'LOGIN_FAILED - User not found', 'Invalid credentials', req);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        const isValidPassword = await bcrypt.compare(password, user.password);
-        if (!isValidPassword) {
-            // Log failed login attempt - wrong password
-            await auditLogger.logAuth(
-                user.id,
-                user.role,
-                user.name,
-                'LOGIN_FAILED - Invalid password',
-                'Incorrect password provided',
-                req
-            );
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        // Check if user is a Finance-only user (not an eProcurement user)
-        // SQLite can return 0/1 as numbers or strings; avoid JS truthiness pitfalls.
+        // Finance-only accounts sign in to the Finance module instead; the browser
+        // forwards the credentials it already has.
         if (Number(user.is_finance_user) === 1) {
-            // Log finance user login redirect
-            await auditLogger.logAuth(
-                user.id,
-                user.role,
-                user.name,
-                'FINANCE_USER_REDIRECT',
-                'User redirected to Finance module',
-                req
-            );
-            
-            // Return response indicating this is a finance user
-            return res.json({
-                isFinanceUser: true,
-                financeCredentials: {
-                    username: user.username,
-                    password: user.plain_password // Use plain password for Finance module cross-auth
-                },
-                message: 'This account is for Finance module. Redirecting...'
-            });
+            await audit(user, 'FINANCE_USER_REDIRECT', 'Sent to the Finance module', req);
+            return res.json({ isFinanceUser: true });
         }
 
-        // Check if 2FA is enabled
         if (user.two_factor_enabled) {
-            // Log 2FA required
-            await auditLogger.log2FA(
-                user.id,
-                user.role,
-                user.name,
-                '2FA_REQUIRED',
-                'User login requires 2FA verification',
-                req
-            );
-            
-            // Return response indicating 2FA is required
-            return res.json({
-                requires2FA: true,
-                userId: user.id,
-                message: 'Please provide your 2FA code to complete login'
-            });
+            await audit(user, '2FA_REQUIRED', 'Waiting for second factor', req);
+            // The challenge proves the password step succeeded.
+            const challenge = jwt.sign({ purpose: '2fa', id: user.id }, JWT_SECRET, { expiresIn: CHALLENGE_TTL });
+            return res.json({ requires2FA: true, challenge });
         }
 
-        // Log successful login
-        await auditLogger.logAuth(
-            user.id,
-            user.role,
-            user.name,
-            'LOGIN_SUCCESS',
-            `Department: ${user.department_name || 'None'} | Committee: ${user.committee_name || 'None'}`,
-            req
-        );
-
-        // Generate token for users without 2FA
-        const token = jwt.sign(
-            { 
-                id: user.id, 
-                username: user.username, 
-                role: user.role,
-                name: user.name,
-                department_id: user.department_id,
-                committee_id: user.committee_id,
-                department_name: user.department_name,
-                committee_name: user.committee_name
-            }, 
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-
-        res.json({
-            token,
-            user: {
-                id: user.id,
-                username: user.username,
-                name: user.name,
-                role: user.role,
-                department_id: user.department_id,
-                committee_id: user.committee_id,
-                departmentName: user.department_name,
-                committeeName: user.committee_name,
-                eligibleForDemandCreation: !!user.eligible_for_demand_creation,
-                twoFactorEnabled: !!user.two_factor_enabled,
-                isHod: !!user.is_hod
-            }
-        });
+        await audit(user, 'LOGIN_SUCCESS', `Department: ${user.department_name || 'None'} | Committee: ${user.committee_name || 'None'}`, req);
+        res.json(issueSession(user));
     } catch (err) {
-        // Log login error
-        await auditLogger.logAuth(
-            'Unknown',
-            'unknown',
-            username || 'Unknown',
-            'LOGIN_ERROR',
-            `Error: ${err.message}`,
-            req
-        );
+        await audit({ name: username }, 'LOGIN_ERROR', `Error: ${err.message}`, req);
         console.error('Login error:', err);
         res.status(500).json({ error: 'Error during login' });
     }
 };
 
-// Complete login after 2FA verification
 exports.complete2FALogin = async (req, res) => {
-    const { userId, token, isBackupCode } = req.body;
-    const db = getDatabase();
+    const { challenge, token, isBackupCode } = req.body;
 
-    if (!userId || !token) {
-        await auditLogger.log2FA(
-            userId || 'Unknown',
-            'unknown',
-            'Unknown',
-            '2FA_COMPLETION_FAILED - Missing parameters',
-            'User ID or token not provided',
-            req
-        );
-        return res.status(400).json({ error: 'User ID and token are required' });
+    let userId;
+    try {
+        const claims = jwt.verify(String(challenge || ''), JWT_SECRET);
+        if (claims.purpose !== '2fa') throw new Error('wrong purpose');
+        userId = claims.id;
+    } catch {
+        return res.status(401).json({ error: 'Your sign-in attempt expired. Please enter your password again.' });
     }
 
+    if (!token) return res.status(400).json({ error: 'Verification code is required' });
+
     try {
-        // First verify the 2FA token
-        const twoFactorController = require('./twoFactorController');
-        
-        // Create a temporary req object for the 2FA verification
-        const tempReq = { body: { userId, token, isBackupCode } };
-        let verificationResult = null;
-        
-        const tempRes = {
-            json: (data) => { verificationResult = data; },
-            status: (code) => ({ json: (data) => { verificationResult = { ...data, statusCode: code }; } })
-        };
-
-        await twoFactorController.verify2FA(tempReq, tempRes);
-
-        if (!verificationResult || !verificationResult.verified) {
-            await auditLogger.log2FA(
-                userId,
-                'unknown',
-                'Unknown',
-                '2FA_VERIFICATION_FAILED',
-                `Error: ${verificationResult?.error || 'Invalid verification code'}`,
-                req
-            );
-            return res.status(400).json({ 
-                error: verificationResult?.error || 'Invalid verification code' 
-            });
+        const verified = await verifySecondFactor(userId, token, isBackupCode);
+        if (!verified) {
+            await audit({ id: userId }, '2FA_VERIFICATION_FAILED', 'Invalid verification code', req);
+            return res.status(400).json({ error: 'Invalid verification code' });
         }
 
-        // Get user details for token generation
-        const user = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, 
-                        u.eligible_for_demand_creation, u.two_factor_enabled, u.is_hod,
-                        d.name as department_name, c.name as committee_name
-                 FROM users u 
-                 LEFT JOIN departments d ON u.department_id = d.id
-                 LEFT JOIN committees c ON u.committee_id = c.id
-                 WHERE u.id = ?`,
-                [userId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const user = await findUser('id', userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
-        if (!user) {
-            await auditLogger.log2FA(
-                userId,
-                'unknown',
-                'Unknown',
-                '2FA_COMPLETION_FAILED - User not found',
-                'User not found after 2FA verification',
-                req
-            );
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        // Log successful 2FA completion
-        await auditLogger.log2FA(
-            user.id,
-            user.role,
-            user.name,
-            '2FA_LOGIN_SUCCESS',
-            `2FA verification completed successfully | Backup Code: ${isBackupCode ? 'Yes' : 'No'}`,
-            req
-        );
-
-        // Generate JWT token
-        const authToken = jwt.sign(
-            { 
-                id: user.id, 
-                username: user.username, 
-                role: user.role,
-                name: user.name,
-                department_id: user.department_id,
-                committee_id: user.committee_id,
-                department_name: user.department_name,
-                committee_name: user.committee_name
-            }, 
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-
-        res.json({
-            token: authToken,
-            user: {
-                id: user.id,
-                username: user.username,
-                name: user.name,
-                role: user.role,
-                department_id: user.department_id,
-                committee_id: user.committee_id,
-                departmentName: user.department_name,
-                committeeName: user.committee_name,
-                eligibleForDemandCreation: !!user.eligible_for_demand_creation,
-                twoFactorEnabled: !!user.two_factor_enabled,
-                isHod: !!user.is_hod
-            }
-        });
-
+        await audit(user, '2FA_LOGIN_SUCCESS', `Backup Code: ${isBackupCode ? 'Yes' : 'No'}`, req);
+        res.json(issueSession(user));
     } catch (err) {
-        await auditLogger.log2FA(
-            userId,
-            'unknown',
-            'Unknown',
-            '2FA_COMPLETION_ERROR',
-            `Error: ${err.message}`,
-            req
-        );
         console.error('2FA login completion error:', err);
         res.status(500).json({ error: 'Error completing 2FA login' });
     }
 };
 
-// Get current user profile
 exports.getProfile = async (req, res) => {
-    const db = getDatabase();
-    const userId = req.user.id;
-
     try {
-        const user = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT u.id, u.username, u.name, u.role, u.department_id, u.committee_id, 
-                        u.eligible_for_demand_creation, u.two_factor_enabled, u.is_hod,
-                        d.name as department_name, c.name as committee_name
-                 FROM users u 
-                 LEFT JOIN departments d ON u.department_id = d.id
-                 LEFT JOIN committees c ON u.committee_id = c.id
-                 WHERE u.id = ?`,
-                [userId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
-
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        res.json({
-            id: user.id,
-            username: user.username,
-            name: user.name,
-            role: user.role,
-            department_id: user.department_id,
-            committee_id: user.committee_id,
-            departmentName: user.department_name,
-            committeeName: user.committee_name,
-            eligibleForDemandCreation: !!user.eligible_for_demand_creation,
-            two_factor_enabled: !!user.two_factor_enabled,
-            isHod: !!user.is_hod
-        });
-
+        const user = await findUser('id', req.user.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        res.json({ ...publicUser(user), two_factor_enabled: !!user.two_factor_enabled });
     } catch (err) {
         console.error('Profile fetch error:', err);
         res.status(500).json({ error: 'Error fetching profile' });

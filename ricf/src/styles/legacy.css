@@ -1,0 +1,162 @@
+/*
+ * Harmonises the utility-class screens with the design system.
+ *
+ * These rules are deliberately unlayered so they win over Tailwind's utilities.
+ * They fix classes that silently stopped working in Tailwind v4 and turn the old
+ * look (glass panels, opaque overlays, shouty table headers) into the calm one.
+ */
+
+/* text-white stays white on coloured fills even though --color-white follows the theme. */
+.text-white,
+.hover\:text-white:hover,
+.group:hover .group-hover\:text-white {
+  color: #fff;
+}
+
+/* ── Modal overlays ─────────────────────────────────────────────────
+ * Tailwind v4 dropped bg-opacity-*, so "bg-gray-600 bg-opacity-50" overlays were
+ * rendering as a solid opaque sheet. Turn every such overlay into a dim scrim. */
+:is(.bg-gray-500, .bg-gray-600, .bg-gray-700, .bg-gray-800, .bg-gray-900, .bg-black)[class*='bg-opacity-'],
+.fixed.inset-0:is(.bg-black\/50, .bg-black\/40, .bg-black\/30, .bg-black\/60, .bg-black\/15) {
+  background-color: var(--scrim) !important;
+  animation: fade-in var(--motion-base) var(--ease) both;
+}
+
+:is(.bg-gray-500, .bg-gray-600, .bg-gray-700, .bg-gray-800, .bg-gray-900, .bg-black)[class*='bg-opacity-'].fixed > *,
+.fixed.inset-0:is(.bg-black\/50, .bg-black\/40, .bg-black\/30, .bg-black\/60, .bg-black\/15) > * {
+  animation: pop-in var(--motion-slow) var(--ease-spring) both;
+}
+
+/* Old translucent "glass" panels become plain cards. */
+.bg-white[class*='bg-opacity-'] {
+  background-color: var(--surface) !important;
+}
+
+[class*='backdrop-blur']:not(.fixed) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.border-white[class*='border-opacity'] {
+  border-color: var(--border) !important;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────── */
+th.uppercase,
+thead .uppercase {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+tbody tr {
+  transition: background-color var(--motion-fast) var(--ease);
+}
+
+/* ── Cards ────────────────────────────────────────────────────────── */
+/* Bordered list items that "lift" on hover get a gentle, consistent lift. */
+.hover\:shadow-md:hover,
+.hover\:shadow-lg:hover {
+  box-shadow: var(--shadow-hairline), var(--shadow-lift) !important;
+}
+
+.transition-shadow {
+  transition: box-shadow var(--motion-base) var(--ease), transform var(--motion-base) var(--ease);
+}
+
+/* ── Form controls ────────────────────────────────────────────────── */
+:where(input:not([type='checkbox'], [type='radio'], [type='file'], [type='range']), select, textarea) {
+  background-color: var(--surface);
+  color: var(--text);
+  transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+
+:where(input, select, textarea):disabled {
+  background-color: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+/* The legacy "focus:ring-2 focus:ring-blue-500" focus treatment, softened. */
+:where(input, select, textarea):focus-visible {
+  outline: none;
+  border-color: var(--focus-ring) !important;
+  box-shadow: 0 0 0 1px var(--focus-ring) !important;
+}
+
+input[type='file']::file-selector-button {
+  margin-right: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+input[type='file']::file-selector-button:hover {
+  background: var(--surface-hover);
+}
+
+/* Native date / time pickers follow the theme. */
+:root[data-theme='dark'] input::-webkit-calendar-picker-indicator {
+  filter: invert(0.85);
+}
+
+/* ── Toasts (react-toastify) ─────────────────────────────────────── */
+:root {
+  --toastify-font-family: var(--font-ui);
+  --toastify-color-light: var(--surface-raised);
+  --toastify-color-dark: var(--surface-raised);
+  --toastify-text-color-light: var(--text);
+  --toastify-text-color-dark: var(--text);
+  --toastify-color-success: var(--success);
+  --toastify-color-error: var(--danger);
+  --toastify-color-warning: var(--warning);
+  --toastify-color-info: var(--brand);
+  --toastify-icon-color-success: var(--success);
+  --toastify-icon-color-error: var(--danger);
+  --toastify-icon-color-warning: var(--warning);
+  --toastify-icon-color-info: var(--brand);
+  --toastify-toast-bd-radius: 14px;
+  --toastify-toast-min-height: 56px;
+  --toastify-toast-width: 380px;
+}
+
+.Toastify__toast {
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lift);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  padding: 12px 14px;
+}
+
+.Toastify__close-button {
+  color: var(--text-subtle);
+  opacity: 0.8;
+  align-self: center;
+}
+
+/* ── Page titles on screens that still render their own heading ──── */
+.shell-page > div > h1:first-child,
+.shell-page :is(h1.text-3xl, h1.text-2xl) {
+  font-size: var(--fs-2xl);
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -0.022em;
+  color: var(--text);
+}
+
+/* Old full-page wrappers: the shell already provides the canvas. */
+.shell-page :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-gray-100, .min-h-screen.bg-white) {
+  min-height: 0;
+  background: transparent;
+}
+
+.shell-page > .min-h-screen,
+.shell-page > div > .min-h-screen {
+  min-height: 0;
+}

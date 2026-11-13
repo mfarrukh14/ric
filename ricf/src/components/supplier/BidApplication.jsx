@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiUrl } from '../../config/api';
+import { formatDate, formatDateTime } from '../../lib/time';
+import { Countdown } from '../../ui/tender';
+import { Notice } from '../../ui';
+import './supplier.css';
 
 const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const [currentStep, setCurrentStep] = useState(1);
@@ -32,7 +36,6 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const fetchTenderData = async () => {
             try {
                 const token = localStorage.getItem('supplierToken');
-                console.log('BidApplication - fetching tender data with token:', token ? 'present' : 'missing');
                 // Look the tender up directly by ID instead of fetching the whole
                 // "active tenders" list and searching it client-side - that list is
                 // time-filtered and can legitimately omit a tender the supplier is
@@ -51,7 +54,6 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 }
 
                 const data = await response.json();
-                console.log('BidApplication - Found tender:', data.tender);
                 setTender(data.tender);
 
                 // This response already includes knockout clauses/criteria, so
@@ -202,7 +204,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                    <div className="ui-spin mx-auto mb-4"></div>
                     <p className="text-gray-600">Loading tender details...</p>
                 </div>
             </div>
@@ -214,14 +216,14 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
                 <div className="text-center">
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-                        <h2 className="text-lg font-medium text-red-800 mb-2">Error Loading Tender</h2>
+                    <div className="ui-callout ui-callout--danger max-w-md">
+                        <h2 className="text-lg font-medium text-red-800 mb-2">Error loading tender</h2>
                         <p className="text-red-700 mb-4">{error}</p>
                         <button
                             onClick={() => navigate('/supplier-dashboard')}
-                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                            className="ui-btn ui-btn--danger-solid"
                         >
-                            Return to Dashboard
+                            Return to dashboard
                         </button>
                     </div>
                 </div>
@@ -372,7 +374,6 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
         
         try {
             const token = localStorage.getItem('supplierToken');
-            console.log('BidApplication - submitting bid with token:', token ? 'present' : 'missing');
             const formData = new FormData();
             // Prepare items list again defensively
             const itemsData = bidData.items
@@ -429,9 +430,6 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 throw new Error(errorMsg);
             }
 
-            console.log('BidApplication - Bid submitted successfully');
-            // Optional: show quick success toast if toast system available
-            if (window?.toast) { try { window.toast.success('Bid submitted successfully'); } catch(e){} }
             handleSuccess();
             
         } catch (err) {
@@ -443,37 +441,25 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
     const renderStep1 = () => (
         <div className="space-y-6">
-            <div className="border-b border-gray-200 pb-4">
-                <h3 className="text-lg font-medium text-gray-900">Step 1: Item Details & Pricing</h3>
-                <p className="text-sm text-gray-600 mt-1">
-                    Choose which items to provide (full quantity only) and set your pricing
-                </p>
-                <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                    <p className="text-sm text-yellow-800">
-                        <strong>Note:</strong> You must provide the full required quantity for each item you choose. 
-                        Partial quantities are not allowed. You can either provide the complete requirement or drop the item entirely.
-                    </p>
+            <div className="bid-summary">
+                <div className="bid-summary__head">
+                    <h4>{getTenderDisplayName(tender)}</h4>
+                    <span className="bid-summary__deadline">
+                        Closes {formatDateTime(tender?.bidding_end_time)} · <Countdown until={tender?.bidding_end_time} />
+                    </span>
                 </div>
-                {!tender?.criteria_acknowledged && (
-                    <div className="mt-3 bg-red-50 border border-red-200 text-red-700 p-3 rounded text-xs font-medium">
-                        You have not acknowledged knockout clauses yet. You will not be able to submit this bid until acknowledgment is completed.
-                    </div>
-                )}
-            </div>
-
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <h4 className="font-semibold text-blue-900 mb-2">{getTenderDisplayName(tender)}</h4>
-                <p className="text-sm text-blue-700 mb-2">{tender?.item_name}</p>
-                <div className="text-sm text-blue-800 space-y-1">
-                    <p><span className="font-medium">Description:</span> {tender?.description}</p>
-                    <p><span className="font-medium">Urgency:</span> {tender?.urgency?.toUpperCase()}</p>
-                    <p><span className="font-medium">Required By:</span> {new Date(tender?.required_by).toLocaleDateString()}</p>
-                </div>
+                <dl>
+                    {tender?.description && <div><dt>Description</dt><dd>{tender.description}</dd></div>}
+                    <div><dt>Required by</dt><dd>{formatDate(tender?.required_by)}</dd></div>
+                    {tender?.urgency && tender.urgency !== 'normal' && <div><dt>Urgency</dt><dd>{tender.urgency}</dd></div>}
+                </dl>
+                <p className="ui-hint">Quote the full quantity for an item, or drop it.</p>
+                {!tender?.criteria_acknowledged && <Notice tone="warning">Acknowledge the knockout clauses (step 4) before submitting.</Notice>}
             </div>
 
             <div className="space-y-4">
                 {bidData.items.map((item, index) => (
-                    <div key={item.id} className={`border rounded-lg p-4 ${item.will_provide ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                    <div key={item.id} className={item.will_provide ? 'bid-item bid-item--on' : 'bid-item'}>
                         <div className="flex items-center justify-between mb-4">
                             <h4 className="font-medium text-gray-900">{item.item_name}</h4>
                             <div className="flex items-center space-x-3">
@@ -485,7 +471,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                         onChange={() => handleItemChange(index, 'will_provide', true)}
                                         className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300"
                                     />
-                                    <span className="text-sm font-medium text-green-700">Provide Full Quantity</span>
+                                    <span className="text-sm font-medium">Provide full quantity</span>
                                 </label>
                                 <label className="flex items-center space-x-2">
                                     <input
@@ -495,15 +481,15 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                         onChange={() => handleItemChange(index, 'will_provide', false)}
                                         className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300"
                                     />
-                                    <span className="text-sm font-medium text-red-700">Drop Item</span>
+                                    <span className="text-sm font-medium text-red-700">Drop item</span>
                                 </label>
                             </div>
                         </div>
                         
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Required Quantity
+                                <label className="ui-label block mb-1">
+                                    Required quantity
                                 </label>
                                 <p className="text-sm text-gray-900 bg-white p-2 rounded border">
                                     {item.required_quantity} {item.unit}
@@ -511,8 +497,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                             </div>
                             
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    You Will Provide
+                                <label className="ui-label block mb-1">
+                                    You will provide
                                 </label>
                                 <p className={`text-sm font-medium p-2 rounded border ${
                                     item.will_provide 
@@ -524,8 +510,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                             </div>
                             
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Total Cost (Rs) *
+                                <label className="ui-label block mb-1">
+                                    Total cost (Rs) *
                                 </label>
                                 <input
                                     type="number"
@@ -547,8 +533,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                             </div>
                             
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Price Per Unit (Rs) *
+                                <label className="ui-label block mb-1">
+                                    Price per unit (Rs) *
                                 </label>
                                 <input
                                     type="number"
@@ -564,7 +550,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                 />
                                 {item.will_provide && item.price_per_unit && item.total_cost && (
                                     <p className="text-xs text-green-600 mt-1">
-                                        ✓ Auto-calculated
+                                        Auto-calculated
                                     </p>
                                 )}
                             </div>
@@ -572,14 +558,14 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
                         {item.will_provide && (
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Manufacturer/Brand Name *
+                                <label className="ui-label block mb-1">
+                                    Manufacturer/brand name *
                                 </label>
                                 <input
                                     type="text"
                                     value={item.manufacturer_brand}
                                     onChange={(e) => handleItemChange(index, 'manufacturer_brand', e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="ui-input"
                                     placeholder="Enter manufacturer or brand name"
                                     required
                                 />
@@ -591,7 +577,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                         
                         {item.remarks && (
                             <div className="mt-3">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                <label className="ui-label block mb-1">
                                     Remarks
                                 </label>
                                 <p className="text-sm text-gray-600 bg-white p-2 rounded border">
@@ -603,21 +589,21 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 ))}
             </div>
 
-            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                <h4 className="font-semibold text-green-900 mb-2">Bid Summary</h4>
+            <div className="bid-panel">
+                <h4 className="font-semibold mb-2">Bid summary</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                     <div>
-                        <span className="font-medium text-green-800">Items Provided:</span> {bidData.items.filter(item => item.will_provide).length} / {bidData.items.length}
+                        <span className="font-medium">Items Provided:</span> {bidData.items.filter(item => item.will_provide).length} / {bidData.items.length}
                     </div>
                     <div>
-                        <span className="font-medium text-green-800">Total Quantity:</span> {calculateTotalQuantity()}
+                        <span className="font-medium">Total Quantity:</span> {calculateTotalQuantity()}
                     </div>
                     <div>
-                        <span className="font-medium text-green-800">Total Amount:</span> Rs {calculateTotalBidAmount().toLocaleString()}
+                        <span className="font-medium">Total Amount:</span> Rs {calculateTotalBidAmount().toLocaleString()}
                     </div>
                 </div>
                 {bidData.items.filter(item => !item.will_provide).length > 0 && (
-                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                    <div className="ui-callout ui-callout--warning mt-3">
                         <p className="text-sm text-yellow-800">
                             <strong>Dropped Items:</strong> {bidData.items.filter(item => !item.will_provide).map(item => item.item_name).join(', ')}
                         </p>
@@ -630,7 +616,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const renderStep2 = () => (
         <div className="space-y-6">
             <div className="border-b border-gray-200 pb-4">
-                <h3 className="text-lg font-medium text-gray-900">Step 2: Technical & Financial Documents</h3>
+                <h3 className="text-lg font-medium text-gray-900">Step 2: technical & financial documents</h3>
                 <p className="text-sm text-gray-600 mt-1">
                     Upload your technical and financial bid documents
                 </p>
@@ -638,8 +624,8 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Technical Bid Document *
+                    <label className="ui-label block mb-2">
+                        Technical bid document *
                     </label>
                     <input
                         type="file"
@@ -649,13 +635,13 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                     />
                     <p className="text-xs text-gray-500 mt-1">Upload your technical bid document (PDF only)</p>
                     {bidData.technicalBid && (
-                        <p className="text-sm text-green-600 mt-1">✓ {bidData.technicalBid.name}</p>
+                        <p className="text-sm text-green-600 mt-1">{bidData.technicalBid.name}</p>
                     )}
                 </div>
 
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Financial Bid Document *
+                    <label className="ui-label block mb-2">
+                        Financial bid document *
                     </label>
                     <input
                         type="file"
@@ -665,14 +651,14 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                     />
                     <p className="text-xs text-gray-500 mt-1">Upload your financial bid document (PDF only)</p>
                     {bidData.financialBid && (
-                        <p className="text-sm text-green-600 mt-1">✓ {bidData.financialBid.name}</p>
+                        <p className="text-sm text-green-600 mt-1">{bidData.financialBid.name}</p>
                     )}
                 </div>
             </div>
 
             <div className="w-full">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Bid CDR 2% Document *
+                <label className="ui-label block mb-2">
+                    Bid CDR 2% document *
                 </label>
                 <input
                     type="file"
@@ -682,33 +668,33 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 />
                 <p className="text-xs text-gray-500 mt-1">Upload your Bid CDR 2% document (PDF, DOC, DOCX, JPG, JPEG, PNG accepted)</p>
                 {bidData.bidCdrDocument && (
-                    <p className="text-sm text-green-600 mt-1">✓ {bidData.bidCdrDocument.name}</p>
+                    <p className="text-sm text-green-600 mt-1">{bidData.bidCdrDocument.name}</p>
                 )}
             </div>
 
             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Delivery Time (Days) *
+                <label className="ui-label block mb-2">
+                    Delivery time (days) *
                 </label>
                 <input
                     type="number"
                     value={bidData.deliveryTime}
                     onChange={(e) => handleInputChange('deliveryTime', e.target.value)}
                     min="1"
-                    className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="ui-input max-w-xs"
                     placeholder="Enter delivery time in days"
                 />
             </div>
 
             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Additional Comments
+                <label className="ui-label block mb-2">
+                    Additional comments
                 </label>
                 <textarea
                     value={bidData.comments}
                     onChange={(e) => handleInputChange('comments', e.target.value)}
                     rows={4}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="ui-input ui-textarea"
                     placeholder="Any additional information or terms..."
                 />
             </div>
@@ -718,16 +704,16 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const renderStep3 = () => (
         <div className="space-y-6">
             <div className="border-b border-gray-200 pb-4">
-                <h3 className="text-lg font-medium text-gray-900">Step 3: Letter of Guarantee</h3>
+                <h3 className="text-lg font-medium text-gray-900">Step 3: letter of guarantee</h3>
                 <p className="text-sm text-gray-600 mt-1">
                     Complete your company information and agree to terms
                 </p>
             </div>
 
-            <div className="bg-blue-50 p-6 rounded-lg border border-blue-200">
-                <h4 className="font-semibold text-blue-900 mb-4">Letter of Guarantee</h4>
+            <div className="bid-panel">
+                <h4 className="font-semibold mb-4">Letter of guarantee</h4>
                 
-                <div className="bg-white p-4 rounded border text-sm text-gray-700 leading-relaxed mb-4">
+                <div className="ui-panel ui-panel--pad leading-relaxed mb-4">
                     <p className="mb-3">
                         <strong>To: Regional Innovation Center (RIC)</strong><br/>
                         <strong>Subject: Letter of Guarantee for Tender Bid</strong>
@@ -760,28 +746,28 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Company Name *
+                        <label className="ui-label block mb-1">
+                            Company name *
                         </label>
                         <input
                             type="text"
                             value={bidData.companyName}
                             readOnly
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                            className="ui-input"
                             placeholder="Company name will be auto-populated"
                         />
                         <p className="text-xs text-gray-500 mt-1">Auto-populated from your registration profile</p>
                     </div>
                     
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            PPRA Registration Number *
+                        <label className="ui-label block mb-1">
+                            PPRA registration number *
                         </label>
                         <input
                             type="text"
                             value={bidData.registeredNumber}
                             readOnly
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                            className="ui-input"
                             placeholder="PPRA number will be auto-populated"
                         />
                         <p className="text-xs text-gray-500 mt-1">Auto-populated from your registration profile</p>
@@ -851,18 +837,18 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
     const renderStep4 = () => (
         <div className="space-y-6">
             <div className="border-b border-gray-200 pb-4">
-                <h3 className="text-lg font-medium text-gray-900">Step 4: Knockout Clauses & Acknowledgment</h3>
+                <h3 className="text-lg font-medium text-gray-900">Step 4: knockout clauses & acknowledgment</h3>
                 <p className="text-sm text-gray-600 mt-1">You must confirm every knockout clause to proceed with bid submission.</p>
             </div>
             {!tender?.knockoutClauses || tender.knockoutClauses.length === 0 ? (
-                <div className="bg-gray-50 border border-gray-200 p-4 rounded text-sm text-gray-600">No knockout clauses defined for this tender.</div>
+                <div className="ui-callout">No knockout clauses defined for this tender.</div>
             ) : (
                 <div className="space-y-4">
-                    <div className="bg-red-50 border border-red-200 p-4 rounded text-red-700 text-xs font-medium">
-                        FAILURE TO MEET ANY KNOCKOUT CLAUSE WILL RESULT IN AUTOMATIC DISQUALIFICATION.
+                    <div className="ui-callout ui-callout--danger">
+                        Failing any knockout clause disqualifies the bid.
                     </div>
                     {tender.knockoutClauses.map((clause, idx) => (
-                        <div key={clause.id} className="border border-red-200 rounded p-4 bg-red-50">
+                        <div key={clause.id} className="bid-panel">
                             <div className="flex items-start">
                                 <div className="flex items-center justify-center w-6 h-6 bg-red-600 text-white rounded-full text-xs font-bold mr-3">{idx+1}</div>
                                 <div className="flex-1">
@@ -875,7 +861,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                     )}
                                     {!tender.criteria_acknowledged && (
                                         <div className="mt-3">
-                                            <label className="block text-sm font-medium text-red-900 mb-2">
+                                            <label className="ui-label block mb-2">
                                                 Upload compliance document for this clause (PDF only) *
                                             </label>
                                             <input
@@ -900,10 +886,10 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                             />
                                             {knockoutDocuments[clause.id] && (
                                                 <div className="mt-2 flex items-center text-sm">
-                                                    <span className="text-green-600 mr-2">✓</span>
+                                                    <span className="text-green-600 mr-2"><i className="fas fa-check" aria-hidden="true"></i></span>
                                                     <span className="text-gray-700">{knockoutDocuments[clause.id].filename}</span>
                                                     {knockoutDocuments[clause.id].uploaded && (
-                                                        <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Previously uploaded</span>
+                                                        <span className="ml-2 text-xs bg-green-100 px-2 py-1 rounded">Previously uploaded</span>
                                                     )}
                                                 </div>
                                             )}
@@ -920,31 +906,31 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 <button
                     onClick={handleAcknowledge}
                     disabled={!allKnockoutDocumentsUploaded || acknowledging}
-                    className="px-4 py-2 text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50"
+                    className="ui-btn ui-btn--primary"
                 >
                     {acknowledging ? 'Uploading Documents...' : 'Upload Documents & Acknowledge'}
                 </button>
             )}
             {tender?.criteria_acknowledged && (
                 <div className="flex items-center text-green-600 text-sm font-medium">
-                    <span className="mr-2">✓</span> Knockout clause documents uploaded and acknowledged.
+                    <span className="mr-2"><i className="fas fa-check" aria-hidden="true"></i></span> Knockout clause documents uploaded and acknowledged.
                 </div>
             )}
         </div>
     );
 
     return (
-        <div className="min-h-screen bg-gray-50 py-8">
+        <div className="ui-callout min-h-screen">
             <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="bg-white shadow rounded-lg">
+                <div className="ui-panel">
                     <div className="px-6 py-4 border-b border-gray-200">
                         <div className="flex items-center justify-between">
-                            <h1 className="text-2xl font-bold text-gray-900">Apply for Tender</h1>
+                            <h1 className="text-2xl font-bold text-gray-900">Apply for tender</h1>
                             <button
                                 onClick={handleCancel}
-                                className="text-gray-500 hover:text-gray-700"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
-                                ✕
+                                <i className="fas fa-times" aria-hidden="true"></i>
                             </button>
                         </div>
                         
@@ -979,7 +965,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
 
                     <div className="px-6 py-6">
                         {error && (
-                            <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                            <div className="ui-callout ui-callout--danger mb-6">
                                 {error}
                             </div>
                         )}
@@ -1006,7 +992,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                         <div className="flex space-x-3">
                             <button
                                 onClick={handleCancel}
-                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                                className="ui-btn ui-btn--secondary"
                             >
                                 Cancel
                             </button>
@@ -1014,7 +1000,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                 {currentStep < 4 ? (
                                 <button
                                     onClick={handleNext}
-                                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     Next
                                 </button>
@@ -1022,7 +1008,7 @@ const BidApplication = ({ tender: propTender, onCancel, onSuccess }) => {
                                 <button
                                     onClick={handleSubmit}
                     disabled={loading || !tender?.criteria_acknowledged}
-                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50"
+                    className="ui-btn ui-btn--primary"
                                 >
                                     {loading ? 'Submitting...' : 'Submit Bid'}
                                 </button>

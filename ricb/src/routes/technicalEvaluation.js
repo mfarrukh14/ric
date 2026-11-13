@@ -1,31 +1,16 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const evaluation = require('../controllers/technicalEvaluationController');
+
 const router = express.Router();
-const auth = require('../middleware/auth');
-const {
-    getExpiredTenders,
-    getTenderDetails,
-    downloadTechnicalBid,
-    submitItemWiseEvaluation,
-    awardTender,
-    downloadEvaluationReport
-} = require('../controllers/technicalEvaluationController');
 
-// Get expired tenders for technical evaluation
-router.get('/expired-tenders', auth, getExpiredTenders);
-
-// Get specific tender details with all bids
-router.get('/tenders/:tenderId', auth, getTenderDetails);
-
-// Download technical bid document
-router.get('/bids/:bidId/technical-document', auth, downloadTechnicalBid);
-
-// Submit item-wise technical evaluation
-router.post('/tenders/:tenderId/item-wise-evaluation', auth, submitItemWiseEvaluation);
-
-// Award tender to selected supplier
-router.post('/tenders/:tenderId/award', auth, awardTender);
-
-// Download evaluation report
-router.get('/reports/:fileName', auth, downloadEvaluationReport);
+router.use(staffOnly);
+router.get('/expired-tenders', allow('technicalEvaluation'), evaluation.getExpiredTenders);
+router.get('/tenders/:tenderId', allow('technicalEvaluation'), evaluation.getTenderDetails);
+router.get('/bids/:bidId/technical-document', allow('technicalEvaluation', 'purchase'), evaluation.downloadTechnicalBid);
+router.post('/tenders/:tenderId/item-wise-evaluation', allow('technicalEvaluation'), evaluation.submitItemWiseEvaluation);
+router.post('/tenders/:tenderId/award', allow('technicalEvaluation'), evaluation.awardTender);
+router.get('/reports/:fileName', allow('technicalEvaluation', 'purchase'), evaluation.downloadEvaluationReport);
 
 module.exports = router;

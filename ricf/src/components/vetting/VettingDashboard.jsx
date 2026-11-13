@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import api from '../../config/api';
+import { PageHeader } from '../../ui';
 
+import { formatDate, formatDateTime } from '../../lib/time';
+import { money } from '../../ui/status';
 const VettingDashboard = () => {
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('pending-tenders');
@@ -55,10 +58,10 @@ const VettingDashboard = () => {
         const getStatusBadge = () => {
             if (tender.my_decision) {
                 return tender.my_decision === 'approve' 
-                    ? <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">Approved by You</span>
+                    ? <span className="px-2 py-1 bg-green-100 text-xs font-medium rounded-full">Approved by You</span>
                     : <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full">Rejected by You</span>;
             } else if (tender.tender_status === 'vetting_approved') {
-                return <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">Committee Approved</span>;
+                return <span className="px-2 py-1 bg-blue-100 text-xs font-medium rounded-full">Committee Approved</span>;
             } else if (tender.tender_status === 'vetting_rejected') {
                 return <span className="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-medium rounded-full">Committee Rejected</span>;
             } else {
@@ -67,7 +70,7 @@ const VettingDashboard = () => {
         };
 
         return (
-            <div key={tender.id} className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
+            <div key={tender.id} className="ui-panel ui-panel--pad">
                 <div className="flex justify-between items-start mb-4">
                     <div>
                         <h3 className="text-lg font-semibold text-gray-900">{tender.tender_number}</h3>
@@ -81,12 +84,12 @@ const VettingDashboard = () => {
                 
                 <div className="space-y-2 text-sm text-gray-600 mb-4">
                     <p><span className="font-medium">Created by:</span> {tender.created_by_name} ({tender.created_by_department})</p>
-                    <p><span className="font-medium">Total Estimated Cost:</span> PKR {tender.total_estimated_cost?.toLocaleString() || '0'}</p>
-                    <p><span className="font-medium">Bidding End:</span> {new Date(tender.bidding_end_time).toLocaleString()}</p>
+                    <p><span className="font-medium">Total Estimated Cost:</span> {money(tender.total_estimated_cost)}</p>
+                    <p><span className="font-medium">Bidding End:</span> {formatDateTime(tender.bidding_end_time)}</p>
                     {tender.my_decision && (
                         <p><span className="font-medium">Your Decision:</span> {tender.my_decision} 
                         {tender.my_evaluation_date && (
-                            <span className="text-xs text-gray-500"> on {new Date(tender.my_evaluation_date).toLocaleDateString()}</span>
+                            <span className="text-xs text-gray-500"> on {formatDate(tender.my_evaluation_date)}</span>
                         )}
                         </p>
                     )}
@@ -97,9 +100,9 @@ const VettingDashboard = () => {
                 
                 <button
                     onClick={() => fetchTenderDetails(tender.id)}
-                    className="w-full bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors"
+                    className="ui-btn ui-btn--secondary w-full"
                 >
-                    View Details
+                    View details
                 </button>
             </div>
         );
@@ -107,7 +110,7 @@ const VettingDashboard = () => {
 
     const renderTenderCard = (tender) => {
         return (
-            <div key={tender.id} className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
+            <div key={tender.id} className="ui-panel ui-panel--pad">
                 <div className="flex justify-between items-start mb-4">
                     <div>
                         <h3 className="text-lg font-semibold text-gray-900">{tender.tender_number}</h3>
@@ -123,28 +126,25 @@ const VettingDashboard = () => {
                 
                 <div className="space-y-2 text-sm text-gray-600 mb-4">
                     <p><span className="font-medium">Created by:</span> {tender.created_by_name} ({tender.created_by_department})</p>
-                    <p><span className="font-medium">Total Estimated Cost:</span> PKR {tender.total_estimated_cost?.toLocaleString() || '0'}</p>
-                    <p><span className="font-medium">Bidding End:</span> {new Date(tender.bidding_end_time).toLocaleString()}</p>
+                    <p><span className="font-medium">Total Estimated Cost:</span> {money(tender.total_estimated_cost)}</p>
+                    <p><span className="font-medium">Bidding End:</span> {formatDateTime(tender.bidding_end_time)}</p>
                     <p><span className="font-medium">Minimum Suppliers:</span> {tender.minimum_suppliers}</p>
                 </div>
                 
                 <button
                     onClick={() => fetchTenderDetails(tender.id)}
-                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                    className="ui-btn ui-btn--primary w-full"
                 >
-                    Review Tender
+                    Review tender
                 </button>
             </div>
         );
     };
 
     return (
-        <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-            <div className="px-4 py-6 sm:px-0">
-                <div className="mb-6">
-                    <h1 className="text-3xl font-bold text-gray-900">Vetting Committee Dashboard</h1>
-                    <p className="text-gray-600">Review and evaluate tenders submitted for vetting approval</p>
-                </div>
+        <div>
+            <div>
+                <PageHeader title="Tender vetting" />
 
                 {/* Tab Navigation */}
                 <div className="border-b border-gray-200 mb-6">
@@ -157,7 +157,7 @@ const VettingDashboard = () => {
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                         >
-                            Pending Tenders ({pendingTenders.length})
+                            Pending tenders ({pendingTenders.length})
                         </button>
                         <button
                             onClick={() => setActiveTab('all-tenders')}
@@ -167,7 +167,7 @@ const VettingDashboard = () => {
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                         >
-                            All Tenders ({allTenders.length})
+                            All tenders ({allTenders.length})
                         </button>
                     </nav>
                 </div>
@@ -175,7 +175,7 @@ const VettingDashboard = () => {
                 {/* Content */}
                 {loading ? (
                     <div className="flex justify-center items-center h-64">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                        <div className="ui-spin"></div>
                     </div>
                 ) : (
                     <div>
@@ -184,7 +184,7 @@ const VettingDashboard = () => {
                                 {pendingTenders.length === 0 ? (
                                     <div className="text-center py-12">
                                         <i className="fas fa-clipboard-check text-4xl text-gray-400 mb-4"></i>
-                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Pending Tenders</h3>
+                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No pending tenders</h3>
                                         <p className="text-gray-500">There are no tenders currently pending vetting approval.</p>
                                     </div>
                                 ) : (
@@ -200,7 +200,7 @@ const VettingDashboard = () => {
                                 {allTenders.length === 0 ? (
                                     <div className="text-center py-12">
                                         <i className="fas fa-clipboard-list text-4xl text-gray-400 mb-4"></i>
-                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Tenders</h3>
+                                        <h3 className="text-lg font-medium text-gray-900 mb-2">No tenders</h3>
                                         <p className="text-gray-500">No tenders have been submitted for vetting yet.</p>
                                     </div>
                                 ) : (

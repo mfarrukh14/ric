@@ -1,268 +1,58 @@
-const auditLogger = require('../utils/auditLogger');
+// Removes audit entries (database rows and daily files) past the retention period.
 const cron = require('node-cron');
+const auditLogger = require('../utils/auditLogger');
+const { dbGet, dbRun, isDatabaseConnected } = require('../db');
 
 class AuditCleanupService {
     constructor() {
-        this.retentionDays = 365; // Default retention period
+        this.retentionDays = 365;
         this.isRunning = false;
     }
 
-    // Initialize the cleanup service with scheduled tasks
+    /** Schedules the nightly cleanup (02:00). */
     initialize(retentionDays = 365) {
         this.retentionDays = retentionDays;
-        
-        // Schedule cleanup to run daily at 2 AM
-        cron.schedule('0 2 * * *', () => {
-            this.performCleanup();
-        });
-
-        // Schedule weekly disk space check
-        cron.schedule('0 3 * * 0', () => {
-            this.checkDiskSpace();
-        });
-
-        console.log('🧹 Audit cleanup service initialized');
-        console.log(`📅 Retention period: ${this.retentionDays} days`);
-        console.log('⏰ Scheduled cleanup: Daily at 2:00 AM');
-        console.log('💽 Disk space check: Weekly on Sunday at 3:00 AM');
+        cron.schedule('0 2 * * *', () => this.performCleanup().catch(() => {}));
     }
 
-    // Perform cleanup of old audit logs
-    async performCleanup() {
-        if (this.isRunning) {
-            console.log('⚠️ Cleanup already in progress, skipping...');
-            return;
-        }
-
+    async performCleanup(retentionDays = this.retentionDays) {
+        if (this.isRunning) return { skipped: true };
         this.isRunning = true;
-        console.log('🧹 Starting audit log cleanup...');
-
         try {
-            // Clean up old text files
-            const deletedFiles = auditLogger.cleanupOldLogs(this.retentionDays);
-            
-            // Clean up old database records
-            const deletedRecords = await this.cleanupDatabaseRecords();
-            
-            console.log(`✅ Cleanup completed: ${deletedFiles} files, ${deletedRecords} database records removed`);
-            
-            // Log the cleanup activity
-            await auditLogger.writeAuditEntry(
-                'SYSTEM',
-                'system',
-                'Audit Cleanup Service',
-                'AUDIT_CLEANUP_COMPLETED',
-                `Files deleted: ${deletedFiles} | DB records deleted: ${deletedRecords} | Retention: ${this.retentionDays} days`,
-                null,
-                null
-            );
-
-        } catch (error) {
-            console.error('❌ Error during audit cleanup:', error);
-            
-            // Log the cleanup error
-            await auditLogger.writeAuditEntry(
-                'SYSTEM',
-                'system',
-                'Audit Cleanup Service',
-                'AUDIT_CLEANUP_ERROR',
-                `Error: ${error.message}`,
-                null,
-                null
-            );
+            const deletedFiles = auditLogger.cleanupOldLogs(retentionDays);
+            let deletedRecords = 0;
+            if (isDatabaseConnected()) {
+                const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+                deletedRecords = (await dbRun('DELETE FROM audit_logs WHERE created_at < ?', [cutoff])).changes;
+            }
+            await auditLogger.system('AUDIT_CLEANUP_COMPLETED', `Files: ${deletedFiles} | Rows: ${deletedRecords} | Retention: ${retentionDays} days`);
+            return { deletedFiles, deletedRecords };
+        } catch (err) {
+            console.error('Audit cleanup failed:', err);
+            await auditLogger.system('AUDIT_CLEANUP_ERROR', err.message);
+            throw err;
         } finally {
             this.isRunning = false;
         }
     }
 
-    // Clean up old database records
-    async cleanupDatabaseRecords() {
-        const { getDatabase } = require('../config/database');
-        const db = getDatabase();
-        
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - this.retentionDays);
-        const cutoffDateString = cutoffDate.toISOString();
-
-        return new Promise((resolve, reject) => {
-            db.run(
-                'DELETE FROM audit_logs WHERE created_at < ?',
-                [cutoffDateString],
-                function(err) {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(this.changes);
-                    }
-                }
-            );
-        });
-    }
-
-    // Check disk space usage for audit logs
-    async checkDiskSpace() {
-        const fs = require('fs');
-        const path = require('path');
-
-        try {
-            const auditDir = auditLogger.auditDir;
-            let totalSize = 0;
-            let fileCount = 0;
-
-            if (fs.existsSync(auditDir)) {
-                const files = fs.readdirSync(auditDir);
-                
-                for (const file of files) {
-                    if (file.startsWith('audit_log_') && file.endsWith('.txt')) {
-                        const filePath = path.join(auditDir, file);
-                        const stats = fs.statSync(filePath);
-                        totalSize += stats.size;
-                        fileCount++;
-                    }
-                }
-            }
-
-            const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2);
-            const totalSizeGB = (totalSize / (1024 * 1024 * 1024)).toFixed(3);
-
-            console.log('💽 Audit Log Disk Usage Report:');
-            console.log(`📁 Files: ${fileCount}`);
-            console.log(`📊 Total Size: ${totalSizeMB} MB (${totalSizeGB} GB)`);
-            console.log(`📈 Average File Size: ${fileCount > 0 ? (totalSize / fileCount / 1024).toFixed(2) : 0} KB`);
-
-            // Log disk space check
-            await auditLogger.writeAuditEntry(
-                'SYSTEM',
-                'system',
-                'Audit Cleanup Service',
-                'DISK_SPACE_CHECK',
-                `Files: ${fileCount} | Size: ${totalSizeMB} MB | Avg: ${fileCount > 0 ? (totalSize / fileCount / 1024).toFixed(2) : 0} KB`,
-                null,
-                null
-            );
-
-            // Warn if size is getting large (> 1GB)
-            if (totalSize > 1024 * 1024 * 1024) {
-                console.log('⚠️ WARNING: Audit logs are consuming more than 1GB of disk space');
-                
-                await auditLogger.writeAuditEntry(
-                    'SYSTEM',
-                    'system',
-                    'Audit Cleanup Service',
-                    'DISK_SPACE_WARNING',
-                    `Audit logs size: ${totalSizeGB} GB - Consider reducing retention period`,
-                    null,
-                    null
-                );
-            }
-
-        } catch (error) {
-            console.error('❌ Error checking disk space:', error);
-        }
-    }
-
-    // Manual cleanup trigger (for admin use)
-    async manualCleanup(retentionDays = this.retentionDays) {
-        console.log(`🧹 Manual cleanup triggered with ${retentionDays} days retention`);
-        
-        const originalRetention = this.retentionDays;
-        this.retentionDays = retentionDays;
-        
-        await this.performCleanup();
-        
-        this.retentionDays = originalRetention;
-    }
-
-    // Get cleanup statistics
     async getCleanupStats() {
-        const { getDatabase } = require('../config/database');
-        const db = getDatabase();
-        const fs = require('fs');
-        const path = require('path');
-
-        // Get database stats
-        const dbStats = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT 
-                    COUNT(*) as totalRecords,
-                    MIN(created_at) as oldestRecord,
-                    MAX(created_at) as newestRecord
-                 FROM audit_logs`,
-                [],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
-
-        // Get file stats
-        let fileStats = {
-            totalFiles: 0,
-            totalSize: 0,
-            oldestFile: null,
-            newestFile: null
-        };
-
-        try {
-            const auditDir = auditLogger.auditDir;
-            if (fs.existsSync(auditDir)) {
-                const files = fs.readdirSync(auditDir).filter(f => 
-                    f.startsWith('audit_log_') && f.endsWith('.txt')
-                );
-
-                fileStats.totalFiles = files.length;
-
-                if (files.length > 0) {
-                    files.sort();
-                    fileStats.oldestFile = files[0];
-                    fileStats.newestFile = files[files.length - 1];
-
-                    for (const file of files) {
-                        const filePath = path.join(auditDir, file);
-                        const stats = fs.statSync(filePath);
-                        fileStats.totalSize += stats.size;
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Error getting file stats:', error);
-        }
-
+        const database = isDatabaseConnected()
+            ? await dbGet('SELECT COUNT(*) AS totalRecords, MIN(created_at) AS oldestRecord, MAX(created_at) AS newestRecord FROM audit_logs')
+            : null;
+        const files = auditLogger.getAuditFiles();
         return {
-            database: dbStats,
-            files: fileStats,
+            database,
+            files: {
+                totalFiles: files.length,
+                totalSize: files.reduce((sum, file) => sum + file.size, 0),
+                oldestFile: files.at(-1)?.filename ?? null,
+                newestFile: files[0]?.filename ?? null,
+            },
             retentionDays: this.retentionDays,
-            isCleanupRunning: this.isRunning
+            isCleanupRunning: this.isRunning,
         };
-    }
-
-    // Update retention policy
-    updateRetentionPolicy(newRetentionDays) {
-        const oldRetention = this.retentionDays;
-        this.retentionDays = newRetentionDays;
-        
-        console.log(`📅 Retention policy updated: ${oldRetention} → ${newRetentionDays} days`);
-        
-        // Log the policy change
-        auditLogger.writeAuditEntry(
-            'SYSTEM',
-            'system',
-            'Audit Cleanup Service',
-            'RETENTION_POLICY_UPDATED',
-            `Old: ${oldRetention} days | New: ${newRetentionDays} days`,
-            null,
-            null
-        );
-    }
-
-    // Stop the cleanup service
-    stop() {
-        console.log('🛑 Audit cleanup service stopped');
     }
 }
 
-// Create singleton instance
-const auditCleanupService = new AuditCleanupService();
-
-module.exports = auditCleanupService;
+module.exports = new AuditCleanupService();

@@ -1,8 +1,10 @@
 const express = require('express');
-const router = express.Router();
-const auth = require('../middleware/auth');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
 const { lookupStockForItems } = require('../controllers/hmsStockController');
 
-router.post('/lookup', auth, lookupStockForItems);
+const router = express.Router();
+
+router.post('/lookup', staffOnly, allow('store'), lookupStockForItems);
 
 module.exports = router;

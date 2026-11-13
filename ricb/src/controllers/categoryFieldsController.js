@@ -1,25 +1,16 @@
-const { getDatabase } = require('../config/database');
+const { getDatabase, dbAll, dbGet, dbRun } = require('../db');
 const { getCategoryFieldDefinitions } = require('../utils/itemFieldFormatter');
-
-const dbAll = (db, sqlText, params = []) => new Promise((resolve, reject) => {
-    db.all(sqlText, params, (err, rows) => err ? reject(err) : resolve(rows || []));
-});
-const dbGet = (db, sqlText, params = []) => new Promise((resolve, reject) => {
-    db.get(sqlText, params, (err, row) => err ? reject(err) : resolve(row));
-});
-const dbRun = (db, sqlText, params = []) => new Promise((resolve, reject) => {
-    db.run(sqlText, params, function (err) { err ? reject(err) : resolve(this); });
-});
+const { optionKey } = require('../db/schema');
 
 const FIELD_TYPES = ['text', 'number', 'dropdown'];
 
-const requireSuperAdmin = (req, res) => {
-    if (req.user.role !== 'superadmin') {
-        res.status(403).json({ message: 'Only superadmin can manage category fields' });
-        return false;
-    }
-    return true;
-};
+/** Whether the field already has this value under the same parent option (ignoring case). */
+async function optionExists(fieldId, parentOptionId, value, exceptOptionId = null) {
+    const wanted = optionKey(fieldId, parentOptionId, value);
+    const options = await dbAll('SELECT id, value, parent_option_id FROM category_field_options WHERE field_id = ?', [fieldId]);
+    return options.some((o) => o.id !== Number(exceptOptionId) && optionKey(fieldId, o.parent_option_id, o.value) === wanted);
+}
+
 
 // GET /items/categories/:categoryId/fields
 // Returns every custom field configured for a category, each with its options,
@@ -39,9 +30,6 @@ const getCategoryFields = async (req, res) => {
 
 // POST /items/categories/:categoryId/fields
 const createCategoryField = async (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
-
-    const db = getDatabase();
     const { categoryId } = req.params;
     const { label, fieldType, isRequired, dependsOnFieldId, options } = req.body;
 
@@ -59,18 +47,23 @@ const createCategoryField = async (req, res) => {
         if (hasEmpty) {
             return res.status(400).json({ message: 'All dropdown options must have a value' });
         }
+        const seen = new Set();
+        for (const option of options) {
+            const key = optionKey(0, option.parentOptionId || null, option.value);
+            if (seen.has(key)) return res.status(400).json({ message: `"${String(option.value).trim()}" is listed twice` });
+            seen.add(key);
+        }
     }
 
     try {
-        const category = await dbGet(db, 'SELECT id FROM item_categories WHERE id = ?', [categoryId]);
+        const category = await dbGet('SELECT id FROM item_categories WHERE id = ?', [categoryId]);
         if (!category) {
             return res.status(404).json({ message: 'Category not found' });
         }
 
         let parentField = null;
         if (dependsOnFieldId) {
-            parentField = await dbGet(db,
-                'SELECT * FROM category_fields WHERE id = ? AND category_id = ?',
+            parentField = await dbGet('SELECT * FROM category_fields WHERE id = ? AND category_id = ?',
                 [dependsOnFieldId, categoryId]
             );
             if (!parentField) {
@@ -86,7 +79,7 @@ const createCategoryField = async (req, res) => {
 
         let parentOptionIds = null;
         if (parentField) {
-            const parentOptions = await dbAll(db, 'SELECT id FROM category_field_options WHERE field_id = ?', [parentField.id]);
+            const parentOptions = await dbAll('SELECT id FROM category_field_options WHERE field_id = ?', [parentField.id]);
             parentOptionIds = new Set(parentOptions.map(o => o.id));
             const missingParent = options.some(o => !o.parentOptionId || !parentOptionIds.has(Number(o.parentOptionId)));
             if (missingParent) {
@@ -94,19 +87,17 @@ const createCategoryField = async (req, res) => {
             }
         }
 
-        const maxOrderRow = await dbGet(db, 'SELECT MAX(display_order) AS maxOrder FROM category_fields WHERE category_id = ?', [categoryId]);
+        const maxOrderRow = await dbGet('SELECT MAX(display_order) AS maxOrder FROM category_fields WHERE category_id = ?', [categoryId]);
         const displayOrder = (maxOrderRow && maxOrderRow.maxOrder !== null ? maxOrderRow.maxOrder : -1) + 1;
 
-        const fieldResult = await dbRun(db,
-            'INSERT INTO category_fields (category_id, label, field_type, depends_on_field_id, is_required, display_order) VALUES (?, ?, ?, ?, ?, ?)',
+        const fieldResult = await dbRun('INSERT INTO category_fields (category_id, label, field_type, depends_on_field_id, is_required, display_order) VALUES (?, ?, ?, ?, ?, ?)',
             [categoryId, label.trim(), fieldType, dependsOnFieldId || null, isRequired === false ? 0 : 1, displayOrder]
         );
         const fieldId = fieldResult.lastID;
 
         if (fieldType === 'dropdown') {
             for (let i = 0; i < options.length; i++) {
-                await dbRun(db,
-                    'INSERT INTO category_field_options (field_id, value, parent_option_id, display_order) VALUES (?, ?, ?, ?)',
+                await dbRun('INSERT INTO category_field_options (field_id, value, parent_option_id, display_order) VALUES (?, ?, ?, ?)',
                     [fieldId, options[i].value.trim(), options[i].parentOptionId || null, i]
                 );
             }
@@ -123,9 +114,6 @@ const createCategoryField = async (req, res) => {
 // Updates label/required/order, and optionally the field's "depends on" parent
 // field. Pass `dependsOnFieldId: null` to clear it, omit the key to leave it as-is.
 const updateCategoryField = async (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
-
-    const db = getDatabase();
     const { fieldId } = req.params;
     const { label, isRequired, displayOrder } = req.body;
     const changingDependsOn = Object.prototype.hasOwnProperty.call(req.body, 'dependsOnFieldId');
@@ -136,7 +124,7 @@ const updateCategoryField = async (req, res) => {
     }
 
     try {
-        const field = await dbGet(db, 'SELECT * FROM category_fields WHERE id = ?', [fieldId]);
+        const field = await dbGet('SELECT * FROM category_fields WHERE id = ?', [fieldId]);
         if (!field) {
             return res.status(404).json({ message: 'Field not found' });
         }
@@ -155,8 +143,7 @@ const updateCategoryField = async (req, res) => {
                 if (String(newDependsOnFieldId) === String(fieldId)) {
                     return res.status(400).json({ message: 'A field cannot depend on itself' });
                 }
-                const parentField = await dbGet(db,
-                    'SELECT * FROM category_fields WHERE id = ? AND category_id = ?',
+                const parentField = await dbGet('SELECT * FROM category_fields WHERE id = ? AND category_id = ?',
                     [newDependsOnFieldId, field.category_id]
                 );
                 if (!parentField) {
@@ -171,15 +158,14 @@ const updateCategoryField = async (req, res) => {
             }
         }
 
-        await dbRun(db,
-            'UPDATE category_fields SET label = ?, is_required = ?, display_order = COALESCE(?, display_order), depends_on_field_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        await dbRun('UPDATE category_fields SET label = ?, is_required = ?, display_order = COALESCE(?, display_order), depends_on_field_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [label.trim(), isRequired === false ? 0 : 1, displayOrder === undefined ? null : displayOrder, newDependsOnFieldId, fieldId]
         );
 
         // The dependency target changed, so this field's existing options no longer
         // map to a valid parent option - clear the mapping and require reassignment.
         if (dependsOnChanged) {
-            await dbRun(db, 'UPDATE category_field_options SET parent_option_id = NULL WHERE field_id = ?', [fieldId]);
+            await dbRun('UPDATE category_field_options SET parent_option_id = NULL WHERE field_id = ?', [fieldId]);
         }
 
         res.json({ message: 'Field updated successfully', dependsOnChanged });
@@ -191,29 +177,26 @@ const updateCategoryField = async (req, res) => {
 
 // DELETE /items/fields/:fieldId
 const deleteCategoryField = async (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
-
-    const db = getDatabase();
     const { fieldId } = req.params;
 
     try {
-        const field = await dbGet(db, 'SELECT * FROM category_fields WHERE id = ?', [fieldId]);
+        const field = await dbGet('SELECT * FROM category_fields WHERE id = ?', [fieldId]);
         if (!field) {
             return res.status(404).json({ message: 'Field not found' });
         }
 
-        const dependentField = await dbGet(db, 'SELECT id FROM category_fields WHERE depends_on_field_id = ?', [fieldId]);
+        const dependentField = await dbGet('SELECT id FROM category_fields WHERE depends_on_field_id = ?', [fieldId]);
         if (dependentField) {
             return res.status(400).json({ message: 'Another field depends on this one. Delete that field first.' });
         }
 
-        const usage = await dbGet(db, 'SELECT COUNT(*) AS count FROM demand_item_field_values WHERE field_id = ?', [fieldId]);
+        const usage = await dbGet('SELECT COUNT(*) AS count FROM demand_item_field_values WHERE field_id = ?', [fieldId]);
         if (usage && Number(usage.count) > 0) {
             return res.status(400).json({ message: 'This field has been used on submitted demands and cannot be deleted' });
         }
 
-        await dbRun(db, 'DELETE FROM category_field_options WHERE field_id = ?', [fieldId]);
-        await dbRun(db, 'DELETE FROM category_fields WHERE id = ?', [fieldId]);
+        await dbRun('DELETE FROM category_field_options WHERE field_id = ?', [fieldId]);
+        await dbRun('DELETE FROM category_fields WHERE id = ?', [fieldId]);
 
         res.json({ message: 'Field deleted successfully' });
     } catch (error) {
@@ -224,9 +207,6 @@ const deleteCategoryField = async (req, res) => {
 
 // POST /items/fields/:fieldId/options
 const createFieldOption = async (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
-
-    const db = getDatabase();
     const { fieldId } = req.params;
     const { value, parentOptionId } = req.body;
 
@@ -235,7 +215,7 @@ const createFieldOption = async (req, res) => {
     }
 
     try {
-        const field = await dbGet(db, 'SELECT * FROM category_fields WHERE id = ?', [fieldId]);
+        const field = await dbGet('SELECT * FROM category_fields WHERE id = ?', [fieldId]);
         if (!field) {
             return res.status(404).json({ message: 'Field not found' });
         }
@@ -246,8 +226,7 @@ const createFieldOption = async (req, res) => {
             return res.status(400).json({ message: 'This field depends on another field; a parent option is required' });
         }
         if (field.depends_on_field_id) {
-            const parentOption = await dbGet(db,
-                'SELECT id FROM category_field_options WHERE id = ? AND field_id = ?',
+            const parentOption = await dbGet('SELECT id FROM category_field_options WHERE id = ? AND field_id = ?',
                 [parentOptionId, field.depends_on_field_id]
             );
             if (!parentOption) {
@@ -255,12 +234,16 @@ const createFieldOption = async (req, res) => {
             }
         }
 
-        const maxOrderRow = await dbGet(db, 'SELECT MAX(display_order) AS maxOrder FROM category_field_options WHERE field_id = ?', [fieldId]);
+        const newParentId = field.depends_on_field_id ? parentOptionId : null;
+        if (await optionExists(fieldId, newParentId, value)) {
+            return res.status(400).json({ message: `"${value.trim()}" already exists` });
+        }
+
+        const maxOrderRow = await dbGet('SELECT MAX(display_order) AS maxOrder FROM category_field_options WHERE field_id = ?', [fieldId]);
         const displayOrder = (maxOrderRow && maxOrderRow.maxOrder !== null ? maxOrderRow.maxOrder : -1) + 1;
 
-        const result = await dbRun(db,
-            'INSERT INTO category_field_options (field_id, value, parent_option_id, display_order) VALUES (?, ?, ?, ?)',
-            [fieldId, value.trim(), field.depends_on_field_id ? parentOptionId : null, displayOrder]
+        const result = await dbRun('INSERT INTO category_field_options (field_id, value, parent_option_id, display_order) VALUES (?, ?, ?, ?)',
+            [fieldId, value.trim(), newParentId, displayOrder]
         );
 
         res.status(201).json({ message: 'Option created successfully', optionId: result.lastID });
@@ -275,9 +258,6 @@ const createFieldOption = async (req, res) => {
 // (only meaningful when the option's field depends on another field). Pass
 // `parentOptionId` to set/change it, omit the key to leave it as-is.
 const updateFieldOption = async (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
-
-    const db = getDatabase();
     const { optionId } = req.params;
     const { value } = req.body;
     const changingParent = Object.prototype.hasOwnProperty.call(req.body, 'parentOptionId');
@@ -288,7 +268,7 @@ const updateFieldOption = async (req, res) => {
     }
 
     try {
-        const option = await dbGet(db, 'SELECT * FROM category_field_options WHERE id = ?', [optionId]);
+        const option = await dbGet('SELECT * FROM category_field_options WHERE id = ?', [optionId]);
         if (!option) {
             return res.status(404).json({ message: 'Option not found' });
         }
@@ -296,13 +276,12 @@ const updateFieldOption = async (req, res) => {
         let newParentOptionId = option.parent_option_id;
 
         if (changingParent) {
-            const field = await dbGet(db, 'SELECT * FROM category_fields WHERE id = ?', [option.field_id]);
+            const field = await dbGet('SELECT * FROM category_fields WHERE id = ?', [option.field_id]);
             if (field && field.depends_on_field_id) {
                 if (!parentOptionId) {
                     return res.status(400).json({ message: 'This field depends on another field; a parent option is required' });
                 }
-                const parentOption = await dbGet(db,
-                    'SELECT id FROM category_field_options WHERE id = ? AND field_id = ?',
+                const parentOption = await dbGet('SELECT id FROM category_field_options WHERE id = ? AND field_id = ?',
                     [parentOptionId, field.depends_on_field_id]
                 );
                 if (!parentOption) {
@@ -314,8 +293,11 @@ const updateFieldOption = async (req, res) => {
             }
         }
 
-        const result = await dbRun(db,
-            'UPDATE category_field_options SET value = ?, parent_option_id = ? WHERE id = ?',
+        if (await optionExists(option.field_id, newParentOptionId, value, optionId)) {
+            return res.status(400).json({ message: `"${value.trim()}" already exists` });
+        }
+
+        const result = await dbRun('UPDATE category_field_options SET value = ?, parent_option_id = ? WHERE id = ?',
             [value.trim(), newParentOptionId, optionId]
         );
         if (result.changes === 0) {
@@ -330,34 +312,31 @@ const updateFieldOption = async (req, res) => {
 
 // DELETE /items/fields/options/:optionId
 const deleteFieldOption = async (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
-
-    const db = getDatabase();
     const { optionId } = req.params;
 
     try {
-        const option = await dbGet(db, 'SELECT * FROM category_field_options WHERE id = ?', [optionId]);
+        const option = await dbGet('SELECT * FROM category_field_options WHERE id = ?', [optionId]);
         if (!option) {
             return res.status(404).json({ message: 'Option not found' });
         }
 
-        const field = await dbGet(db, 'SELECT * FROM category_fields WHERE id = ?', [option.field_id]);
-        const fieldOptionCount = await dbGet(db, 'SELECT COUNT(*) AS count FROM category_field_options WHERE field_id = ?', [option.field_id]);
+        const field = await dbGet('SELECT * FROM category_fields WHERE id = ?', [option.field_id]);
+        const fieldOptionCount = await dbGet('SELECT COUNT(*) AS count FROM category_field_options WHERE field_id = ?', [option.field_id]);
         if (field && field.is_required && fieldOptionCount && Number(fieldOptionCount.count) <= 1) {
             return res.status(400).json({ message: 'A required dropdown field must keep at least one option' });
         }
 
-        const usage = await dbGet(db, 'SELECT COUNT(*) AS count FROM demand_item_field_values WHERE option_id = ?', [optionId]);
+        const usage = await dbGet('SELECT COUNT(*) AS count FROM demand_item_field_values WHERE option_id = ?', [optionId]);
         if (usage && Number(usage.count) > 0) {
             return res.status(400).json({ message: 'This option has been used on submitted demands and cannot be deleted' });
         }
 
-        const childOption = await dbGet(db, 'SELECT id FROM category_field_options WHERE parent_option_id = ?', [optionId]);
+        const childOption = await dbGet('SELECT id FROM category_field_options WHERE parent_option_id = ?', [optionId]);
         if (childOption) {
             return res.status(400).json({ message: 'Other options depend on this one and must be removed first' });
         }
 
-        await dbRun(db, 'DELETE FROM category_field_options WHERE id = ?', [optionId]);
+        await dbRun('DELETE FROM category_field_options WHERE id = ?', [optionId]);
         res.json({ message: 'Option deleted successfully' });
     } catch (error) {
         console.error('Error deleting field option:', error);

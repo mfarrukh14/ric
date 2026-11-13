@@ -1,13 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Plus,
-  Edit,
-  Trash2,
-  ChevronDown,
-  ChevronRight,
-  Package,
-  X
-} from 'lucide-react';
+import { Plus, PencilSimple as Edit, Trash as Trash2, CaretDown as ChevronDown, CaretRight as ChevronRight, Package, X } from '@phosphor-icons/react';
 import {
   getItemCategories,
   createItemCategory,
@@ -21,6 +13,7 @@ import {
   updateFieldOption,
   deleteFieldOption
 } from '../../config/api';
+import { confirmDialog } from '../../lib/confirm';
 
 const FIELD_TYPE_LABELS = {
   text: 'Text',
@@ -122,27 +115,27 @@ const UnifiedItemManagement = () => {
     try {
       if (editingCategory) {
         await updateItemCategory(editingCategory.id, categoryForm);
-        setSuccess('Category updated successfully');
+        setSuccess('Category updated');
       } else {
         await createItemCategory(categoryForm);
-        setSuccess('Category created successfully');
+        setSuccess('Category created');
       }
       setShowCategoryModal(false);
       loadCategories();
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to save category');
+      setError(err?.message || err?.error || 'Failed to save category');
     }
   };
 
   const removeCategory = async (category) => {
-    if (!window.confirm(`Delete category "${category.name}"? This also removes its fields.`)) return;
+    if (!(await confirmDialog(`Delete category "${category.name}"? This also removes its fields.`))) return;
     try {
       await deleteItemCategory(category.id);
-      setSuccess('Category deleted successfully');
+      setSuccess('Category deleted');
       if (expandedCategoryId === category.id) setExpandedCategoryId(null);
       loadCategories();
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to delete category');
+      setError(err?.message || err?.error || 'Failed to delete category');
     }
   };
 
@@ -201,11 +194,11 @@ const UnifiedItemManagement = () => {
   const removeOptionRow = async (index) => {
     const option = fieldForm.options[index];
     if (option.id) {
-      if (!window.confirm('Delete this option?')) return;
+      if (!(await confirmDialog('Delete this option?'))) return;
       try {
         await deleteFieldOption(option.id);
       } catch (err) {
-        setError(err.response?.data?.message || 'Failed to delete option (it may already be in use on a demand)');
+        setError(err?.message || err?.error || 'Failed to delete option (it may already be in use on a demand)');
         return;
       }
     }
@@ -255,7 +248,7 @@ const UnifiedItemManagement = () => {
             });
           }
         }
-        setSuccess('Field updated successfully');
+        setSuccess('Field updated');
       } else {
         await createCategoryField(fieldModalCategoryId, {
           label: fieldForm.label,
@@ -266,47 +259,40 @@ const UnifiedItemManagement = () => {
             ? fieldForm.options.map(o => ({ value: o.value, parentOptionId: o.parentOptionId || null }))
             : undefined
         });
-        setSuccess('Field created successfully');
+        setSuccess('Field created');
       }
       setShowFieldModal(false);
       loadFieldsForCategory(fieldModalCategoryId);
     } catch (err) {
-      setFieldFormError(err.response?.data?.message || 'Failed to save field');
+      setFieldFormError(err?.message || err?.error || 'Failed to save field');
     }
   };
 
   const removeField = async (categoryId, field) => {
-    if (!window.confirm(`Delete field "${field.label}"?`)) return;
+    if (!(await confirmDialog(`Delete field "${field.label}"?`))) return;
     try {
       await deleteCategoryField(field.id);
-      setSuccess('Field deleted successfully');
+      setSuccess('Field deleted');
       loadFieldsForCategory(categoryId);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to delete field');
+      setError(err?.message || err?.error || 'Failed to delete field');
     }
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+        <div className="ui-spin"></div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-1">Unified Item Management</h1>
-          <p className="text-gray-600">Create item categories and define the fields users fill in when requesting items in each one.</p>
-        </div>
-        <button
-          onClick={() => openCategoryModal()}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2 shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add Category</span>
+    <div>
+      <div className="mb-5 flex items-center justify-end">
+        <button onClick={() => openCategoryModal()} className="ui-btn ui-btn--primary">
+          <Plus size={16} weight="bold" />
+          <span>Add category</span>
         </button>
       </div>
 
@@ -317,7 +303,7 @@ const UnifiedItemManagement = () => {
         </div>
       )}
       {success && (
-        <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+        <div className="mb-4 p-3 bg-green-100 border border-green-400 rounded">
           {success}
         </div>
       )}
@@ -328,10 +314,10 @@ const UnifiedItemManagement = () => {
           <p className="mb-4">No categories yet. Add your first item category to get started.</p>
           <button
             onClick={() => openCategoryModal()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 inline-flex items-center space-x-2"
+            className="ui-btn ui-btn--primary"
           >
             <Plus className="h-4 w-4" />
-            <span>Add Category</span>
+            <span>Add category</span>
           </button>
         </div>
       ) : (
@@ -341,7 +327,7 @@ const UnifiedItemManagement = () => {
             const fields = fieldsByCategory[category.id] || [];
 
             return (
-              <div key={category.id} className="bg-white rounded-lg border">
+              <div key={category.id} className="ui-panel">
                 <div className="flex items-center justify-between p-4">
                   <button
                     onClick={() => toggleCategory(category.id)}
@@ -356,21 +342,21 @@ const UnifiedItemManagement = () => {
                   <div className="flex items-center space-x-1 shrink-0">
                     <button
                       onClick={() => openFieldModal(category.id)}
-                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center space-x-1"
+                      className="ui-btn ui-btn--primary ui-btn--sm"
                     >
                       <Plus className="h-3 w-3" />
-                      <span>Add Field</span>
+                      <span>Add field</span>
                     </button>
                     <button
                       onClick={() => openCategoryModal(category)}
-                      className="p-2 text-yellow-600 hover:bg-yellow-50 rounded"
+                      className="ui-btn ui-btn--ghost ui-btn--sm"
                       title="Edit category"
                     >
                       <Edit className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => removeCategory(category)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm"
                       title="Delete category"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -379,15 +365,15 @@ const UnifiedItemManagement = () => {
                 </div>
 
                 {isExpanded && (
-                  <div className="border-t px-4 py-3 bg-gray-50">
+                  <div className="ui-callout">
                     {fieldsLoading && !fieldsByCategory[category.id] ? (
                       <p className="text-sm text-gray-500">Loading fields...</p>
                     ) : fields.length === 0 ? (
-                      <p className="text-sm text-gray-500 italic">No fields yet. Click "Add Field" to define what information users must provide for this category.</p>
+                      <p className="text-sm text-gray-500 italic">No fields yet.</p>
                     ) : (
                       <div className="space-y-2">
                         {fields.map(field => (
-                          <div key={field.id} className="bg-white border rounded p-3">
+                          <div key={field.id} className="ui-panel ui-panel--pad">
                             <div className="flex items-start justify-between">
                               <div>
                                 <div className="flex items-center flex-wrap gap-2">
@@ -407,7 +393,7 @@ const UnifiedItemManagement = () => {
                                 {field.fieldType === 'dropdown' && (
                                   <div className="mt-2 flex flex-wrap gap-1">
                                     {field.options.map(o => (
-                                      <span key={o.id} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+                                      <span key={o.id} className="text-xs px-2 py-0.5 bg-blue-50 rounded">
                                         {o.value}
                                       </span>
                                     ))}
@@ -417,14 +403,14 @@ const UnifiedItemManagement = () => {
                               <div className="flex items-center space-x-1 shrink-0">
                                 <button
                                   onClick={() => openFieldModal(category.id, field)}
-                                  className="p-1.5 text-yellow-600 hover:bg-yellow-50 rounded"
+                                  className="ui-btn ui-btn--ghost ui-btn--sm"
                                   title="Edit field"
                                 >
                                   <Edit className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => removeField(category.id, field)}
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                                  className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm"
                                   title="Delete field"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
@@ -445,40 +431,40 @@ const UnifiedItemManagement = () => {
 
       {/* Category Modal */}
       {showCategoryModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+        <div className="ui-scrim">
+          <div className="ui-dialog ui-dialog--legacy ui-dialog--sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">{editingCategory ? 'Edit Category' : 'Add Category'}</h3>
-              <button onClick={() => setShowCategoryModal(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => setShowCategoryModal(false)} className="ui-btn ui-btn--ghost ui-btn--sm">
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                <label className="ui-label block mb-2">Name *</label>
                 <input
                   type="text"
                   value={categoryForm.name}
                   onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="ui-input"
                   placeholder="e.g. Pharmaceuticals"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <label className="ui-label block mb-2">Description</label>
                 <textarea
                   value={categoryForm.description}
                   onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="ui-input ui-textarea"
                   rows="3"
                 />
               </div>
             </div>
             <div className="flex items-center justify-end space-x-3 mt-6">
-              <button onClick={() => setShowCategoryModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+              <button onClick={() => setShowCategoryModal(false)} className="ui-btn ui-btn--secondary">
                 Cancel
               </button>
-              <button onClick={saveCategory} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+              <button onClick={saveCategory} className="ui-btn ui-btn--primary">
                 {editingCategory ? 'Update' : 'Create'}
               </button>
             </div>
@@ -488,11 +474,11 @@ const UnifiedItemManagement = () => {
 
       {/* Field Modal */}
       {showFieldModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-8">
-          <div className="bg-white rounded-lg p-6 w-full max-w-lg mx-4">
+        <div className="ui-scrim">
+          <div className="ui-dialog ui-dialog--legacy">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">{editingField ? 'Edit Field' : 'Add Field'}</h3>
-              <button onClick={() => setShowFieldModal(false)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={() => setShowFieldModal(false)} className="ui-btn ui-btn--ghost ui-btn--sm">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -505,23 +491,23 @@ const UnifiedItemManagement = () => {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Field Label *</label>
+                <label className="ui-label block mb-2">Field label *</label>
                 <input
                   type="text"
                   value={fieldForm.label}
                   onChange={(e) => setFieldForm({ ...fieldForm, label: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="ui-input"
                   placeholder="e.g. Drug Name"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Field Type *</label>
+                <label className="ui-label block mb-2">Field type *</label>
                 <select
                   value={fieldForm.fieldType}
                   onChange={(e) => setFieldForm({ ...fieldForm, fieldType: e.target.value, dependsOnFieldId: '', options: [] })}
                   disabled={!!editingField}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                  className="ui-input"
                 >
                   <option value="text">Text</option>
                   <option value="number">Number</option>
@@ -543,13 +529,13 @@ const UnifiedItemManagement = () => {
 
               {fieldForm.fieldType === 'dropdown' && dropdownFieldsForDependency.length > 0 && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="ui-label block mb-2">
                     Depends on another field? (optional)
                   </label>
                   <select
                     value={fieldForm.dependsOnFieldId}
                     onChange={(e) => handleDependsOnChange(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ui-input"
                   >
                     <option value="">None - independent dropdown</option>
                     {dropdownFieldsForDependency.map(f => (
@@ -567,14 +553,14 @@ const UnifiedItemManagement = () => {
               {fieldForm.fieldType === 'dropdown' && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700">Options * (at least 1 required)</label>
+                    <label className="ui-label block">Options * (at least 1 required)</label>
                     <button
                       type="button"
                       onClick={addOptionRow}
-                      className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 flex items-center space-x-1"
+                      className="ui-btn ui-btn--primary ui-btn--sm"
                     >
                       <Plus className="h-3 w-3" />
-                      <span>Add Option</span>
+                      <span>Add option</span>
                     </button>
                   </div>
                   <div className="space-y-2 max-h-56 overflow-y-auto">
@@ -584,14 +570,14 @@ const UnifiedItemManagement = () => {
                           type="text"
                           value={option.value}
                           onChange={(e) => updateOptionRow(index, { value: e.target.value })}
-                          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm"
+                          className="ui-input flex-1"
                           placeholder="Option value"
                         />
                         {dependsOnField && (
                           <select
                             value={option.parentOptionId}
                             onChange={(e) => updateOptionRow(index, { parentOptionId: e.target.value })}
-                            className="flex-1 px-3 py-1.5 border border-gray-300 rounded-md text-sm"
+                            className="ui-input flex-1"
                           >
                             <option value="">Belongs to...</option>
                             {dependsOnField.options.map(po => (
@@ -602,7 +588,7 @@ const UnifiedItemManagement = () => {
                         <button
                           type="button"
                           onClick={() => removeOptionRow(index)}
-                          className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                          className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -617,10 +603,10 @@ const UnifiedItemManagement = () => {
             </div>
 
             <div className="flex items-center justify-end space-x-3 mt-6">
-              <button onClick={() => setShowFieldModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+              <button onClick={() => setShowFieldModal(false)} className="ui-btn ui-btn--secondary">
                 Cancel
               </button>
-              <button onClick={saveField} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+              <button onClick={saveField} className="ui-btn ui-btn--primary">
                 {editingField ? 'Update' : 'Create'}
               </button>
             </div>

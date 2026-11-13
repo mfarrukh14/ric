@@ -1,6 +1,6 @@
 // Independent connection to the hospital's real inventory system (HMS_Jun26),
 // used only to look up actual stock-on-hand for items during store fulfillment.
-// Kept entirely separate from the main app's mssql connection pool (mssqlAdapter.js)
+// Kept entirely separate from the main app's connection pool (src/db/mssql.js)
 // so a problem here can never affect the primary eProc database connection.
 const sql = require('mssql');
 

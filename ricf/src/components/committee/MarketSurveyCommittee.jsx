@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import api, { apiUrl } from '../../config/api';
+import { apiUrl } from '../../config/api';
+import { PageHeader } from '../../ui';
 
+import { formatDate } from '../../lib/time';
 const MarketSurveyCommittee = () => {
     const [surveys, setSurveys] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -76,8 +78,7 @@ const MarketSurveyCommittee = () => {
                 throw new Error(errorData.message || 'Failed to submit evaluation');
             }
 
-            const data = await response.json();
-            toast.success('Market survey evaluation submitted successfully');
+            toast.success('Market survey evaluation submitted');
             
             // Reset form and close modal
             setEvaluationForm({ evaluationNotes: '', documents: [] });
@@ -131,7 +132,7 @@ const MarketSurveyCommittee = () => {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+                    <div className="ui-spin mx-auto"></div>
                     <p className="text-gray-600 mt-4">Loading market surveys...</p>
                 </div>
             </div>
@@ -139,18 +140,15 @@ const MarketSurveyCommittee = () => {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 py-8">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+        <div>
+            <div>
+                <PageHeader title="Market survey" />
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
-                        <div className="flex justify-between items-center mb-6">
-                            <h1 className="text-2xl font-bold text-gray-900">
-                                <i className="fas fa-chart-line mr-3"></i>
-                                Market Survey Committee
-                            </h1>
+                        <div className="flex justify-end items-center mb-6">
                             <button
                                 onClick={fetchSurveys}
-                                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                                className="ui-btn ui-btn--secondary"
                             >
                                 <i className="fas fa-sync-alt mr-2"></i>
                                 Refresh
@@ -160,35 +158,35 @@ const MarketSurveyCommittee = () => {
                         {surveys.length === 0 ? (
                             <div className="text-center py-12">
                                 <i className="fas fa-chart-line text-gray-400 text-4xl mb-4"></i>
-                                <h3 className="text-lg font-medium text-gray-900 mb-2">No Market Surveys</h3>
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">No market surveys</h3>
                                 <p className="text-gray-500">There are no market surveys assigned to your committee.</p>
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                                <table className="ui-table">
+                                    <thead>
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Tender Details
+                                            <th className="text-left">
+                                                Tender details
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Item Information
+                                            <th className="text-left">
+                                                Item information
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Documents
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Status
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Actions
                                             </th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody>
                                         {surveys.map((survey) => (
                                             <tr key={survey.survey_id} className="hover:bg-gray-50">
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <div className="text-sm font-medium text-gray-900">
                                                         Tender #{survey.tender_id}
                                                     </div>
@@ -196,10 +194,10 @@ const MarketSurveyCommittee = () => {
                                                         Sent by: {survey.sent_by_name}
                                                     </div>
                                                     <div className="text-sm text-gray-500">
-                                                        Sent: {new Date(survey.sent_at).toLocaleDateString()}
+                                                        Sent: {formatDate(survey.sent_at)}
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4">
+                                                <td>
                                                     <div className="text-sm font-medium text-gray-900">
                                                         {survey.item_name}
                                                     </div>
@@ -215,14 +213,14 @@ const MarketSurveyCommittee = () => {
                                                         </div>
                                                     )}
                                                 </td>
-                                                <td className="px-6 py-4">
+                                                <td>
                                                     {survey.documents && survey.documents.length > 0 ? (
                                                         <div className="space-y-1">
                                                             {survey.documents.map((doc) => (
                                                                 <div key={doc.id} className="flex items-center">
                                                                     <button
                                                                         onClick={() => downloadDocument(doc.id, doc.original_filename)}
-                                                                        className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center"
+                                                                        className="ui-btn ui-btn--ghost ui-btn--sm"
                                                                     >
                                                                         <i className="fas fa-download mr-1"></i>
                                                                         {doc.original_filename}
@@ -241,7 +239,7 @@ const MarketSurveyCommittee = () => {
                                                         <span className="text-sm text-gray-400">No documents</span>
                                                     )}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                                                         survey.survey_status === 'completed' 
                                                             ? 'bg-green-100 text-green-800'
@@ -251,18 +249,18 @@ const MarketSurveyCommittee = () => {
                                                     </span>
                                                     {survey.completed_at && (
                                                         <div className="text-xs text-gray-500 mt-1">
-                                                            Completed: {new Date(survey.completed_at).toLocaleDateString()}
+                                                            Completed: {formatDate(survey.completed_at)}
                                                         </div>
                                                     )}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                <td className="whitespace-nowrap">
                                                     {survey.survey_status === 'pending' ? (
                                                         <button
                                                             onClick={() => handleSubmitEvaluation(survey)}
-                                                            className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                                                            className="ui-btn ui-btn--primary"
                                                         >
                                                             <i className="fas fa-check mr-1"></i>
-                                                            Submit Evaluation
+                                                            Submit evaluation
                                                         </button>
                                                     ) : (
                                                         <span className="text-green-600 font-medium">
@@ -283,22 +281,22 @@ const MarketSurveyCommittee = () => {
 
             {/* Evaluation Modal */}
             {showEvaluationModal && selectedSurvey && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--sm">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-medium text-gray-900">
                                 <i className="fas fa-check mr-2"></i>
-                                Submit Market Survey Evaluation
+                                Submit market survey evaluation
                             </h3>
                             <button
                                 onClick={() => setShowEvaluationModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times"></i>
                             </button>
                         </div>
 
-                        <div className="mb-4 p-3 bg-gray-50 rounded">
+                        <div className="ui-callout mb-4">
                             <p className="text-sm font-medium text-gray-900">
                                 Tender #{selectedSurvey.tender_id}
                             </p>
@@ -308,21 +306,21 @@ const MarketSurveyCommittee = () => {
 
                         <form onSubmit={handleEvaluationSubmit}>
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Evaluation Notes <span className="text-gray-500">(Optional)</span>
+                                <label className="ui-label block mb-2">
+                                    Evaluation notes <span className="text-gray-500">(Optional)</span>
                                 </label>
                                 <textarea
                                     value={evaluationForm.evaluationNotes}
                                     onChange={(e) => setEvaluationForm(prev => ({ ...prev, evaluationNotes: e.target.value }))}
                                     rows={4}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                    className="ui-input ui-textarea"
                                     placeholder="Add your market survey evaluation notes, findings, recommendations..."
                                 />
                             </div>
 
                             <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Evaluation Documents <span className="text-gray-500">(Optional)</span>
+                                <label className="ui-label block mb-2">
+                                    Evaluation documents <span className="text-gray-500">(Optional)</span>
                                 </label>
                                 <input
                                     type="file"
@@ -353,16 +351,16 @@ const MarketSurveyCommittee = () => {
                                         setShowEvaluationModal(false);
                                         setEvaluationForm({ evaluationNotes: '', documents: [] });
                                     }}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     <i className="fas fa-check mr-2"></i>
-                                    Submit Evaluation
+                                    Submit evaluation
                                 </button>
                             </div>
                         </form>

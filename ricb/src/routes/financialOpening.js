@@ -1,39 +1,17 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const opening = require('../controllers/financialOpeningController');
+
 const router = express.Router();
-const {
-    getTendersReadyForFinancialOpening,
-    scheduleFinancialOpening,
-    getScheduledFinancialOpenings,
-    openFinancialBids,
-    awardTenderManually,
-    downloadFinancialBid,
-    downloadBidCdrDocument,
-    downloadFinancialOpeningReport
-} = require('../controllers/financialOpeningController');
-const { authenticateToken } = require('../middleware/auth');
 
-// Get tenders ready for financial opening
-router.get('/ready-tenders', authenticateToken, getTendersReadyForFinancialOpening);
-
-// Schedule financial opening for a tender
-router.post('/schedule/:tenderId', authenticateToken, scheduleFinancialOpening);
-
-// Get scheduled financial openings
-router.get('/scheduled', authenticateToken, getScheduledFinancialOpenings);
-
-// Open financial bids and display comparative analysis (no automatic award)
-router.post('/open/:tenderId', authenticateToken, openFinancialBids);
-
-// Manually award tender after reviewing comparative analysis
-router.post('/award/:tenderId', authenticateToken, awardTenderManually);
-
-// Download financial bid document
-router.get('/bids/:bidId/financial-document', authenticateToken, downloadFinancialBid);
-
-// Download bid CDR document
-router.get('/bids/:bidId/bid-cdr-document', authenticateToken, downloadBidCdrDocument);
-
-// Download financial opening report
-router.get('/reports/:fileName', authenticateToken, downloadFinancialOpeningReport);
+router.use(staffOnly, allow('purchase'));
+router.get('/ready-tenders', opening.getTendersReadyForFinancialOpening);
+router.get('/scheduled', opening.getScheduledFinancialOpenings);
+router.post('/schedule/:tenderId', opening.scheduleFinancialOpening);
+router.post('/open/:tenderId', opening.openFinancialBids); // comparative analysis only, no auto-award
+router.get('/bids/:bidId/financial-document', opening.downloadFinancialBid);
+router.get('/bids/:bidId/bid-cdr-document', opening.downloadBidCdrDocument);
+router.get('/reports/:fileName', opening.downloadFinancialOpeningReport);
 
 module.exports = router;

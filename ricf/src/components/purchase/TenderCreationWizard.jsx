@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import api from '../../config/api';
 import * as XLSX from 'xlsx';
+import { formatDateAndTime, fromDateAndTime, toDate, todayInPakistan } from '../../lib/time';
 
 const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -38,10 +39,10 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
   const [scoringExcelFile, setScoringExcelFile] = useState(null);
 
   const steps = [
-    { number: 1, title: 'Review Items', description: 'Review demand items and make approval decision' },
-    { number: 2, title: 'Tender Setup', description: 'Configure bidding details and upload documents' },
-    { number: 3, title: 'Evaluation Criteria', description: 'Add knockout clauses and evaluation criteria' },
-    { number: 4, title: 'Submit for Vetting', description: 'Final review and submit for vetting committee approval' }
+    { number: 1, title: 'Review items' },
+    { number: 2, title: 'Tender setup' },
+    { number: 3, title: 'Evaluation criteria' },
+    { number: 4, title: 'Submit for vetting' }
   ];
 
   useEffect(() => {
@@ -74,7 +75,6 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success('Excel report downloaded successfully');
     } catch (error) {
       console.error('Error downloading Excel report:', error);
       toast.error('Failed to download Excel report');
@@ -248,7 +248,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         evaluationCriteria: [...prev.evaluationCriteria, ...processedData]
       }));
 
-      toast.success(`Successfully imported ${processedData.length} ${isKnockout ? 'knockout clauses' : 'scoring criteria'}`);
+      toast.success(`Imported ${processedData.length} ${isKnockout ? 'knockout clauses' : 'scoring criteria'}`);
       
       // Clear file input
       if (isKnockout) {
@@ -310,8 +310,9 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         return;
       }
 
-      const biddingEndDateTime = new Date(`${tenderData.biddingEndDate}T${tenderData.biddingEndTime}`);
-      if (biddingEndDateTime.getTime() < Date.now() + 2 * 60 * 1000) {
+      // Date and time boxes hold Pakistan time.
+      const biddingEndDateTime = toDate(fromDateAndTime(tenderData.biddingEndDate, tenderData.biddingEndTime));
+      if (!biddingEndDateTime || biddingEndDateTime.getTime() < Date.now() + 2 * 60 * 1000) {
         toast.error('Bidding end time must be at least 2 minutes from now');
         return;
       }
@@ -323,7 +324,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       
       const formData = new FormData();
       formData.append('demandId', demandId);
-      formData.append('biddingEndTime', `${tenderData.biddingEndDate}T${tenderData.biddingEndTime}`);
+      formData.append('biddingEndTime', fromDateAndTime(tenderData.biddingEndDate, tenderData.biddingEndTime));
       formData.append('minimumSuppliers', tenderData.minimumSuppliers);
       formData.append('evaluationCriteria', JSON.stringify(tenderData.evaluationCriteria));
       
@@ -340,7 +341,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         }
       });
 
-      toast.success('Tender submitted for vetting committee approval!');
+      toast.success('Tender submitted for vetting committee approval.');
       onTenderCreated(response.data.tender);
       onClose();
     } catch (error) {
@@ -351,14 +352,14 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         const errorMessage = error.response?.data?.message || 'Bad request';
         
         if (errorMessage.includes('already exists')) {
-          toast.error('A tender already exists for this demand. Please check the existing tender or contact the administrator.');
+          toast.error('A tender already exists for this demand.');
         } else if (errorMessage.includes('required')) {
           toast.error('Please fill in all required fields: ' + errorMessage);
         } else {
           toast.error('Validation error: ' + errorMessage);
         }
       } else {
-        toast.error('Failed to create tender. Please try again.');
+        toast.error('Failed to create tender');
       }
     } finally {
       setLoading(false);
@@ -382,7 +383,6 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
             }`}>
               {step.title}
             </p>
-            <p className="text-xs text-gray-500">{step.description}</p>
           </div>
           {index < steps.length - 1 && (
             <div className={`mx-4 h-0.5 w-16 ${
@@ -397,22 +397,22 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
   const renderStep1 = () => (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-gray-900">Review Demand Items</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Review demand items</h3>
         <button
           onClick={downloadExcelReport}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          className="ui-btn ui-btn--secondary"
         >
           <i className="fas fa-download h-4 w-4 mr-2"></i>
-          Download Annual Report
+          Download annual report
         </button>
       </div>
 
-      <div className="bg-white shadow overflow-hidden sm:rounded-md">
+      <div className="ui-panel">
         <ul className="divide-y divide-gray-200">
           {loading ? (
             <li className="px-6 py-4">
               <div className="flex justify-center">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                <div className="ui-spin"></div>
               </div>
             </li>
           ) : demandItems.length === 0 ? (
@@ -434,7 +434,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                         <p className="text-sm text-gray-500">
                           <span className="font-medium">Quantity:</span> {item.quantity} {item.unit}
                         </p>
-                        {item.prev_year_cost && (
+                        {Number(item.prev_year_cost) > 0 && (
                           <p className="text-sm text-gray-500">
                             <span className="font-medium">Previous Cost:</span> Rs. {item.prev_year_cost?.toLocaleString()}
                           </p>
@@ -452,12 +452,12 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
                     {/* Category-specific custom fields (e.g. Drug Name, Strength, Equipment Type) */}
                     {Array.isArray(item.custom_fields) && item.custom_fields.length > 0 && (
-                      <div className="bg-green-50 rounded-lg p-3 mb-2">
-                        <h5 className="text-xs font-semibold text-green-800 mb-2">{item.category} Details</h5>
+                      <div className="ui-callout mb-2">
+                        <h5 className="text-xs font-semibold mb-2">{item.category} Details</h5>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
                           {item.custom_fields.map((field, idx) => (
                             <div key={idx}>
-                              <span className="font-medium text-green-700">{field.label}:</span>
+                              <span className="font-medium">{field.label}:</span>
                               <p className="text-green-600">{field.value}</p>
                             </div>
                           ))}
@@ -482,14 +482,14 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
             <button
               onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
               disabled={currentPage === 1}
-              className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="ui-btn ui-btn--secondary relative"
             >
               Previous
             </button>
             <button
               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
               disabled={currentPage === totalPages}
-              className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="ui-btn ui-btn--secondary relative ml-3"
             >
               Next
             </button>
@@ -506,7 +506,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                 <button
                   onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                   disabled={currentPage === 1}
-                  className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                  className="ui-btn ui-btn--ghost ui-btn--sm relative"
                 >
                   <i className="fas fa-chevron-left h-5 w-5"></i>
                 </button>
@@ -526,7 +526,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                 <button
                   onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                   disabled={currentPage === totalPages}
-                  className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                  className="ui-btn ui-btn--ghost ui-btn--sm relative"
                 >
                   <i className="fas fa-chevron-right h-5 w-5"></i>
                 </button>
@@ -537,7 +537,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       )}
 
       <div className="border-t pt-6">
-        <h4 className="text-lg font-medium text-gray-900 mb-4">Approval Decision</h4>
+        <h4 className="text-lg font-medium text-gray-900 mb-4">Approval decision</h4>
         <div className="space-y-4">
           <div className="flex space-x-4">
             <label className="flex items-center">
@@ -566,14 +566,14 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
           {approvalDecision === 'reject' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Reason for Rejection *
+              <label className="ui-label block mb-2">
+                Reason for rejection *
               </label>
               <textarea
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
                 rows={3}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="ui-input ui-textarea"
                 placeholder="Please provide detailed reason for rejection..."
               />
             </div>
@@ -582,7 +582,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
           <button
             onClick={handleApprovalDecision}
             disabled={!approvalDecision || (approvalDecision === 'reject' && !rejectionReason.trim())}
-            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="ui-btn ui-btn--primary w-full"
           >
             {approvalDecision === 'approve' ? 'Proceed to Tender Setup' : 'Submit Rejection'}
           </button>
@@ -593,52 +593,52 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
   const renderStep2 = () => (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-gray-900">Tender Setup</h3>
+      <h3 className="text-lg font-semibold text-gray-900">Tender setup</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Bidding End Date *
+          <label className="ui-label block mb-2">
+            Bidding end date *
           </label>
           <input
             type="date"
             value={tenderData.biddingEndDate}
             onChange={(e) => setTenderData(prev => ({ ...prev, biddingEndDate: e.target.value }))}
-            min={new Date().toISOString().split('T')[0]}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            min={todayInPakistan()}
+            className="ui-input"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Bidding End Time *
+          <label className="ui-label block mb-2">
+            Bidding end time *
           </label>
           <input
             type="time"
             value={tenderData.biddingEndTime}
             onChange={(e) => setTenderData(prev => ({ ...prev, biddingEndTime: e.target.value }))}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="ui-input"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Minimum Number of Suppliers
+        <label className="ui-label block mb-2">
+          Minimum number of suppliers
         </label>
         <input
           type="number"
           min="1"
           value={tenderData.minimumSuppliers}
           onChange={(e) => setTenderData(prev => ({ ...prev, minimumSuppliers: parseInt(e.target.value) }))}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="ui-input"
         />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Tender Document (PDF)
+          <label className="ui-label block mb-2">
+            Tender document (PDF)
           </label>
           <input
             type="file"
@@ -647,13 +647,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
             className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           {tenderData.tenderDocument && (
-            <p className="text-sm text-green-600 mt-1">✓ {tenderData.tenderDocument.name}</p>
+            <p className="text-sm text-green-600 mt-1">{tenderData.tenderDocument.name}</p>
           )}
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Items List (Excel/CSV)
+          <label className="ui-label block mb-2">
+            Items list (Excel/CSV)
           </label>
           <input
             type="file"
@@ -662,7 +662,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
             className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           {tenderData.itemsList && (
-            <p className="text-sm text-green-600 mt-1">✓ {tenderData.itemsList.name}</p>
+            <p className="text-sm text-green-600 mt-1">{tenderData.itemsList.name}</p>
           )}
         </div>
       </div>
@@ -670,17 +670,17 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       <div className="flex justify-between pt-6 border-t">
         <button
           onClick={() => setCurrentStep(1)}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          className="ui-btn ui-btn--secondary"
         >
           <i className="fas fa-chevron-left h-4 w-4 mr-2"></i>
-          Back to Review
+          Back to review
         </button>
         <button
           onClick={() => setCurrentStep(3)}
           disabled={!tenderData.biddingEndDate || !tenderData.biddingEndTime}
-          className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+          className="ui-btn ui-btn--primary"
         >
-          Continue to Evaluation Criteria
+          Continue to evaluation criteria
           <i className="fas fa-chevron-right h-4 w-4 ml-2"></i>
         </button>
       </div>
@@ -689,13 +689,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
   const renderStep3 = () => (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-gray-900">Evaluation Criteria & Knockout Clauses</h3>
+      <h3 className="text-lg font-semibold text-gray-900">Evaluation criteria & knockout clauses</h3>
       
-      <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+      <div className="ui-callout ui-callout--warning">
         <div className="flex">
           <i className="fas fa-exclamation-triangle h-5 w-5 text-yellow-400"></i>
           <div className="ml-3">
-            <h3 className="text-sm font-medium text-yellow-800">Important Note</h3>
+            <h3 className="text-sm font-medium text-yellow-800">Important note</h3>
             <p className="text-sm text-yellow-700 mt-1">
               Knockout clauses are mandatory requirements. Suppliers who fail to meet these criteria will be automatically disqualified.
             </p>
@@ -703,31 +703,31 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         </div>
       </div>
 
-      <div className="border border-gray-300 rounded-md p-4">
-        <h4 className="text-md font-medium text-gray-900 mb-4">Add New Evaluation Criteria</h4>
+      <div className="ui-card">
+        <h4 className="text-md font-medium text-gray-900 mb-4">Add new evaluation criteria</h4>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Criteria Title *
+            <label className="ui-label block mb-2">
+              Criteria title *
             </label>
             <input
               type="text"
               value={newCriteria.title}
               onChange={(e) => setNewCriteria(prev => ({ ...prev, title: e.target.value }))}
               placeholder="e.g., Valid Trade License"
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="ui-input"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="ui-label block mb-2">
               Type
             </label>
             <select
               value={newCriteria.isKnockout}
               onChange={(e) => setNewCriteria(prev => ({ ...prev, isKnockout: e.target.value === 'true' }))}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="ui-input"
             >
               <option value="true">Knockout Clause</option>
               <option value="false">Scoring Criteria</option>
@@ -736,7 +736,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         </div>
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="ui-label block mb-2">
             Description *
           </label>
           <textarea
@@ -744,27 +744,27 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
             onChange={(e) => setNewCriteria(prev => ({ ...prev, description: e.target.value }))}
             rows={3}
             placeholder="Detailed description of the requirement..."
-            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="ui-input ui-textarea"
           />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Minimum Requirement
+            <label className="ui-label block mb-2">
+              Minimum requirement
             </label>
             <input
               type="text"
               value={newCriteria.minimumRequirement}
               onChange={(e) => setNewCriteria(prev => ({ ...prev, minimumRequirement: e.target.value }))}
               placeholder="e.g., Minimum 5 years validity"
-              className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="ui-input"
             />
           </div>
 
           {!newCriteria.isKnockout && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="ui-label block mb-2">
                 Weightage (%)
               </label>
               <input
@@ -773,18 +773,18 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                 max="100"
                 value={newCriteria.weightage}
                 onChange={(e) => setNewCriteria(prev => ({ ...prev, weightage: parseFloat(e.target.value) }))}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="ui-input"
               />
             </div>
           )}
         </div>
 
         <div className="border-t border-gray-200 pt-4 mb-4">
-          <h5 className="text-sm font-medium text-gray-900 mb-3">Bulk Upload from Excel</h5>
+          <h5 className="text-sm font-medium text-gray-900 mb-3">Bulk upload from Excel</h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Knockout Clauses Upload */}
-            <div className="border border-gray-200 rounded-md p-3">
-              <h6 className="text-sm font-medium text-gray-700 mb-2">Knockout Clauses</h6>
+            <div className="ui-card">
+              <h6 className="text-sm font-medium text-gray-700 mb-2">Knockout clauses</h6>
               <div className="space-y-2">
                 <input
                   type="file"
@@ -796,13 +796,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                   <button
                     onClick={() => handleExcelUpload(knockoutExcelFile, true)}
                     disabled={!knockoutExcelFile || uploadingExcel}
-                    className="flex-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
+                    className="ui-btn ui-btn--primary ui-btn--sm flex-1"
                   >
                     {uploadingExcel ? 'Processing...' : 'Upload'}
                   </button>
                   <button
                     onClick={() => downloadSampleExcel(true)}
-                    className="flex-1 px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
+                    className="ui-btn ui-btn--primary ui-btn--sm flex-1"
                   >
                     Sample
                   </button>
@@ -811,8 +811,8 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
             </div>
 
             {/* Scoring Criteria Upload */}
-            <div className="border border-gray-200 rounded-md p-3">
-              <h6 className="text-sm font-medium text-gray-700 mb-2">Scoring Criteria</h6>
+            <div className="ui-card">
+              <h6 className="text-sm font-medium text-gray-700 mb-2">Scoring criteria</h6>
               <div className="space-y-2">
                 <input
                   type="file"
@@ -824,13 +824,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                   <button
                     onClick={() => handleExcelUpload(scoringExcelFile, false)}
                     disabled={!scoringExcelFile || uploadingExcel}
-                    className="flex-1 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
+                    className="ui-btn ui-btn--primary ui-btn--sm flex-1"
                   >
                     {uploadingExcel ? 'Processing...' : 'Upload'}
                   </button>
                   <button
                     onClick={() => downloadSampleExcel(false)}
-                    className="flex-1 px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
+                    className="ui-btn ui-btn--primary ui-btn--sm flex-1"
                   >
                     Sample
                   </button>
@@ -846,19 +846,19 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
         <button
           onClick={addEvaluationCriteria}
-          className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
+          className="ui-btn ui-btn--primary"
         >
           <i className="fas fa-plus h-4 w-4 mr-2"></i>
-          Add Criteria Manually
+          Add criteria manually
         </button>
       </div>
 
       {tenderData.evaluationCriteria.length > 0 && (
         <div>
-          <h4 className="text-md font-medium text-gray-900 mb-4">Added Evaluation Criteria</h4>
+          <h4 className="text-md font-medium text-gray-900 mb-4">Added evaluation criteria</h4>
           <div className="space-y-3">
             {tenderData.evaluationCriteria.map((criteria) => (
-              <div key={criteria.id} className="border border-gray-200 rounded-md p-4">
+              <div key={criteria.id} className="ui-card">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2 mb-2">
@@ -881,7 +881,7 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
                   </div>
                   <button
                     onClick={() => removeCriteria(criteria.id)}
-                    className="ml-4 text-red-600 hover:text-red-800"
+                    className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm ml-4"
                   >
                     <i className="fas fa-trash h-4 w-4"></i>
                   </button>
@@ -895,17 +895,17 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       <div className="flex justify-between pt-6 border-t">
         <button
           onClick={() => setCurrentStep(2)}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          className="ui-btn ui-btn--secondary"
         >
           <i className="fas fa-chevron-left h-4 w-4 mr-2"></i>
-          Back to Setup
+          Back to setup
         </button>
         <button
           onClick={() => setCurrentStep(4)}
           disabled={tenderData.evaluationCriteria.length === 0}
-          className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+          className="ui-btn ui-btn--primary"
         >
-          Continue to Review
+          Continue to review
           <i className="fas fa-chevron-right h-4 w-4 ml-2"></i>
         </button>
       </div>
@@ -914,21 +914,21 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
 
   const renderStep4 = () => (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-gray-900">Submit for Vetting Committee Approval</h3>
+      <h3 className="text-lg font-semibold text-gray-900">Submit for vetting committee approval</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-gray-50 rounded-lg p-4">
-          <h4 className="font-medium text-gray-900 mb-3">Tender Details</h4>
+        <div className="ui-callout">
+          <h4 className="font-medium text-gray-900 mb-3">Tender details</h4>
           <div className="space-y-2 text-sm">
-            <p><span className="font-medium">Bidding End:</span> {tenderData.biddingEndDate} at {tenderData.biddingEndTime}</p>
+            <p><span className="font-medium">Bidding End:</span> {formatDateAndTime(tenderData.biddingEndDate, tenderData.biddingEndTime)} (Pakistan time)</p>
             <p><span className="font-medium">Minimum Suppliers:</span> {tenderData.minimumSuppliers}</p>
-            <p><span className="font-medium">Tender Document:</span> {tenderData.tenderDocument ? '✓ Uploaded' : '✗ Not uploaded'}</p>
-            <p><span className="font-medium">Items List:</span> {tenderData.itemsList ? '✓ Uploaded' : '✗ Not uploaded'}</p>
+            <p><span className="font-medium">Tender Document:</span> {tenderData.tenderDocument ? 'Uploaded' : 'Not uploaded'}</p>
+            <p><span className="font-medium">Items List:</span> {tenderData.itemsList ? 'Uploaded' : 'Not uploaded'}</p>
           </div>
         </div>
 
-        <div className="bg-gray-50 rounded-lg p-4">
-          <h4 className="font-medium text-gray-900 mb-3">Evaluation Criteria Summary</h4>
+        <div className="ui-callout">
+          <h4 className="font-medium text-gray-900 mb-3">Evaluation criteria summary</h4>
           <div className="space-y-2 text-sm">
             <p><span className="font-medium">Total Criteria:</span> {tenderData.evaluationCriteria.length}</p>
             <p><span className="font-medium">Knockout Clauses:</span> {tenderData.evaluationCriteria.filter(c => c.isKnockout).length}</p>
@@ -937,13 +937,13 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         </div>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+      <div className="ui-callout">
         <div className="flex">
           <i className="fas fa-info-circle h-5 w-5 text-blue-400"></i>
           <div className="ml-3">
-            <h3 className="text-sm font-medium text-blue-800">Vetting Committee Review</h3>
-            <p className="text-sm text-blue-700 mt-1">
-              This tender will be submitted to the vetting committee for approval. All committee members must approve before the tender can be published. You will be notified of the decision and can proceed to publish if approved.
+            <h3 className="text-sm font-medium">Vetting committee review</h3>
+            <p className="text-sm mt-1">
+              Next, every vetting committee member reviews it.
             </p>
           </div>
         </div>
@@ -952,19 +952,19 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
       <div className="flex justify-between pt-6 border-t">
         <button
           onClick={() => setCurrentStep(3)}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          className="ui-btn ui-btn--secondary"
         >
           <i className="fas fa-chevron-left h-4 w-4 mr-2"></i>
-          Back to Criteria
+          Back to criteria
         </button>
         <button
           onClick={createTender}
           disabled={loading}
-          className="inline-flex items-center px-6 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+          className="ui-btn ui-btn--primary"
         >
           {loading ? (
             <>
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+              <div className="ui-spin mr-2"></div>
               Submitting...
             </>
           ) : (
@@ -981,22 +981,21 @@ const TenderCreationWizard = ({ demandId, onClose, onTenderCreated }) => {
         <div className="mb-6">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Create Tender</h1>
-              <p className="text-gray-600">Configure and publish tender for demand items</p>
+              <h1 className="text-3xl font-bold text-gray-900">Create tender</h1>
             </div>
             <button
               onClick={onClose}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+              className="ui-btn ui-btn--secondary"
             >
               <i className="fas fa-arrow-left h-4 w-4 mr-2"></i>
-              Back to Dashboard
+              Back to dashboard
             </button>
           </div>
         </div>
 
         {renderStepIndicator()}
 
-        <div className="min-h-96 bg-white shadow rounded-lg p-6">
+        <div className="ui-panel ui-panel--pad min-h-96">
           {currentStep === 1 && renderStep1()}
           {currentStep === 2 && renderStep2()}
           {currentStep === 3 && renderStep3()}

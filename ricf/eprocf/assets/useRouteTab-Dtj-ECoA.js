@@ -1,0 +1,1 @@
+import{Y as p,G as b,H as v,r as n}from"./react-CaM-cHn3.js";function l(s,r){const{tab:i}=p(),a=b(),{pathname:o}=v(),c=n.useMemo(()=>Object.fromEntries(Object.entries(s).map(([t,e])=>[e,t])),[s]),u=s[i]??r,m=n.useCallback(t=>{const e=`/${o.split("/")[1]}`;a(`${e}/${c[t]??t}`)},[a,o,c]);return[u,m]}export{l as u};

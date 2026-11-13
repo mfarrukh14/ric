@@ -2,13 +2,30 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image" href="/images/logo.jpg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RIC Tender Automation</title>
-    <script type="module" crossorigin src="/assets/index-W2RG_1Jx.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CYEypaHm.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="RIC e-Tender: procurement for the Rawalpindi Institute of Cardiology." />
+    <meta name="theme-color" content="#f5f5f6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141416" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/jpeg" href="/images/logo.jpg" />
+    <link rel="apple-touch-icon" href="/images/logo.jpg" />
+    <title>RIC e-Tender</title>
+    <script>
+      // Apply the saved theme before first paint so the page never flashes the wrong colours.
+      (function () {
+        var preference = 'system';
+        try {
+          preference = localStorage.getItem('ric-theme') || 'system';
+        } catch (error) {}
+        var dark = preference === 'dark' || (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-D32oIzME.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/charts-D_JbcuR5.js">
+    <link rel="modulepreload" crossorigin href="/assets/react-CaM-cHn3.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-BhTpot-q.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
   </body>
 </html>

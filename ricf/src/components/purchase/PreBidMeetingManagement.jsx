@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import api, { apiUrl } from '../../config/api';
+import { apiUrl } from '../../config/api';
 
+import { formatClockTime, formatDate, fromDateAndTime, isPast, todayInPakistan } from '../../lib/time';
 const PreBidMeetingManagement = () => {
     const [publishedTenders, setPublishedTenders] = useState([]);
     const [meetings, setMeetings] = useState({
@@ -92,10 +93,8 @@ const PreBidMeetingManagement = () => {
         }
 
         // Validate that meeting date is in the future
-        const meetingDateTime = new Date(`${scheduleForm.meetingDate}T${scheduleForm.meetingTime}`);
-        const now = new Date();
-        
-        if (meetingDateTime <= now) {
+        // Date and time boxes hold Pakistan time.
+        if (isPast(fromDateAndTime(scheduleForm.meetingDate, scheduleForm.meetingTime))) {
             toast.error('Meeting date and time must be in the future');
             return;
         }
@@ -116,7 +115,7 @@ const PreBidMeetingManagement = () => {
             
             const data = await response.json();
             toast.success(
-                `Meeting scheduled successfully! Notifications sent to ${data.notifications.emails_sent} suppliers.`
+                `Meeting scheduled; ${data.notifications.emails_sent} suppliers notified`
             );
             
             if (data.notifications.emails_failed > 0) {
@@ -223,21 +222,7 @@ const PreBidMeetingManagement = () => {
         link.click();
     };
 
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-    };
 
-    const formatTime = (timeString) => {
-        return new Date(`2000-01-01T${timeString}`).toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-        });
-    };
 
     const getMeetingStatusBadge = (status) => {
         const badges = {
@@ -251,7 +236,7 @@ const PreBidMeetingManagement = () => {
     if (loading) {
         return (
             <div className="flex justify-center items-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="ui-spin"></div>
             </div>
         );
     }
@@ -269,7 +254,7 @@ const PreBidMeetingManagement = () => {
                                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                         }`}
                     >
-                        Published Tenders
+                        Published tenders
                     </button>
                     <button
                         onClick={() => setActiveSection('scheduled-meetings')}
@@ -279,7 +264,7 @@ const PreBidMeetingManagement = () => {
                                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                         }`}
                     >
-                        Scheduled Meetings
+                        Scheduled meetings
                     </button>
                     <button
                         onClick={() => setActiveSection('meeting-history')}
@@ -289,44 +274,44 @@ const PreBidMeetingManagement = () => {
                                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                         }`}
                     >
-                        Meeting History
+                        Meeting history
                     </button>
                 </nav>
             </div>
 
             {/* Published Tenders Section */}
             {activeSection === 'published-tenders' && (
-                <div className="bg-white shadow rounded-lg">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
                         <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                            Published Tenders - Schedule Pre-Bid Meetings
+                            Published tenders - schedule pre-bid meetings
                         </h3>
                         
                         {publishedTenders.length === 0 ? (
                             <p className="text-gray-500 text-center py-8">No published tenders available</p>
                         ) : (
                             <div className="overflow-hidden">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                                <table className="ui-table">
+                                    <thead>
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Tender Details
+                                            <th className="text-left">
+                                                Tender details
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Status
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                Meeting Status
+                                            <th className="text-left">
+                                                Meeting status
                                             </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            <th className="text-left">
                                                 Actions
                                             </th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody>
                                         {publishedTenders.map((tender) => (
                                             <tr key={tender.id}>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     <div>
                                                         <div className="text-sm font-medium text-gray-900">
                                                             {tender.tender_number || `Tender #${tender.id}`}
@@ -339,12 +324,12 @@ const PreBidMeetingManagement = () => {
                                                         </div>
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                                                <td className="whitespace-nowrap">
+                                                    <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100">
                                                         Published
                                                     </span>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                <td className="whitespace-nowrap">
                                                     {tender.meeting_status ? (
                                                         <div>
                                                             <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getMeetingStatusBadge(tender.meeting_status)}`}>
@@ -352,7 +337,7 @@ const PreBidMeetingManagement = () => {
                                                             </span>
                                                             {tender.meeting_date && (
                                                                 <div className="text-xs text-gray-500 mt-1">
-                                                                    {formatDate(tender.meeting_date)} at {formatTime(tender.meeting_time)}
+                                                                    {formatDate(tender.meeting_date)} at {formatClockTime(tender.meeting_time)}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -360,16 +345,16 @@ const PreBidMeetingManagement = () => {
                                                         <span className="text-sm text-gray-500">No meeting scheduled</span>
                                                     )}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                <td className="whitespace-nowrap">
                                                     {!tender.meeting_status || tender.meeting_status === 'cancelled' ? (
                                                         <button
                                                             onClick={() => {
                                                                 setSelectedTender(tender);
                                                                 setShowScheduleModal(true);
                                                             }}
-                                                            className="text-blue-600 hover:text-blue-900"
+                                                            className="ui-btn ui-btn--ghost ui-btn--sm"
                                                         >
-                                                            Schedule Meeting
+                                                            Schedule meeting
                                                         </button>
                                                     ) : tender.meeting_status === 'scheduled' ? (
                                                         <span className="text-green-600">Meeting Scheduled</span>
@@ -392,10 +377,10 @@ const PreBidMeetingManagement = () => {
                 <div className="space-y-6">
                     {/* Today's Meetings */}
                     {meetings.today.length > 0 && (
-                        <div className="bg-white shadow rounded-lg">
+                        <div className="ui-panel">
                             <div className="px-4 py-5 sm:p-6">
                                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4 text-red-600">
-                                    🔥 Today's Meetings
+                                    Today's meetings
                                 </h3>
                                 {meetings.today.map((meeting) => (
                                     <MeetingCard 
@@ -415,10 +400,10 @@ const PreBidMeetingManagement = () => {
 
                     {/* Upcoming Meetings */}
                     {meetings.upcoming.length > 0 && (
-                        <div className="bg-white shadow rounded-lg">
+                        <div className="ui-panel">
                             <div className="px-4 py-5 sm:p-6">
                                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                                    📅 Upcoming Meetings
+                                    Upcoming meetings
                                 </h3>
                                 {meetings.upcoming.map((meeting) => (
                                     <MeetingCard 
@@ -433,10 +418,10 @@ const PreBidMeetingManagement = () => {
 
                     {/* Past Incomplete Meetings */}
                     {meetings.past_incomplete.length > 0 && (
-                        <div className="bg-white shadow rounded-lg">
+                        <div className="ui-panel">
                             <div className="px-4 py-5 sm:p-6">
                                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4 text-orange-600">
-                                    ⚠️ Past Meetings - Awaiting Minutes
+                                    Past meetings - awaiting minutes
                                 </h3>
                                 {meetings.past_incomplete.map((meeting) => (
                                     <MeetingCard 
@@ -455,7 +440,7 @@ const PreBidMeetingManagement = () => {
                     )}
 
                     {meetings.today.length === 0 && meetings.upcoming.length === 0 && meetings.past_incomplete.length === 0 && (
-                        <div className="bg-white shadow rounded-lg">
+                        <div className="ui-panel">
                             <div className="px-4 py-5 sm:p-6">
                                 <p className="text-gray-500 text-center py-8">No scheduled meetings</p>
                             </div>
@@ -466,10 +451,10 @@ const PreBidMeetingManagement = () => {
 
             {/* Meeting History Section */}
             {activeSection === 'meeting-history' && (
-                <div className="bg-white shadow rounded-lg">
+                <div className="ui-panel">
                     <div className="px-4 py-5 sm:p-6">
                         <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                            Meeting History
+                            Meeting history
                         </h3>
                         
                         {meetings.completed.length === 0 && meetings.cancelled.length === 0 ? (
@@ -479,7 +464,7 @@ const PreBidMeetingManagement = () => {
                                 {/* Completed Meetings */}
                                 {meetings.completed.length > 0 && (
                                     <div>
-                                        <h4 className="text-md font-medium text-green-700 mb-2">✅ Completed Meetings</h4>
+                                        <h4 className="text-md font-medium mb-2">Completed meetings</h4>
                                         {meetings.completed.map((meeting) => (
                                             <MeetingCard 
                                                 key={meeting.id} 
@@ -494,7 +479,7 @@ const PreBidMeetingManagement = () => {
                                 {/* Cancelled Meetings */}
                                 {meetings.cancelled.length > 0 && (
                                     <div>
-                                        <h4 className="text-md font-medium text-red-700 mb-2">❌ Cancelled Meetings</h4>
+                                        <h4 className="text-md font-medium text-red-700 mb-2">Cancelled meetings</h4>
                                         {meetings.cancelled.map((meeting) => (
                                             <MeetingCard 
                                                 key={meeting.id} 
@@ -512,88 +497,88 @@ const PreBidMeetingManagement = () => {
 
             {/* Schedule Meeting Modal */}
             {showScheduleModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-1/2 lg:w-1/3 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy">
                         <h3 className="text-lg font-bold text-gray-900 mb-4">
-                            Schedule Pre-Bid Meeting
+                            Schedule pre-bid meeting
                         </h3>
                         
                         {selectedTender && (
-                            <div className="mb-4 p-3 bg-blue-50 rounded-md">
-                                <p className="text-sm font-medium text-blue-900">
+                            <div className="ui-callout mb-4">
+                                <p className="text-sm font-medium">
                                     {selectedTender.tender_number || `Tender #${selectedTender.id}`}
                                 </p>
-                                <p className="text-sm text-blue-700">{selectedTender.item_name}</p>
+                                <p className="text-sm">{selectedTender.item_name}</p>
                             </div>
                         )}
 
                         <form onSubmit={handleScheduleMeeting} className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Meeting Date</label>
+                                    <label className="ui-label block">Meeting date</label>
                                     <input
                                         type="date"
                                         required
-                                        min={new Date().toISOString().split('T')[0]}
+                                        min={todayInPakistan()}
                                         value={scheduleForm.meetingDate}
                                         onChange={(e) => setScheduleForm({...scheduleForm, meetingDate: e.target.value})}
-                                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                        className="ui-input mt-1"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">Meeting Time</label>
+                                    <label className="ui-label block">Meeting time</label>
                                     <input
                                         type="time"
                                         required
                                         value={scheduleForm.meetingTime}
                                         onChange={(e) => setScheduleForm({...scheduleForm, meetingTime: e.target.value})}
-                                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                        className="ui-input mt-1"
                                     />
                                 </div>
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Location *</label>
+                                <label className="ui-label block">Location *</label>
                                 <input
                                     type="text"
                                     required
                                     placeholder="e.g., RIC Main Office"
                                     value={scheduleForm.location}
                                     onChange={(e) => setScheduleForm({...scheduleForm, location: e.target.value})}
-                                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                    className="ui-input mt-1"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Venue</label>
+                                <label className="ui-label block">Venue</label>
                                 <input
                                     type="text"
                                     placeholder="e.g., Conference Room A"
                                     value={scheduleForm.venue}
                                     onChange={(e) => setScheduleForm({...scheduleForm, venue: e.target.value})}
-                                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                    className="ui-input mt-1"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Agenda</label>
+                                <label className="ui-label block">Agenda</label>
                                 <textarea
                                     rows={3}
                                     placeholder="Meeting agenda and topics to be discussed..."
                                     value={scheduleForm.agenda}
                                     onChange={(e) => setScheduleForm({...scheduleForm, agenda: e.target.value})}
-                                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                    className="ui-input ui-textarea mt-1"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Additional Notes</label>
+                                <label className="ui-label block">Additional notes</label>
                                 <textarea
                                     rows={2}
                                     placeholder="Any additional information for suppliers..."
                                     value={scheduleForm.additionalNotes}
                                     onChange={(e) => setScheduleForm({...scheduleForm, additionalNotes: e.target.value})}
-                                    className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                    className="ui-input ui-textarea mt-1"
                                 />
                             </div>
 
@@ -612,14 +597,14 @@ const PreBidMeetingManagement = () => {
                                             additionalNotes: ''
                                         });
                                     }}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     {loading ? 'Scheduling...' : 'Schedule Meeting'}
                                 </button>
@@ -631,27 +616,27 @@ const PreBidMeetingManagement = () => {
 
             {/* Upload Minutes Modal */}
             {showUploadModal && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-1/2 lg:w-1/3 shadow-lg rounded-md bg-white">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy">
                         <h3 className="text-lg font-bold text-gray-900 mb-4">
-                            Upload Meeting Minutes
+                            Upload meeting minutes
                         </h3>
                         
                         {selectedMeeting && (
-                            <div className="mb-4 p-3 bg-green-50 rounded-md">
-                                <p className="text-sm font-medium text-green-900">
+                            <div className="ui-callout mb-4">
+                                <p className="text-sm font-medium">
                                     {selectedMeeting.tender_number || `Tender #${selectedMeeting.tender_id}`}
                                 </p>
-                                <p className="text-sm text-green-700">
-                                    Meeting: {formatDate(selectedMeeting.meeting_date)} at {formatTime(selectedMeeting.meeting_time)}
+                                <p className="text-sm">
+                                    Meeting: {formatDate(selectedMeeting.meeting_date)} at {formatClockTime(selectedMeeting.meeting_time)}
                                 </p>
                             </div>
                         )}
 
                         <form onSubmit={handleUploadMinutes} className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">
-                                    Meeting Minutes Document *
+                                <label className="ui-label block">
+                                    Meeting minutes document *
                                 </label>
                                 <input
                                     type="file"
@@ -665,9 +650,9 @@ const PreBidMeetingManagement = () => {
                                 </p>
                             </div>
 
-                            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+                            <div className="ui-callout ui-callout--warning">
                                 <p className="text-sm text-yellow-800">
-                                    📧 This document will be automatically emailed to all registered suppliers.
+                                    This document will be automatically emailed to all registered suppliers.
                                 </p>
                             </div>
 
@@ -679,14 +664,14 @@ const PreBidMeetingManagement = () => {
                                         setSelectedMeeting(null);
                                         setMinutesFile(null);
                                     }}
-                                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    className="ui-btn ui-btn--secondary"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={uploadingMinutes}
-                                    className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                                    className="ui-btn ui-btn--primary"
                                 >
                                     {uploadingMinutes ? 'Uploading...' : 'Upload & Distribute'}
                                 </button>
@@ -701,21 +686,7 @@ const PreBidMeetingManagement = () => {
 
 // Meeting Card Component
 const MeetingCard = ({ meeting, onUploadMinutes, onCancel, onDownloadMinutes, isPastDue, isCompleted, isCancelled }) => {
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-    };
 
-    const formatTime = (timeString) => {
-        return new Date(`2000-01-01T${timeString}`).toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-        });
-    };
 
     const getMeetingStatusBadge = (status) => {
         const badges = {
@@ -748,7 +719,7 @@ const MeetingCard = ({ meeting, onUploadMinutes, onCancel, onDownloadMinutes, is
                         </div>
                         <div>
                             <span className="font-medium text-gray-700">Time:</span>
-                            <span className="ml-1">{formatTime(meeting.meeting_time)}</span>
+                            <span className="ml-1">{formatClockTime(meeting.meeting_time)}</span>
                         </div>
                         <div>
                             <span className="font-medium text-gray-700">Location:</span>
@@ -783,17 +754,17 @@ const MeetingCard = ({ meeting, onUploadMinutes, onCancel, onDownloadMinutes, is
                             {onUploadMinutes && (
                                 <button
                                     onClick={() => onUploadMinutes(meeting)}
-                                    className="px-3 py-1 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded"
+                                    className="ui-btn ui-btn--ghost ui-btn--sm"
                                 >
-                                    Upload Minutes
+                                    Upload minutes
                                 </button>
                             )}
                             {onCancel && (
                                 <button
                                     onClick={() => onCancel(meeting.id)}
-                                    className="px-3 py-1 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded"
+                                    className="ui-btn ui-btn--ghost ui-btn--danger ui-btn--sm"
                                 >
-                                    Cancel Meeting
+                                    Cancel meeting
                                 </button>
                             )}
                         </>
@@ -802,9 +773,9 @@ const MeetingCard = ({ meeting, onUploadMinutes, onCancel, onDownloadMinutes, is
                     {meeting.status === 'completed' && onDownloadMinutes && (
                         <button
                             onClick={() => onDownloadMinutes(meeting.id)}
-                            className="px-3 py-1 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded"
+                            className="ui-btn ui-btn--ghost ui-btn--sm"
                         >
-                            Download Minutes
+                            Download minutes
                         </button>
                     )}
                 </div>
@@ -812,7 +783,7 @@ const MeetingCard = ({ meeting, onUploadMinutes, onCancel, onDownloadMinutes, is
 
             {isPastDue && (
                 <div className="mt-3 p-2 bg-orange-100 border border-orange-200 rounded text-sm text-orange-800">
-                    ⚠️ This meeting has passed. Please upload the meeting minutes to complete the process.
+                    This meeting has passed. Please upload the meeting minutes to complete the process.
                 </div>
             )}
         </div>

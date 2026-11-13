@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
+import { apiUrl } from '../../config/api';
+import { PageHeader } from '../../ui';
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
+import { formatDateTime } from '../../lib/time';
+import { humanize } from '../../ui/status';
 const StorePurchaseOrders = () => {
     const [purchaseOrders, setPurchaseOrders] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -25,7 +27,7 @@ const StorePurchaseOrders = () => {
             setLoading(true);
             const token = localStorage.getItem('token');
             
-            let url = `${apiUrl}/api/purchase-orders?page=${pagination.page}&limit=${pagination.limit}`;
+            let url = `${apiUrl}/purchase-orders?page=${pagination.page}&limit=${pagination.limit}`;
             if (searchTerm) url += `&search=${encodeURIComponent(searchTerm)}`;
             
             const response = await fetch(url, {
@@ -60,10 +62,7 @@ const StorePurchaseOrders = () => {
         setShowDetailsModal(true);
     };
 
-    const formatDate = (dateString) => {
-        if (!dateString) return '-';
-        return new Date(dateString).toLocaleString();
-    };
+
 
     const getStatusBadge = (status) => {
         const statusClasses = {
@@ -78,15 +77,10 @@ const StorePurchaseOrders = () => {
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-center">
-                <div>
-                    <h2 className="text-xl font-bold text-gray-900">Purchase Orders</h2>
-                    <p className="text-sm text-gray-600 mt-1">View and track all purchase orders</p>
-                </div>
-            </div>
+            <PageHeader title="Purchase orders" />
 
             {/* Search */}
-            <div className="bg-white p-4 rounded-lg shadow">
+            <div className="ui-panel ui-panel--pad">
                 <form onSubmit={handleSearch} className="flex gap-4">
                     <div className="flex-1">
                         <input
@@ -94,12 +88,12 @@ const StorePurchaseOrders = () => {
                             placeholder="Search by PO number, supplier, or tender..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                            className="ui-input"
                         />
                     </div>
                     <button
                         type="submit"
-                        className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                        className="ui-btn ui-btn--primary"
                     >
                         <i className="fas fa-search mr-2"></i>
                         Search
@@ -108,7 +102,7 @@ const StorePurchaseOrders = () => {
             </div>
 
             {/* Purchase Orders Table */}
-            <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+            <div className="ui-panel">
                 {loading ? (
                     <div className="text-center py-12">
                         <i className="fas fa-spinner fa-spin text-4xl text-gray-400 mb-4"></i>
@@ -122,48 +116,48 @@ const StorePurchaseOrders = () => {
                 ) : (
                     <>
                         <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
+                            <table className="ui-table">
+                                <thead>
                                     <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PO Number</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tender</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                        <th className="text-left">PO number</th>
+                                        <th className="text-left">Tender</th>
+                                        <th className="text-left">Supplier</th>
+                                        <th className="text-left">Amount</th>
+                                        <th className="text-left">Status</th>
+                                        <th className="text-left">Created</th>
+                                        <th className="text-left">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
+                                <tbody>
                                     {purchaseOrders.map((po) => (
                                         <tr key={po.id} className="hover:bg-gray-50">
-                                            <td className="px-6 py-4 whitespace-nowrap">
+                                            <td className="whitespace-nowrap">
                                                 <div className="text-sm font-medium text-indigo-600">{po.po_number}</div>
                                             </td>
-                                            <td className="px-6 py-4">
+                                            <td>
                                                 <div className="text-sm text-gray-900">{po.tender_number}</div>
                                                 <div className="text-xs text-gray-500">{po.tender_item_name}</div>
                                             </td>
-                                            <td className="px-6 py-4">
+                                            <td>
                                                 <div className="text-sm text-gray-900">{po.supplier_name}</div>
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
+                                            <td className="whitespace-nowrap">
                                                 <div className="text-sm font-medium text-gray-900">
                                                     Rs {Number(po.total_amount).toLocaleString()}
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
+                                            <td className="whitespace-nowrap">
                                                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadge(po.status)}`}>
-                                                    {po.status.charAt(0).toUpperCase() + po.status.slice(1)}
+                                                    {humanize(po.status)}
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {formatDate(po.created_at)}
+                                            <td className="whitespace-nowrap">
+                                                {formatDateTime(po.created_at)}
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <td className="whitespace-nowrap">
                                                 <button
                                                     onClick={() => openDetailsModal(po)}
-                                                    className="text-indigo-600 hover:text-indigo-900"
+                                                    className="ui-btn ui-btn--ghost ui-btn--sm"
                                                 >
                                                     <i className="fas fa-eye mr-1"></i>
                                                     View
@@ -186,14 +180,14 @@ const StorePurchaseOrders = () => {
                                 <button
                                     onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
                                     disabled={pagination.page <= 1}
-                                    className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="ui-btn ui-btn--secondary ui-btn--sm"
                                 >
                                     Previous
                                 </button>
                                 <button
                                     onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
                                     disabled={pagination.page >= pagination.totalPages}
-                                    className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="ui-btn ui-btn--secondary ui-btn--sm"
                                 >
                                     Next
                                 </button>
@@ -205,29 +199,29 @@ const StorePurchaseOrders = () => {
 
             {/* PO Details Modal */}
             {showDetailsModal && selectedPO && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                    <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-2/3 lg:w-1/2 shadow-lg rounded-md bg-white max-h-[90vh] overflow-y-auto">
+                <div className="ui-scrim">
+                    <div className="ui-dialog ui-dialog--legacy ui-dialog--lg overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-bold text-gray-900">
                                 <i className="fas fa-file-invoice mr-2 text-indigo-600"></i>
-                                Purchase Order: {selectedPO.po_number}
+                                Purchase order: {selectedPO.po_number}
                             </h3>
                             <button
                                 onClick={() => setShowDetailsModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="ui-btn ui-btn--ghost ui-btn--sm"
                             >
                                 <i className="fas fa-times"></i>
                             </button>
                         </div>
 
                         {/* PO Header */}
-                        <div className="bg-gray-50 p-4 rounded-lg mb-6">
+                        <div className="ui-callout mb-6">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <span className="text-sm text-gray-500">Status</span>
                                     <p>
                                         <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadge(selectedPO.status)}`}>
-                                            {selectedPO.status.charAt(0).toUpperCase() + selectedPO.status.slice(1)}
+                                            {humanize(selectedPO.status)}
                                         </span>
                                     </p>
                                 </div>
@@ -247,27 +241,27 @@ const StorePurchaseOrders = () => {
                         </div>
 
                         {/* Items */}
-                        <div className="border border-gray-200 rounded-lg p-4 mb-6">
+                        <div className="ui-card mb-6">
                             <h4 className="font-medium text-gray-900 mb-3">
                                 <i className="fas fa-list mr-2 text-gray-600"></i>
-                                Order Items
+                                Order items
                             </h4>
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
+                            <table className="ui-table">
+                                <thead>
                                     <tr>
-                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Unit Price</th>
-                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Quantity</th>
-                                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                                        <th className="text-left">Item</th>
+                                        <th className="text-left">Unit price</th>
+                                        <th className="text-left">Quantity</th>
+                                        <th className="text-left">Total</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-200">
+                                <tbody>
                                     {(selectedPO.items || []).map((item, index) => (
                                         <tr key={index}>
-                                            <td className="px-4 py-2 text-sm">{item.itemName}</td>
-                                            <td className="px-4 py-2 text-sm">Rs {Number(item.unitPrice).toLocaleString()}</td>
-                                            <td className="px-4 py-2 text-sm">{item.quantity}</td>
-                                            <td className="px-4 py-2 text-sm font-medium">Rs {(item.quantity * item.unitPrice).toLocaleString()}</td>
+                                            <td>{item.itemName}</td>
+                                            <td>Rs {Number(item.unitPrice).toLocaleString()}</td>
+                                            <td>{item.quantity}</td>
+                                            <td>Rs {(item.quantity * item.unitPrice).toLocaleString()}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -275,7 +269,7 @@ const StorePurchaseOrders = () => {
                         </div>
 
                         {/* Timeline */}
-                        <div className="border border-gray-200 rounded-lg p-4 mb-6">
+                        <div className="ui-card mb-6">
                             <h4 className="font-medium text-gray-900 mb-3">
                                 <i className="fas fa-clock mr-2 text-gray-600"></i>
                                 Timeline
@@ -283,24 +277,24 @@ const StorePurchaseOrders = () => {
                             <div className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Created:</span>
-                                    <span>{formatDate(selectedPO.created_at)}</span>
+                                    <span>{formatDateTime(selectedPO.created_at)}</span>
                                 </div>
                                 {selectedPO.sent_at && (
                                     <div className="flex justify-between">
                                         <span className="text-gray-500">Sent:</span>
-                                        <span>{formatDate(selectedPO.sent_at)}</span>
+                                        <span>{formatDateTime(selectedPO.sent_at)}</span>
                                     </div>
                                 )}
                                 {selectedPO.acknowledged_at && (
                                     <div className="flex justify-between">
                                         <span className="text-gray-500">Acknowledged:</span>
-                                        <span>{formatDate(selectedPO.acknowledged_at)}</span>
+                                        <span>{formatDateTime(selectedPO.acknowledged_at)}</span>
                                     </div>
                                 )}
                                 {selectedPO.fulfilled_at && (
                                     <div className="flex justify-between">
                                         <span className="text-gray-500">Fulfilled:</span>
-                                        <span>{formatDate(selectedPO.fulfilled_at)}</span>
+                                        <span>{formatDateTime(selectedPO.fulfilled_at)}</span>
                                     </div>
                                 )}
                             </div>
@@ -309,7 +303,7 @@ const StorePurchaseOrders = () => {
                         <div className="flex justify-end">
                             <button
                                 onClick={() => setShowDetailsModal(false)}
-                                className="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
+                                className="ui-btn ui-btn--secondary"
                             >
                                 Close
                             </button>

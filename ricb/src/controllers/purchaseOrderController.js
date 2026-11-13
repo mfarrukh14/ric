@@ -1,25 +1,19 @@
-const { getDatabase } = require('../config/database');
+const { dbAll, dbGet, dbRun } = require('../db');
+
 
 // Generate unique PO number
 const generatePONumber = async () => {
-    const db = getDatabase();
     const date = new Date();
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    
+
     // Get the count of POs created today
-    const countRow = await new Promise((resolve, reject) => {
-        db.get(
-            `SELECT COUNT(*) as count FROM purchase_orders WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)`,
-            [],
-            (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            }
-        );
-    });
-    
+    const countRow = await dbGet(
+        `SELECT COUNT(*) as count FROM purchase_orders WHERE CAST(created_at AS DATE) = CAST(GETDATE() AS DATE)`,
+        []
+    );
+
     const sequentialNumber = String((countRow?.count || 0) + 1).padStart(3, '0');
     return `PO-${year}${month}${day}-${sequentialNumber}`;
 };
@@ -43,26 +37,16 @@ const createPurchaseOrder = async (req, res) => {
             referenceNo
         } = req.body;
         const userId = req.user.id;
-        const db = getDatabase();
 
         if (!tenderId || !awardLetterId || !supplierId || !items || items.length === 0) {
             return res.status(400).json({ error: 'Missing required fields: tenderId, awardLetterId, supplierId, and items are required' });
         }
 
         // Verify that the award letter exists and belongs to this tender/supplier
-        const awardLetter = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT tl.*, sa.award_amount, sa.awarded_items
-                 FROM tender_letters tl
-                 JOIN supplier_awards sa ON tl.id = sa.award_letter_id
-                 WHERE tl.id = ? AND tl.tender_id = ? AND sa.supplier_id = ? AND tl.letter_type = 'award'`,
-                [awardLetterId, tenderId, supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const awardLetter = await dbGet(`SELECT tl.*, sa.award_amount, sa.awarded_items
+         FROM tender_letters tl
+         JOIN supplier_awards sa ON tl.id = sa.award_letter_id
+         WHERE tl.id = ? AND tl.tender_id = ? AND sa.supplier_id = ? AND tl.letter_type = 'award'`, [awardLetterId, tenderId, supplierId]);
 
         if (!awardLetter) {
             return res.status(404).json({ error: 'Award letter not found for this tender and supplier combination' });
@@ -78,36 +62,26 @@ const createPurchaseOrder = async (req, res) => {
         const poNumber = await generatePONumber();
 
         // Create the purchase order
-        const poId = await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO purchase_orders 
-                (po_number, tender_id, award_letter_id, supplier_id, items, total_amount, remarks, created_by, delivery_date, payment_terms, billing_address, shipping_address, contact_name, contact_phone, contact_email, reference_no)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                ,
-                [
-                    poNumber,
-                    tenderId,
-                    awardLetterId,
-                    supplierId,
-                    JSON.stringify(items),
-                    totalAmount,
-                    remarks || null,
-                    userId,
-                    deliveryDate || null,
-                    paymentTerms || null,
-                    billingAddress || null,
-                    shippingAddress || null,
-                    contactName || null,
-                    contactPhone || null,
-                    contactEmail || null,
-                    referenceNo || null
-                ],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                }
-            );
-        });
+        const poId = await dbRun(`INSERT INTO purchase_orders 
+        (po_number, tender_id, award_letter_id, supplier_id, items, total_amount, remarks, created_by, delivery_date, payment_terms, billing_address, shipping_address, contact_name, contact_phone, contact_email, reference_no)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+            poNumber,
+            tenderId,
+            awardLetterId,
+            supplierId,
+            JSON.stringify(items),
+            totalAmount,
+            remarks || null,
+            userId,
+            deliveryDate || null,
+            paymentTerms || null,
+            billingAddress || null,
+            shippingAddress || null,
+            contactName || null,
+            contactPhone || null,
+            contactEmail || null,
+            referenceNo || null
+        ]).then(result => result.lastID);
 
         res.status(201).json({
             message: 'Purchase order created successfully',
@@ -142,7 +116,6 @@ const createPurchaseOrder = async (req, res) => {
 const getPurchaseOrders = async (req, res) => {
     try {
         const { tenderId, supplierId, status, search, page = 1, limit = 20 } = req.query;
-        const db = getDatabase();
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
         let query = `
@@ -233,19 +206,9 @@ const getPurchaseOrders = async (req, res) => {
         query += ` ORDER BY po.created_at DESC LIMIT ? OFFSET ?`;
         params.push(parseInt(limit), offset);
 
-        const purchaseOrders = await new Promise((resolve, reject) => {
-            db.all(query, params, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const purchaseOrders = await dbAll(query, params);
 
-        const totalCount = await new Promise((resolve, reject) => {
-            db.get(countQuery, countParams, (err, row) => {
-                if (err) reject(err);
-                else resolve(row?.total || 0);
-            });
-        });
+        const totalCount = await dbGet(countQuery, countParams).then(row => row?.total || 0);
 
         // Parse items JSON for each PO
         const formattedOrders = purchaseOrders.map(po => ({
@@ -273,33 +236,23 @@ const getPurchaseOrders = async (req, res) => {
 const getPurchaseOrderById = async (req, res) => {
     try {
         const { id } = req.params;
-        const db = getDatabase();
 
-        const purchaseOrder = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT 
-                    po.*,
-                    dt.tender_number,
-                    d.item_name as tender_item_name,
-                    d.description as tender_description,
-                    sbp.business_name as supplier_name,
-                    sbp.contact_person_name as supplier_contact,
-                    s.business_email as supplier_email,
-                    u.name as created_by_name
-                FROM purchase_orders po
-                JOIN demand_tenders dt ON po.tender_id = dt.id
-                JOIN demands d ON dt.demand_id = d.id
-                JOIN suppliers s ON po.supplier_id = s.id
-                JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
-                JOIN users u ON po.created_by = u.id
-                WHERE po.id = ?`,
-                [id],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const purchaseOrder = await dbGet(`SELECT 
+            po.*,
+            dt.tender_number,
+            d.item_name as tender_item_name,
+            d.description as tender_description,
+            sbp.business_name as supplier_name,
+            sbp.contact_person_name as supplier_contact,
+            s.business_email as supplier_email,
+            u.name as created_by_name
+        FROM purchase_orders po
+        JOIN demand_tenders dt ON po.tender_id = dt.id
+        JOIN demands d ON dt.demand_id = d.id
+        JOIN suppliers s ON po.supplier_id = s.id
+        JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+        JOIN users u ON po.created_by = u.id
+        WHERE po.id = ?`, [id]);
 
         if (!purchaseOrder) {
             return res.status(404).json({ error: 'Purchase order not found' });
@@ -309,7 +262,6 @@ const getPurchaseOrderById = async (req, res) => {
             ...purchaseOrder,
             items: JSON.parse(purchaseOrder.items || '[]')
         });
-
     } catch (error) {
         console.error('Error getting purchase order:', error);
         res.status(500).json({ error: 'Failed to get purchase order' });
@@ -320,33 +272,23 @@ const getPurchaseOrderById = async (req, res) => {
 const getPurchaseOrderByNumber = async (req, res) => {
     try {
         const { poNumber } = req.params;
-        const db = getDatabase();
 
-        const purchaseOrder = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT 
-                    po.*,
-                    dt.tender_number,
-                    d.item_name as tender_item_name,
-                    d.description as tender_description,
-                    sbp.business_name as supplier_name,
-                    sbp.contact_person_name as supplier_contact,
-                    s.business_email as supplier_email,
-                    u.name as created_by_name
-                FROM purchase_orders po
-                JOIN demand_tenders dt ON po.tender_id = dt.id
-                JOIN demands d ON dt.demand_id = d.id
-                JOIN suppliers s ON po.supplier_id = s.id
-                JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
-                JOIN users u ON po.created_by = u.id
-                WHERE po.po_number = ?`,
-                [poNumber],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const purchaseOrder = await dbGet(`SELECT 
+            po.*,
+            dt.tender_number,
+            d.item_name as tender_item_name,
+            d.description as tender_description,
+            sbp.business_name as supplier_name,
+            sbp.contact_person_name as supplier_contact,
+            s.business_email as supplier_email,
+            u.name as created_by_name
+        FROM purchase_orders po
+        JOIN demand_tenders dt ON po.tender_id = dt.id
+        JOIN demands d ON dt.demand_id = d.id
+        JOIN suppliers s ON po.supplier_id = s.id
+        JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+        JOIN users u ON po.created_by = u.id
+        WHERE po.po_number = ?`, [poNumber]);
 
         if (!purchaseOrder) {
             return res.status(404).json({ error: 'Purchase order not found' });
@@ -356,7 +298,6 @@ const getPurchaseOrderByNumber = async (req, res) => {
             ...purchaseOrder,
             items: JSON.parse(purchaseOrder.items || '[]')
         });
-
     } catch (error) {
         console.error('Error getting purchase order by number:', error);
         res.status(500).json({ error: 'Failed to get purchase order' });
@@ -367,33 +308,23 @@ const getPurchaseOrderByNumber = async (req, res) => {
 const getAwardedSuppliersForTender = async (req, res) => {
     try {
         const { tenderId } = req.params;
-        const db = getDatabase();
 
-        const awardedSuppliers = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT 
-                    sa.id as award_id,
-                    sa.supplier_id,
-                    sa.award_amount,
-                    sa.awarded_items,
-                    sa.award_letter_id,
-                    sbp.business_name as supplier_name,
-                    sbp.contact_person_name as supplier_contact,
-                    s.business_email as supplier_email,
-                    tl.letter_title,
-                    tl.sent_at as award_sent_at
-                FROM supplier_awards sa
-                JOIN suppliers s ON sa.supplier_id = s.id
-                JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
-                JOIN tender_letters tl ON sa.award_letter_id = tl.id
-                WHERE sa.tender_id = ?`,
-                [tenderId],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const awardedSuppliers = await dbAll(`SELECT 
+            sa.id as award_id,
+            sa.supplier_id,
+            sa.award_amount,
+            sa.awarded_items,
+            sa.award_letter_id,
+            sbp.business_name as supplier_name,
+            sbp.contact_person_name as supplier_contact,
+            s.business_email as supplier_email,
+            tl.letter_title,
+            tl.sent_at as award_sent_at
+        FROM supplier_awards sa
+        JOIN suppliers s ON sa.supplier_id = s.id
+        JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+        JOIN tender_letters tl ON sa.award_letter_id = tl.id
+        WHERE sa.tender_id = ?`, [tenderId]);
 
         // Parse awarded items JSON
         const formattedSuppliers = awardedSuppliers.map(supplier => ({
@@ -402,7 +333,6 @@ const getAwardedSuppliersForTender = async (req, res) => {
         }));
 
         res.json(formattedSuppliers);
-
     } catch (error) {
         console.error('Error getting awarded suppliers:', error);
         res.status(500).json({ error: 'Failed to get awarded suppliers' });
@@ -414,7 +344,6 @@ const updatePurchaseOrderStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status, remarks, cancellationReason } = req.body;
-        const db = getDatabase();
 
         const validStatuses = ['created', 'sent', 'acknowledged', 'fulfilled', 'cancelled'];
         if (!validStatuses.includes(status)) {
@@ -422,12 +351,7 @@ const updatePurchaseOrderStatus = async (req, res) => {
         }
 
         // Check if PO exists
-        const existingPO = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM purchase_orders WHERE id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const existingPO = await dbGet('SELECT * FROM purchase_orders WHERE id = ?', [id]);
 
         if (!existingPO) {
             return res.status(404).json({ error: 'Purchase order not found' });
@@ -456,18 +380,12 @@ const updatePurchaseOrderStatus = async (req, res) => {
         updateQuery += ' WHERE id = ?';
         params.push(id);
 
-        await new Promise((resolve, reject) => {
-            db.run(updateQuery, params, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+        await dbRun(updateQuery, params);
 
         res.json({
             message: 'Purchase order status updated successfully',
             status
         });
-
     } catch (error) {
         console.error('Error updating purchase order status:', error);
         res.status(500).json({ error: 'Failed to update purchase order status' });
@@ -478,27 +396,17 @@ const updatePurchaseOrderStatus = async (req, res) => {
 const getPurchaseOrdersByAwardLetter = async (req, res) => {
     try {
         const { awardLetterId } = req.params;
-        const db = getDatabase();
 
-        const purchaseOrders = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT 
-                    po.*,
-                    sbp.business_name as supplier_name,
-                    u.name as created_by_name
-                FROM purchase_orders po
-                JOIN suppliers s ON po.supplier_id = s.id
-                JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
-                JOIN users u ON po.created_by = u.id
-                WHERE po.award_letter_id = ?
-                ORDER BY po.created_at DESC`,
-                [awardLetterId],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const purchaseOrders = await dbAll(`SELECT 
+            po.*,
+            sbp.business_name as supplier_name,
+            u.name as created_by_name
+        FROM purchase_orders po
+        JOIN suppliers s ON po.supplier_id = s.id
+        JOIN supplier_business_profile sbp ON s.id = sbp.supplier_id
+        JOIN users u ON po.created_by = u.id
+        WHERE po.award_letter_id = ?
+        ORDER BY po.created_at DESC`, [awardLetterId]);
 
         const formattedOrders = purchaseOrders.map(po => ({
             ...po,
@@ -506,7 +414,6 @@ const getPurchaseOrdersByAwardLetter = async (req, res) => {
         }));
 
         res.json(formattedOrders);
-
     } catch (error) {
         console.error('Error getting purchase orders by award letter:', error);
         res.status(500).json({ error: 'Failed to get purchase orders' });

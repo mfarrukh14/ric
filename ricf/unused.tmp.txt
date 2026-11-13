@@ -1,0 +1,8 @@
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\admin\DemandManagement.jsx	getItemStatusSummary@271
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\committee\ItemWiseEvaluation.jsx	scoreErrors@16 setScoreErrors@16 itemEval@314
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\committee\MarketSurveyCommittee.jsx	api@3 data@79
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\department\PurchaseDepartment.jsx	supplyOrders@33 downloadSupplyOrderPDF@659 reportFilename@1021 getTotalQuantity@1129 data@1211
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\purchase\PreBidMeetingManagement.jsx	api@3
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\purchase\TenderOpeningDetails.jsx	response@117
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\store\FulfillmentPage.jsx	jumpToItem@362 removedItems@496
+C:\Users\Pc\Desktop\MyArchive\code\ric\eproc\ricf\src\components\supplier\GrievanceManagement.jsx	canApply@343

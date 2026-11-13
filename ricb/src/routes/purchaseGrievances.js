@@ -1,20 +1,17 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const controller = require('../controllers/purchaseGrievanceController');
+
 const router = express.Router();
-const purchaseGrievanceController = require('../controllers/purchaseGrievanceController');
 
-// Get all pending grievances for purchase department
-router.get('/pending', purchaseGrievanceController.getPendingGrievances);
+// Previously mounted with no authentication at all: anyone could approve or reject grievances.
+router.use(staffOnly, allow('purchase'));
 
-// Get all grievances (pending, approved, rejected)
-router.get('/all', purchaseGrievanceController.getAllGrievances);
-
-// Approve a grievance and send notification to supplier
-router.post('/:grievanceId/approve', purchaseGrievanceController.approveGrievance);
-
-// Reject a grievance (supplier will not be notified)
-router.post('/:grievanceId/reject', purchaseGrievanceController.rejectGrievance);
-
-// Bulk approve grievances
-router.post('/bulk-approve', purchaseGrievanceController.bulkApproveGrievances);
+router.get('/pending', controller.getPendingGrievances);
+router.get('/all', controller.getAllGrievances);
+router.post('/bulk-approve', controller.bulkApproveGrievances);
+router.post('/:grievanceId/approve', controller.approveGrievance);
+router.post('/:grievanceId/reject', controller.rejectGrievance);
 
 module.exports = router;

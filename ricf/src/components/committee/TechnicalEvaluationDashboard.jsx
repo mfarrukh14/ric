@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './TechnicalEvaluationDashboard.css';
+import { apiUrl } from '../../config/api';
+import { PageHeader } from '../../ui';
 
+import { formatDate } from '../../lib/time';
+import { TenderStatus } from '../../ui/tender';
 const TechnicalEvaluationDashboard = () => {
     const [activeTab, setActiveTab] = useState('current');
     const [currentTenders, setCurrentTenders] = useState([]);
@@ -10,7 +14,6 @@ const TechnicalEvaluationDashboard = () => {
     const [error, setError] = useState('');
     const [downloadingReports, setDownloadingReports] = useState({});
     const navigate = useNavigate();
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
     useEffect(() => {
         if (activeTab === 'current') {
@@ -25,7 +28,7 @@ const TechnicalEvaluationDashboard = () => {
         setError('');
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/technical-evaluation/expired-tenders`, {
+            const response = await fetch(`${apiUrl}/technical-evaluation/expired-tenders`, {
                 headers: { 
                     Authorization: `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -51,7 +54,7 @@ const TechnicalEvaluationDashboard = () => {
         setError('');
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiUrl}/api/technical-reports/archived`, {
+            const response = await fetch(`${apiUrl}/technical-reports/archived`, {
                 headers: { 
                     Authorization: `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -63,7 +66,6 @@ const TechnicalEvaluationDashboard = () => {
             }
             
             const data = await response.json();
-            console.log('Archived evaluations data:', data);
             setArchivedEvaluations(data);
         } catch (error) {
             setError('Failed to fetch archived evaluations');
@@ -85,7 +87,7 @@ const TechnicalEvaluationDashboard = () => {
             const token = localStorage.getItem('token');
             const endpoint = reportType === 'excel' ? 'comparative-analysis' : 'technical-evaluation';
             
-            const response = await fetch(`${apiUrl}/api/technical-reports/tender/${tenderId}/supplier/${encodeURIComponent(supplierName)}/${endpoint}`, {
+            const response = await fetch(`${apiUrl}/technical-reports/tender/${tenderId}/supplier/${encodeURIComponent(supplierName)}/${endpoint}`, {
                 headers: { 
                     Authorization: `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -119,23 +121,11 @@ const TechnicalEvaluationDashboard = () => {
         }
     };
 
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        });
-    };
+
 
     return (
         <div className="dashboard-container">
-            {/* Header */}
-            <div className="dashboard-header">
-                <h1>Technical Evaluation Committee Dashboard</h1>
-                <p style={{ color: '#6b7280', marginTop: '8px' }}>
-                    Manage technical evaluations and generate reports
-                </p>
-            </div>
+            <PageHeader title="Technical evaluation" />
 
             {/* Tab Navigation */}
             <div className="tab-navigation">
@@ -180,10 +170,8 @@ const TechnicalEvaluationDashboard = () => {
                                 {currentTenders.map((tender) => (
                                     <div key={tender.id} className="evaluation-card">
                                         <div className="evaluation-header">
-                                            <h3>Tender #{tender.id}</h3>
-                                            <span className={`status-badge ${tender.tender_status || 'active'}`}>
-                                                {tender.tender_status || 'active'}
-                                            </span>
+                                            <h3>{tender.tender_number || `Tender #${tender.id}`}</h3>
+                                            <TenderStatus status={tender.tender_status} />
                                         </div>
                                         <div className="evaluation-details">
                                             <p><strong>Item:</strong> {tender.item_name || 'N/A'}</p>
@@ -228,7 +216,7 @@ const TechnicalEvaluationDashboard = () => {
                                 {archivedEvaluations.map((tender) => (
                                     <div key={tender.tender_id} className="archived-tender-card">
                                         <div className="tender-header">
-                                            <h3>Tender #{tender.tender_id} - {tender.item_name}</h3>
+                                            <h3>{tender.title || `Tender #${tender.tender_id}`}: {tender.item_name}</h3>
                                             <div className="tender-meta">
                                                 <span>Created: {formatDate(tender.created_at)}</span>
                                                 <span>Suppliers: {tender.supplier_count}</span>
@@ -276,7 +264,7 @@ const TechnicalEvaluationDashboard = () => {
                                                                     }}
                                                                 >
                                                                     {downloadingReports[`${tender.tender_id}_${supplier.username}_excel`] ? 
-                                                                        '⏳ Downloading...' : '📊 Excel Report'
+                                                                        'Downloading…' : 'Excel Report'
                                                                     }
                                                                 </button>
                                                                 
@@ -296,7 +284,7 @@ const TechnicalEvaluationDashboard = () => {
                                                                     }}
                                                                 >
                                                                     {downloadingReports[`${tender.tender_id}_${supplier.username}_docx`] ? 
-                                                                        '⏳ Downloading...' : '📄 DOCX Report'
+                                                                        'Downloading…' : 'DOCX Report'
                                                                     }
                                                                 </button>
                                                             </div>

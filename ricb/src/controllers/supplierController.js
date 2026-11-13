@@ -1,10 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { JWT_SECRET } = require('../config/env');
 const path = require('path');
 const fs = require('fs');
-const { getDatabase } = require('../config/database');
+const { dbAll, dbGet, dbRun } = require('../db');
 const { sendOTPEmail } = require('../utils/otpService');
-const auditLogger = require('../utils/auditLogger');
 
 // Generate random OTP
 const generateOTP = () => {
@@ -13,69 +13,43 @@ const generateOTP = () => {
 
 // Initial supplier registration (creates account but doesn't complete profile)
 const registerSupplier = async (req, res) => {
-    console.log('🚀 Register supplier request received:', req.body);
     
     const { username, businessEmail, password } = req.body;
     
     if (!username || !businessEmail || !password) {
-        console.log('❌ Missing required fields');
         return res.status(400).json({ error: 'Username, business email, and password are required' });
     }
 
-    const db = getDatabase();
 
     try {
-        console.log('🔍 Checking if supplier already exists...');
         
         // Check if username or email already exists
-        const existingSupplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT id FROM suppliers WHERE username = ? OR business_email = ?',
-                [username, businessEmail],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const existingSupplier = await dbGet(
+            'SELECT id FROM suppliers WHERE username = ? OR business_email = ?',
+            [username, businessEmail]
+        );
 
         if (existingSupplier) {
-            console.log('❌ Supplier already exists');
             return res.status(400).json({ error: 'Username or email already exists' });
         }
 
-        console.log('🔐 Hashing password...');
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        console.log('💾 Creating supplier account...');
         // Create supplier account
-        const supplierId = await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO suppliers (username, business_email, password, email_verified, registration_step, status) 
-                 VALUES (?, ?, ?, 0, 0, 'draft')`,
-                [username, businessEmail, hashedPassword],
-                function(err) {
-                    if (err) {
-                        console.error('Database error:', err);
-                        reject(err);
-                    } else {
-                        console.log('✅ Supplier created with ID:', this.lastID);
-                        resolve(this.lastID);
-                    }
-                }
-            );
-        });
+        const supplierId = await dbRun(
+            `INSERT INTO suppliers (username, business_email, password, email_verified, registration_step, status) 
+             VALUES (?, ?, ?, 0, 0, 'draft')`,
+            [username, businessEmail, hashedPassword]
+        ).then(result => result.lastID);
 
-        console.log('🔑 Generating JWT token...');
         // Generate JWT token
         const token = jwt.sign(
             { supplierId, username, businessEmail },
-            process.env.JWT_SECRET || 'your-secret-key',
+            JWT_SECRET,
             { expiresIn: '24h' }
         );
 
-        console.log('✅ Registration successful');
         res.status(201).json({
             message: 'Account created successfully. Please complete your registration.',
             token,
@@ -91,32 +65,33 @@ const registerSupplier = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Registration error:', error);
-        res.status(500).json({ error: 'Registration failed: ' + error.message });
+        res.status(500).json({ error: 'Registration failed' });
     }
 };
 
 // Supplier login
+const supplierSession = (supplier) => ({
+    id: supplier.id,
+    username: supplier.username,
+    businessEmail: supplier.business_email,
+    emailVerified: supplier.email_verified === 1,
+    registrationStep: supplier.registration_step,
+    status: supplier.status
+});
+
 const loginSupplier = async (req, res) => {
     const { usernameOrEmail, password } = req.body;
-    
+
     if (!usernameOrEmail || !password) {
         return res.status(400).json({ error: 'Username/email and password are required' });
     }
 
-    const db = getDatabase();
-
     try {
         // Find supplier by username or email
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM suppliers WHERE username = ? OR business_email = ?',
-                [usernameOrEmail, usernameOrEmail],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT * FROM suppliers WHERE username = ? OR business_email = ?',
+            [usernameOrEmail, usernameOrEmail]
+        );
 
         if (!supplier) {
             return res.status(401).json({ error: 'Invalid credentials' });
@@ -131,7 +106,7 @@ const loginSupplier = async (req, res) => {
         // Generate JWT token
         const token = jwt.sign(
             { supplierId: supplier.id, username: supplier.username, businessEmail: supplier.business_email },
-            process.env.JWT_SECRET || 'your-secret-key',
+            JWT_SECRET,
             { expiresIn: '24h' }
         );
 
@@ -165,18 +140,13 @@ const loginSupplier = async (req, res) => {
             });
         }
 
-        res.json({
-            message: 'Login successful',
-            token,
-            supplier: {
-                id: supplier.id,
-                username: supplier.username,
-                businessEmail: supplier.business_email,
-                emailVerified: supplier.email_verified === 1,
-                registrationStep: supplier.registration_step,
-                status: supplier.status
-            }
-        });
+        // Approved suppliers with 2FA prove the second factor before getting a session.
+        if (supplier.two_factor_enabled) {
+            const challenge = jwt.sign({ purpose: 'supplier-2fa', supplierId: supplier.id }, JWT_SECRET, { expiresIn: '5m' });
+            return res.json({ requires2FA: true, challenge, message: 'Please provide your 2FA code to complete login' });
+        }
+
+        res.json({ message: 'Login successful', token, supplier: supplierSession(supplier) });
 
     } catch (error) {
         console.error('Login error:', error);
@@ -192,24 +162,13 @@ const sendEmailOTP = async (req, res) => {
         return res.status(400).json({ error: 'Supplier ID is required' });
     }
 
-    const db = getDatabase();
-
     try {
         // Get supplier email + company name (business_name may not be saved yet
         // this early in registration, so fall back to the username)
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT s.business_email, s.username, bp.business_name
-                 FROM suppliers s
-                 LEFT JOIN supplier_business_profile bp ON bp.supplier_id = s.id
-                 WHERE s.id = ?`,
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(`SELECT s.business_email, s.username, bp.business_name
+         FROM suppliers s
+         LEFT JOIN supplier_business_profile bp ON bp.supplier_id = s.id
+         WHERE s.id = ?`, [supplierId]);
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
@@ -223,33 +182,15 @@ const sendEmailOTP = async (req, res) => {
         // Invalidate any previous unverified email OTP for this supplier so a
         // resend always supersedes the old code rather than leaving it valid
         // alongside the new one.
-        await new Promise((resolve, reject) => {
-            db.run(
-                `DELETE FROM supplier_otp_verifications
-                 WHERE supplier_id = ? AND otp_type = 'email_verification' AND verified = 0`,
-                [supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`DELETE FROM supplier_otp_verifications
+         WHERE supplier_id = ? AND otp_type = 'email_verification' AND verified = 0`, [supplierId]);
 
         // Store OTP in database - expiry computed by the DB's own clock
         // (datetime('now', ...) -> GETDATE()-based) so it's never compared
         // against a different clock/timezone than the verification check below.
-        await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO supplier_otp_verifications
-                 (supplier_id, email, otp_code, otp_type, expires_at, verified)
-                 VALUES (?, ?, ?, 'email_verification', datetime('now', '+2 minutes'), 0)`,
-                [supplierId, supplier.business_email, otp],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`INSERT INTO supplier_otp_verifications
+         (supplier_id, email, otp_code, otp_type, expires_at, verified)
+         VALUES (?, ?, ?, 'email_verification', datetime('now', '+2 minutes'), 0)`, [supplierId, supplier.business_email, otp]);
 
         // Send OTP email
         await sendOTPEmail(supplier.business_email, otp, companyName);
@@ -265,55 +206,29 @@ const sendEmailOTP = async (req, res) => {
 // Verify email OTP
 const verifyEmailOTP = async (req, res) => {
     const { supplierId, otp } = req.body;
-    
+
     if (!supplierId || !otp) {
         return res.status(400).json({ error: 'Supplier ID and OTP are required' });
     }
 
-    const db = getDatabase();
-
     try {
         // Find valid OTP
-        const otpRecord = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT * FROM supplier_otp_verifications 
-                 WHERE supplier_id = ? AND otp_code = ? AND otp_type = 'email_verification' 
-                 AND verified = 0 AND expires_at > datetime('now')`,
-                [supplierId, otp],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const otpRecord = await dbGet(`SELECT * FROM supplier_otp_verifications 
+         WHERE supplier_id = ? AND otp_code = ? AND otp_type = 'email_verification' 
+         AND verified = 0 AND expires_at > datetime('now')`, [supplierId, otp]);
 
         if (!otpRecord) {
             return res.status(400).json({ error: 'Invalid or expired OTP' });
         }
 
         // Mark OTP as verified
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE supplier_otp_verifications SET verified = 1 WHERE id = ?',
-                [otpRecord.id],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            'UPDATE supplier_otp_verifications SET verified = 1 WHERE id = ?',
+            [otpRecord.id]
+        );
 
         // Mark supplier email as verified
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET email_verified = 1 WHERE id = ?',
-                [supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun('UPDATE suppliers SET email_verified = 1 WHERE id = ?', [supplierId]);
 
         res.json({ message: 'Email verified successfully' });
 
@@ -326,91 +241,51 @@ const verifyEmailOTP = async (req, res) => {
 // Save registration step data
 const saveRegistrationStep = async (req, res) => {
     const { supplierId, step, data } = req.body;
-    
-    console.log('🔍 Save registration step called:');
-    console.log('  Supplier ID:', supplierId);
-    console.log('  Step:', step);
-    console.log('  Data keys:', Object.keys(data || {}));
-    if (data && data.businessProfile) {
-        console.log('  Business profile data:', data.businessProfile);
-    }
-    if (data && data.registrationBodies) {
-        console.log('  Registration bodies data:', data.registrationBodies);
-    }
-    if (data && data.addresses) {
-        console.log('  Addresses data:', data.addresses);
-    }
-    if (data && data.pastExperience) {
-        console.log('  Past experience data:', data.pastExperience);
-    }
-    
+
     if (!supplierId || !step || !data) {
-        console.log('❌ Missing required fields');
         return res.status(400).json({ error: 'Supplier ID, step, and data are required' });
     }
-
-    const db = getDatabase();
 
     try {
         switch (step) {
             case 1:
                 // Save business profile
-                await new Promise((resolve, reject) => {
-                    db.run(
-                        `INSERT OR REPLACE INTO supplier_business_profile 
-                         (supplier_id, business_entity_type, business_category, business_industry, 
-                          description, iban_number, business_name, contact_person_name, origin_classification, origin_country, 
-                          date_of_incorporation, website_url, business_mobile_number, business_fax_number, updated_at) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-                        [
-                            supplierId,
-                            data.businessProfile.businessEntityType,
-                            data.businessProfile.businessCategory,
-                            data.businessProfile.businessIndustry,
-                            data.businessProfile.description,
-                            data.businessProfile.ibanNumber,
-                            data.businessProfile.businessName,
-                            data.businessProfile.contactPersonName,
-                            data.businessProfile.originClassification,
-                            data.businessProfile.originCountry,
-                            data.businessProfile.dateOfIncorporation,
-                            data.businessProfile.websiteUrl,
-                            data.businessProfile.businessMobileNumber,
-                            data.businessProfile.businessFaxNumber
-                        ],
-                        (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        }
-                    );
-                });
+                await dbRun(`INSERT OR REPLACE INTO supplier_business_profile 
+                 (supplier_id, business_entity_type, business_category, business_industry, 
+                  description, iban_number, business_name, contact_person_name, origin_classification, origin_country, 
+                  date_of_incorporation, website_url, business_mobile_number, business_fax_number, updated_at) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`, [
+                    supplierId,
+                    data.businessProfile.businessEntityType,
+                    data.businessProfile.businessCategory,
+                    data.businessProfile.businessIndustry,
+                    data.businessProfile.description,
+                    data.businessProfile.ibanNumber,
+                    data.businessProfile.businessName,
+                    data.businessProfile.contactPersonName,
+                    data.businessProfile.originClassification,
+                    data.businessProfile.originCountry,
+                    data.businessProfile.dateOfIncorporation,
+                    data.businessProfile.websiteUrl,
+                    data.businessProfile.businessMobileNumber,
+                    data.businessProfile.businessFaxNumber
+                ]);
                 break;
 
             case 3:
                 // Save registration bodies
                 if (data.registrationBodies && data.registrationBodies.length > 0) {
                     // Clear existing registration bodies
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_registration_bodies WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
+                    await dbRun(
+                        'DELETE FROM supplier_registration_bodies WHERE supplier_id = ?',
+                        [supplierId]
+                    );
 
                     // Insert new registration bodies
                     for (const body of data.registrationBodies) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_registration_bodies 
-                                 (supplier_id, registration_body, registration_number, registration_date) 
-                                 VALUES (?, ?, ?, ?)`,
-                                [supplierId, body.registrationBody, body.registrationNumber, body.registrationDate],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
+                        await dbRun(`INSERT INTO supplier_registration_bodies 
+                         (supplier_id, registration_body, registration_number, registration_date) 
+                         VALUES (?, ?, ?, ?)`, [supplierId, body.registrationBody, body.registrationNumber, body.registrationDate]);
                     }
                 }
                 break;
@@ -419,36 +294,22 @@ const saveRegistrationStep = async (req, res) => {
                 // Save addresses
                 if (data.addresses && data.addresses.length > 0) {
                     // Clear existing addresses
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_addresses WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
+                    await dbRun('DELETE FROM supplier_addresses WHERE supplier_id = ?', [supplierId]);
 
                     // Insert new addresses
                     for (const address of data.addresses) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_addresses 
-                                 (supplier_id, address_type, address_line_1, address_line_2, city, state_province, postal_code, country) 
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    address.addressType,
-                                    address.addressLine1,
-                                    address.addressLine2 || null,
-                                    address.city,
-                                    address.stateProvince,
-                                    address.postalCode,
-                                    address.country
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
+                        await dbRun(`INSERT INTO supplier_addresses 
+                         (supplier_id, address_type, address_line_1, address_line_2, city, state_province, postal_code, country) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [
+                            supplierId,
+                            address.addressType,
+                            address.addressLine1,
+                            address.addressLine2 || null,
+                            address.city,
+                            address.stateProvince,
+                            address.postalCode,
+                            address.country
+                        ]);
                     }
                 }
                 break;
@@ -457,105 +318,69 @@ const saveRegistrationStep = async (req, res) => {
                 // Save Past Experience (Step 6)
                 if (data.pastExperience && data.pastExperience.length > 0) {
                     // Clear existing past experience
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_past_experience WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
+                    await dbRun('DELETE FROM supplier_past_experience WHERE supplier_id = ?', [supplierId]);
 
                     // Insert new past experience
                     for (const experience of data.pastExperience) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_past_experience 
-                                 (supplier_id, project_title, client_name, work_type, project_value, duration, start_date, end_date, status, description) 
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    experience.projectTitle,
-                                    experience.clientName,
-                                    experience.workType,
-                                    experience.projectValue || null,
-                                    experience.duration || null,
-                                    experience.startDate || null,
-                                    experience.endDate || null,
-                                    experience.status || 'Completed',
-                                    experience.description || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
+                        await dbRun(`INSERT INTO supplier_past_experience 
+                         (supplier_id, project_title, client_name, work_type, project_value, duration, start_date, end_date, status, description) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                            supplierId,
+                            experience.projectTitle,
+                            experience.clientName,
+                            experience.workType,
+                            experience.projectValue || null,
+                            experience.duration || null,
+                            experience.startDate || null,
+                            experience.endDate || null,
+                            experience.status || 'Completed',
+                            experience.description || null
+                        ]);
                     }
                 }
 
                 // Save Client References
                 if (data.clientReferences && data.clientReferences.length > 0) {
                     // Clear existing client references
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_client_references WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
+                    await dbRun(
+                        'DELETE FROM supplier_client_references WHERE supplier_id = ?',
+                        [supplierId]
+                    );
 
                     // Insert new client references
                     for (const reference of data.clientReferences) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_client_references 
-                                 (supplier_id, contact_name, organization, position, phone, email, relationship) 
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    reference.contactName,
-                                    reference.organization,
-                                    reference.position || null,
-                                    reference.phone || null,
-                                    reference.email || null,
-                                    reference.relationship || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
+                        await dbRun(`INSERT INTO supplier_client_references 
+                         (supplier_id, contact_name, organization, position, phone, email, relationship) 
+                         VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+                            supplierId,
+                            reference.contactName,
+                            reference.organization,
+                            reference.position || null,
+                            reference.phone || null,
+                            reference.email || null,
+                            reference.relationship || null
+                        ]);
                     }
                 }
 
                 // Save Work Proof Images (for now just store URLs/paths)
                 if (data.workProofImages && data.workProofImages.length > 0) {
                     // Clear existing work proof images
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_work_proof_images WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
+                    await dbRun(
+                        'DELETE FROM supplier_work_proof_images WHERE supplier_id = ?',
+                        [supplierId]
+                    );
 
                     // Insert new work proof images
                     for (const image of data.workProofImages) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_work_proof_images 
-                                 (supplier_id, image_url, description, project_reference) 
-                                 VALUES (?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    image.preview || image.file?.name || 'uploaded_image',
-                                    image.description || null,
-                                    image.project_reference || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
+                        await dbRun(`INSERT INTO supplier_work_proof_images 
+                         (supplier_id, image_url, description, project_reference) 
+                         VALUES (?, ?, ?, ?)`, [
+                            supplierId,
+                            image.preview || image.file?.name || 'uploaded_image',
+                            image.description || null,
+                            image.project_reference || null
+                        ]);
                     }
                 }
                 break;
@@ -564,49 +389,32 @@ const saveRegistrationStep = async (req, res) => {
                 // Save PPRA registrations (Step 7)
                 if (data.ppraRegistrations && data.ppraRegistrations.length > 0) {
                     // Clear existing PPRA registrations
-                    await new Promise((resolve, reject) => {
-                        db.run('DELETE FROM supplier_ppra_registrations WHERE supplier_id = ?', [supplierId], (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        });
-                    });
+                    await dbRun(
+                        'DELETE FROM supplier_ppra_registrations WHERE supplier_id = ?',
+                        [supplierId]
+                    );
 
                     // Insert new PPRA registrations
                     for (const ppra of data.ppraRegistrations) {
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT INTO supplier_ppra_registrations 
-                                 (supplier_id, ppra_type, registration_number, registration_date, expiry_date) 
-                                 VALUES (?, ?, ?, ?, ?)`,
-                                [
-                                    supplierId,
-                                    ppra.ppraType,
-                                    ppra.registrationNumber,
-                                    ppra.registrationDate,
-                                    ppra.expiryDate || null
-                                ],
-                                (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                }
-                            );
-                        });
+                        await dbRun(`INSERT INTO supplier_ppra_registrations 
+                         (supplier_id, ppra_type, registration_number, registration_date, expiry_date) 
+                         VALUES (?, ?, ?, ?, ?)`, [
+                            supplierId,
+                            ppra.ppraType,
+                            ppra.registrationNumber,
+                            ppra.registrationDate,
+                            ppra.expiryDate || null
+                        ]);
                     }
                 }
                 break;
         }
 
         // Update registration step
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET registration_step = ? WHERE id = ?',
-                [Math.max(step, 0), supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            'UPDATE suppliers SET registration_step = ? WHERE id = ?',
+            [Math.max(step, 0), supplierId]
+        );
 
         res.json({ message: 'Step saved successfully' });
 
@@ -619,65 +427,28 @@ const saveRegistrationStep = async (req, res) => {
 // Submit final application
 const submitApplication = async (req, res) => {
     const { supplierId } = req.body;
-    
-    if (!supplierId) {
-        return res.status(400).json({ error: 'Supplier ID is required' });
-    }
-
-    const db = getDatabase();
-
     try {
-        // Handle file uploads
-        const documentTypes = ['professionalTaxCert', 'ntnDocument', 'drugSaleLicense', 'pecDocument', 'gstDocument'];
-        
-        for (const docType of documentTypes) {
-            if (req.files && req.files[docType]) {
-                const file = req.files[docType][0];
-                
-                // Save document record
-                await new Promise((resolve, reject) => {
-                    db.run(
-                        `INSERT INTO supplier_documents 
-                         (supplier_id, document_type, file_path, original_name) 
-                         VALUES (?, ?, ?, ?)`,
-                        [supplierId, docType, file.path, file.originalname],
-                        (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        }
-                    );
-                });
+        const current = await dbGet('SELECT status, email_verified FROM suppliers WHERE id = ?', [supplierId]);
+        if (!Number(current?.email_verified)) {
+            return res.status(400).json({ error: 'Verify your email address before submitting.' });
+        }
+
+        for (const docType of ['professionalTaxCert', 'ntnDocument', 'drugSaleLicense', 'pecDocument', 'gstDocument']) {
+            const file = req.files?.[docType]?.[0];
+            if (file) {
+                await dbRun(
+                    'INSERT INTO supplier_documents (supplier_id, document_type, file_path, original_name) VALUES (?, ?, ?, ?)',
+                    [supplierId, docType, file.path, file.originalname],
+                );
             }
         }
 
-        // Check if this is a resubmission before updating status
-        const currentSupplier = await new Promise((resolve, reject) => {
-            db.get('SELECT status FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
+        await dbRun("UPDATE suppliers SET status = 'pending', registration_step = 6 WHERE id = ?", [supplierId]);
+        res.json({
+            message: current.status === 'pending_resubmission'
+                ? 'Application resubmitted for review'
+                : 'Application submitted for approval',
         });
-
-        const isResubmission = currentSupplier && currentSupplier.status === 'pending_resubmission';
-
-        // Update supplier status to pending and registration step to 6
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET status = ?, registration_step = 6 WHERE id = ?',
-                ['pending', supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
-        
-        res.json({ 
-            message: isResubmission 
-                ? 'Application resubmitted successfully and is now pending review' 
-                : 'Application submitted successfully and is now pending approval' 
-        });
-
     } catch (error) {
         console.error('Submit application error:', error);
         res.status(500).json({ error: 'Failed to submit application' });
@@ -686,30 +457,20 @@ const submitApplication = async (req, res) => {
 
 // Get pending suppliers for admin review
 const getPendingSuppliers = async (req, res) => {
-    const db = getDatabase();
-
     try {
-        const suppliers = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT 
-                    s.id, 
-                    s.username,
-                    s.business_email as company_email,
-                    bp.business_name as company_name, 
-                    bp.business_category, 
-                    bp.origin_classification,
-                    s.status,
-                    s.created_at
-                 FROM suppliers s 
-                 LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id 
-                 WHERE s.status IN ('pending', 'pending_resubmission') 
-                 ORDER BY s.created_at DESC`,
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const suppliers = await dbAll(`SELECT 
+            s.id, 
+            s.username,
+            s.business_email as company_email,
+            bp.business_name as company_name, 
+            bp.business_category, 
+            bp.origin_classification,
+            s.status,
+            s.created_at
+         FROM suppliers s 
+         LEFT JOIN supplier_business_profile bp ON s.id = bp.supplier_id 
+         WHERE s.status IN ('pending', 'pending_resubmission') 
+         ORDER BY s.created_at DESC`);
 
         res.json({ suppliers });
 
@@ -722,60 +483,29 @@ const getPendingSuppliers = async (req, res) => {
 // Get supplier details for admin review
 const getSupplierDetails = async (req, res) => {
     const { id } = req.params;
-    const db = getDatabase();
 
     try {
         // Get supplier basic info
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const supplier = await dbGet('SELECT * FROM suppliers WHERE id = ?', [id]);
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
         // Get business profile
-        const businessProfile = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const businessProfile = await dbGet('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [id]);
 
         // Get registration bodies
-        const registrationBodies = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const registrationBodies = await dbAll('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [id]);
 
         // Get documents
-        const documents = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_documents WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const documents = await dbAll('SELECT * FROM supplier_documents WHERE supplier_id = ?', [id]);
 
         // Get addresses
-        const addresses = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const addresses = await dbAll('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [id]);
 
         // Get PPRA registrations
-        const ppraRegistrations = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const ppraRegistrations = await dbAll('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [id]);
 
         res.json({
             supplier,
@@ -809,7 +539,7 @@ const getSupplierDetails = async (req, res) => {
 const submitEvaluation = async (req, res) => {
     const { supplierId } = req.params;
     const { action, rejectionReason } = req.body;
-    
+
     if (!['approve', 'reject'].includes(action)) {
         return res.status(400).json({ error: 'Invalid action. Must be approve or reject' });
     }
@@ -818,37 +548,21 @@ const submitEvaluation = async (req, res) => {
         return res.status(400).json({ error: 'Rejection reason is required' });
     }
 
-    const db = getDatabase();
-
     try {
         const status = action === 'approve' ? 'approved' : 'rejected';
         const timestamp = new Date().toISOString();
 
         // First, get supplier details for email
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const supplier = await dbGet('SELECT * FROM suppliers WHERE id = ?', [supplierId]);
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
         // Update supplier status
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE suppliers SET status = ?, rejection_reason = ?, 
-                 ${action === 'approve' ? 'approved_at' : 'rejected_at'} = ? 
-                 WHERE id = ?`,
-                [status, rejectionReason || null, timestamp, supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`UPDATE suppliers SET status = ?, rejection_reason = ?, 
+         ${action === 'approve' ? 'approved_at' : 'rejected_at'} = ? 
+         WHERE id = ?`, [status, rejectionReason || null, timestamp, supplierId]);
 
         // Send email notification
         try {
@@ -857,39 +571,8 @@ const submitEvaluation = async (req, res) => {
             
             if (action === 'approve') {
                 await emailService.sendSupplierApprovalEmail(supplier.business_email, supplier.username);
-                console.log(`Approval email sent to ${supplier.business_email}`);
             } else {
-                // For rejection, we'll use a generic HTML email since there's no specific method
-                const nodemailer = require('nodemailer');
-                const transporter = nodemailer.createTransporter({
-                    service: 'gmail',
-                    auth: {
-                        user: process.env.EMAIL_USER,
-                        pass: process.env.EMAIL_PASSWORD
-                    }
-                });
-
-                const mailOptions = {
-                    from: {
-                        name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                        address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-                    },
-                    to: supplier.business_email,
-                    subject: 'Supplier Registration Status Update',
-                    html: `
-                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                            <h2 style="color: #dc3545;">Registration Status Update</h2>
-                            <p>Dear ${supplier.username},</p>
-                            <p>We regret to inform you that your supplier registration with Rawalpindi Institute of Cardiology has been <strong>REJECTED</strong>.</p>
-                            <p><strong>Reason:</strong> ${rejectionReason}</p>
-                            <p>If you believe this is an error or would like to reapply, please contact our support team.</p>
-                            <p>Best regards,<br>RIC Procurement Team</p>
-                        </div>
-                    `
-                };
-
-                await transporter.sendMail(mailOptions);
-                console.log(`Rejection email sent to ${supplier.business_email}`);
+                await emailService.sendSupplierRejectionEmail(supplier.business_email, supplier.username, rejectionReason);
             }
         } catch (emailError) {
             console.error('Failed to send email notification:', emailError);
@@ -911,19 +594,12 @@ const submitEvaluation = async (req, res) => {
 // Download document
 const downloadDocument = async (req, res) => {
     const { supplierId, documentType } = req.params;
-    const db = getDatabase();
 
     try {
-        const document = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM supplier_documents WHERE supplier_id = ? AND document_type = ?',
-                [supplierId, documentType],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const document = await dbGet(
+            'SELECT * FROM supplier_documents WHERE supplier_id = ? AND document_type = ?',
+            [supplierId, documentType]
+        );
 
         if (!document) {
             return res.status(404).json({ error: 'Document not found' });
@@ -945,57 +621,28 @@ const downloadDocument = async (req, res) => {
 
 // Functions for tenders and bids (existing functionality)
 const getActiveTenders = async (req, res) => {
-    console.log('🔍 getActiveTenders called by user:', req.user);
-    const db = getDatabase();
 
     try {
-        // Get all tenders with status active and a bidding_end_time still ahead of
-        // now. Compared against a bound Date param (not a JS-side Date.parse of the
-        // stored string against Date.now()) - the driver serializes bidding_end_time
-        // and GETDATE() through different clocks (see mssqlAdapter.js), so comparing
-        // a raw JS parse of the stored value against true Date.now() was hiding
-        // tenders from suppliers hours before their real deadline. Binding new Date()
-        // here goes through the same serialization bidding_end_time was stored with.
-        const tenders = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description, d.urgency, d.required_by
-                 FROM demand_tenders dt
-                 JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.tender_status = 'active'
-                 AND dt.bidding_end_time > ?
-                 ORDER BY dt.bidding_end_time ASC`,
-                [new Date()],
-                (err, rows) => {
-                    if (err) {
-                        console.error('❌ Database error in getActiveTenders:', err);
-                        reject(err);
-                    } else {
-                        console.log('✅ Active tenders fetched:', rows.length);
-                        resolve(rows || []);
-                    }
-                }
-            );
-        });
+        // Open tenders: active with the deadline still ahead (stored and compared in UTC).
+        const tenders = await dbAll(
+            `SELECT dt.*, d.item_name, d.quantity, d.estimated_cost, d.description, d.urgency, d.required_by
+             FROM demand_tenders dt
+             JOIN demands d ON dt.demand_id = d.id
+             WHERE dt.tender_status = 'active'
+             AND dt.bidding_end_time > ?
+             ORDER BY dt.bidding_end_time ASC`,
+            [new Date()]
+        );
 
         // For each tender, get the associated demand items
         const tendersWithItems = await Promise.all(
             tenders.map(async (tender) => {
-                const items = await new Promise((resolve, reject) => {
-                    db.all(
-                        `SELECT id, item_name, quantity, estimated_cost, remarks, specifications, unit 
-                         FROM demand_items 
-                         WHERE demand_id = ? AND is_removed = 0`,
-                        [tender.demand_id],
-                        (err, itemRows) => {
-                            if (err) {
-                                console.error('❌ Database error fetching items for tender:', tender.id, err);
-                                reject(err);
-                            } else {
-                                resolve(itemRows || []);
-                            }
-                        }
-                    );
-                });
+                const items = await dbAll(
+                    `SELECT id, item_name, quantity, estimated_cost, remarks, specifications, unit 
+                     FROM demand_items 
+                     WHERE demand_id = ? AND is_removed = 0`,
+                    [tender.demand_id]
+                );
 
                 // Return tender with items array
                 return {
@@ -1014,7 +661,6 @@ const getActiveTenders = async (req, res) => {
             })
         );
 
-    console.log('📤 Returning tenders with items (filtered):', tendersWithItems.length);
         res.json(tendersWithItems);
 
     } catch (error) {
@@ -1026,14 +672,8 @@ const getActiveTenders = async (req, res) => {
 const submitBid = async (req, res) => {
     const { tenderId } = req.params;
     const supplierId = req.user.id;
-    const db = getDatabase();
 
     try {
-        console.log('🔵 SubmitBid - Starting bid submission process');
-        console.log('Tender ID:', tenderId);
-        console.log('Supplier ID:', supplierId);
-        console.log('Request body:', req.body);
-        console.log('Uploaded files:', req.files);
 
         // Validate required fields
         const { 
@@ -1042,8 +682,6 @@ const submitBid = async (req, res) => {
             deliveryDays, 
             comments, 
             items,
-            companyName,
-            registeredNumber,
             agreeToTerms
         } = req.body;
 
@@ -1067,29 +705,17 @@ const submitBid = async (req, res) => {
         }
 
         // Check if tender exists and is active for bidding
-        const tender = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT dt.*, d.item_name, d.description, d.quantity as demand_quantity
-                 FROM demand_tenders dt
-                 JOIN demands d ON dt.demand_id = d.id
-                 WHERE dt.id = ?`,
-                [tenderId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const tender = await dbGet(`SELECT dt.*, d.item_name, d.description, d.quantity as demand_quantity
+         FROM demand_tenders dt
+         JOIN demands d ON dt.demand_id = d.id
+         WHERE dt.id = ?`, [tenderId]);
 
         if (!tender) {
             return res.status(404).json({ error: 'Tender not found' });
         }
 
         // Check if tender is still accepting bids
-        const now = new Date();
-        const biddingEndTime = new Date(tender.bidding_end_time);
-        
-        if (now > biddingEndTime) {
+        if (new Date() > new Date(tender.bidding_end_time)) {
             return res.status(400).json({ error: 'Bidding period has ended for this tender' });
         }
 
@@ -1098,16 +724,10 @@ const submitBid = async (req, res) => {
         }
 
         // Check if supplier has already submitted a bid for this tender
-        const existingBid = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT id FROM supplier_bids WHERE tender_id = ? AND supplier_id = ?',
-                [tenderId, supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const existingBid = await dbGet(
+            'SELECT id FROM supplier_bids WHERE tender_id = ? AND supplier_id = ?',
+            [tenderId, supplierId]
+        );
 
         if (existingBid) {
             return res.status(400).json({ 
@@ -1116,14 +736,8 @@ const submitBid = async (req, res) => {
         }
 
         // Ensure supplier acknowledged knockout clauses and all were checked
-        const knockoutAck = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT all_clauses_checked FROM supplier_knockout_acknowledgments 
-                 WHERE tender_id = ? AND supplier_id = ?`,
-                [tenderId, supplierId],
-                (err, row) => { if (err) reject(err); else resolve(row); }
-            );
-        });
+        const knockoutAck = await dbGet(`SELECT all_clauses_checked FROM supplier_knockout_acknowledgments 
+         WHERE tender_id = ? AND supplier_id = ?`, [tenderId, supplierId]);
         if (!knockoutAck || knockoutAck.all_clauses_checked !== 1) {
             return res.status(400).json({ 
                 error: 'Please review and acknowledge all knockout clauses before submitting a bid.'
@@ -1134,12 +748,6 @@ const submitBid = async (req, res) => {
         const technicalBidPath = req.files.technicalBid[0].filename;
         const financialBidPath = req.files.financialBid[0].filename;
         const bidCdrDocumentPath = req.files.bidCdrDocument[0].filename;
-
-        console.log('📁 File paths:', {
-            technical: technicalBidPath,
-            financial: financialBidPath,
-            bidCdr: bidCdrDocumentPath
-        });
 
         // Parse items data
         let itemsData = [];
@@ -1183,63 +791,42 @@ const submitBid = async (req, res) => {
 
         {
             // Insert main bid record
-            const bidResult = await new Promise((resolve, reject) => {
-                db.run(
-                    `INSERT INTO supplier_bids (
-                        tender_id, supplier_id, total_cost, proposed_quantity,
-                        delivery_days, bid_comments, technical_bid_document, financial_bid_document, bid_cdr_document
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        tenderId,
-                        supplierId,
-                        parseFloat(totalCost) > 0 ? parseFloat(totalCost) : derivedTotals.cost,
-                        parseInt(proposedQuantity) > 0 ? parseInt(proposedQuantity) : derivedTotals.quantity,
-                        parseInt(deliveryDays),
-                        comments || '',
-                        technicalBidPath,
-                        financialBidPath,
-                        bidCdrDocumentPath
-                    ],
-                    function(err) {
-                        if (err) reject(err);
-                        else resolve({ id: this.lastID });
-                    }
-                );
-            });
+            const bidResult = await dbRun(`INSERT INTO supplier_bids (
+                tender_id, supplier_id, total_cost, proposed_quantity,
+                delivery_days, bid_comments, technical_bid_document, financial_bid_document, bid_cdr_document
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                tenderId,
+                supplierId,
+                parseFloat(totalCost) > 0 ? parseFloat(totalCost) : derivedTotals.cost,
+                parseInt(proposedQuantity) > 0 ? parseInt(proposedQuantity) : derivedTotals.quantity,
+                parseInt(deliveryDays),
+                comments || '',
+                technicalBidPath,
+                financialBidPath,
+                bidCdrDocumentPath
+            ]).then(result => ({
+                id: result.lastID
+            }));
 
             const bidId = bidResult.id;
-            console.log('✅ Main bid record created with ID:', bidId);
 
             // Insert bid items
             for (const item of itemsData) {
-                await new Promise((resolve, reject) => {
-                    db.run(
-                        `INSERT INTO supplier_bid_items (
-                            bid_id, item_id, item_name, required_quantity,
-                            proposed_quantity, unit_price, total_cost, unit, manufacturer_brand
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [
-                            bidId,
-                            item.item_id,
-                            item.item_name,
-                            item.required_quantity,
-                            item.can_provide,
-                            item.price_per_unit || (item.total_cost / item.can_provide).toFixed(2), // Use provided price_per_unit or calculate
-                            item.total_cost,
-                            item.unit || 'pieces',
-                            item.manufacturer_brand || ''
-                        ],
-                        (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        }
-                    );
-                });
+                await dbRun(`INSERT INTO supplier_bid_items (
+                    bid_id, item_id, item_name, required_quantity,
+                    proposed_quantity, unit_price, total_cost, unit, manufacturer_brand
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                    bidId,
+                    item.item_id,
+                    item.item_name,
+                    item.required_quantity,
+                    item.can_provide,
+                    item.price_per_unit || (item.total_cost / item.can_provide).toFixed(2), // Use provided price_per_unit or calculate
+                    item.total_cost,
+                    item.unit || 'pieces',
+                    item.manufacturer_brand || ''
+                ]);
             }
-
-            console.log('✅ All bid items inserted successfully');
-
-            console.log('🎉 Bid submission completed successfully');
 
             // Return success response
             res.status(201).json({
@@ -1265,29 +852,35 @@ const submitBid = async (req, res) => {
 };
 
 const getSupplierBids = async (req, res) => {
-    const db = getDatabase();
-
     try {
         const supplierId = req.user.id; // Get supplier ID from authenticated user
         
-        const bids = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT sb.*, dt.bidding_start_time, dt.bidding_end_time, dt.tender_status,
-                        d.item_name, d.quantity, d.estimated_cost, d.description
-                 FROM supplier_bids sb
-                 JOIN demand_tenders dt ON sb.tender_id = dt.id
-                 JOIN demands d ON dt.demand_id = d.id
-                 WHERE sb.supplier_id = ?
-                 ORDER BY sb.created_at DESC`,
-                [supplierId],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const bids = await dbAll(
+            `SELECT sb.*, dt.tender_number, dt.bidding_start_time, dt.bidding_end_time, dt.tender_status,
+                    d.item_name, d.quantity, d.estimated_cost, d.description,
+                    sa.award_status, sa.award_amount,
+                    (SELECT COUNT(*) FROM technical_evaluations te WHERE te.bid_id = sb.id AND te.status = 'approved') AS items_qualified,
+                    (SELECT COUNT(*) FROM technical_evaluations te WHERE te.bid_id = sb.id AND te.status = 'rejected') AS items_rejected
+             FROM supplier_bids sb
+             JOIN demand_tenders dt ON sb.tender_id = dt.id
+             JOIN demands d ON dt.demand_id = d.id
+             LEFT JOIN supplier_awards sa ON sa.tender_id = sb.tender_id AND sa.supplier_id = sb.supplier_id
+             WHERE sb.supplier_id = ?
+             ORDER BY sb.created_at DESC`,
+            [supplierId]
+        );
 
-        res.json(bids);
+        // Where this bid stands. Awards live in supplier_awards: demand_tenders.awarded_supplier_id
+        // is not set by the award flow, so the old screen showed every bid as lost.
+        const now = new Date();
+        const outcome = (bid) => {
+            if (bid.award_status && bid.award_status !== 'cancelled') return 'won';
+            if (bid.tender_status === 'awarded') return 'not_selected';
+            if (['active', 'published'].includes(bid.tender_status) && new Date(bid.bidding_end_time) > now) return 'submitted';
+            if (bid.tender_status === 'technically_evaluated' && bid.items_rejected > 0 && bid.items_qualified === 0) return 'not_qualified';
+            return 'under_evaluation';
+        };
+        res.json(bids.map((bid) => ({ ...bid, outcome: outcome(bid) })));
 
     } catch (error) {
         console.error('Get supplier bids error:', error);
@@ -1295,44 +888,20 @@ const getSupplierBids = async (req, res) => {
     }
 };
 
-// Legacy functions for backward compatibility (can be removed later)
-const legacyRegisterSupplier = registerSupplier;
-const sendRegistrationOTP = sendEmailOTP;
-const verifySMSOTP = (req, res) => res.status(400).json({ error: 'SMS OTP no longer supported' });
-const completeRegistration = submitApplication;
-const resendOTP = sendEmailOTP;
-
 // Get comprehensive supplier data for evaluation
 const getComprehensiveSupplierData = async (req, res) => {
     const { id } = req.params;
-    console.log('Getting comprehensive data for supplier ID:', id);
-    const db = getDatabase();
 
     try {
         // Get supplier basic information
-        console.log('Querying supplier basic info...');
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        console.log('Supplier result:', supplier);
+        const supplier = await dbGet('SELECT * FROM suppliers WHERE id = ?', [id]);
 
         if (!supplier) {
-            console.log('Supplier not found');
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
         // Get business profile
-        console.log('Querying business profile...');
-        const businessProfileRaw = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        console.log('Business profile raw result:', businessProfileRaw);
+        const businessProfileRaw = await dbGet('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [id]);
         
         // Map business profile to expected format
         const businessProfile = businessProfileRaw ? {
@@ -1353,14 +922,7 @@ const getComprehensiveSupplierData = async (req, res) => {
         } : null;
 
         // Get addresses
-        console.log('Querying addresses...');
-        const addressesRaw = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Addresses raw result:', addressesRaw);
+        const addressesRaw = await dbAll('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [id]);
         
         // Map addresses to expected format
         const addresses = Array.isArray(addressesRaw) ? addressesRaw
@@ -1375,14 +937,7 @@ const getComprehensiveSupplierData = async (req, res) => {
             })) : [];
 
         // Get documents
-        console.log('Querying documents...');
-        const documentsRaw = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_documents WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Documents result:', documentsRaw);
+        const documentsRaw = await dbAll('SELECT * FROM supplier_documents WHERE supplier_id = ?', [id]);
         
         // Map documents to expected format
         const documents = Array.isArray(documentsRaw) ? documentsRaw
@@ -1395,82 +950,33 @@ const getComprehensiveSupplierData = async (req, res) => {
             })) : [];
 
         // Get registration bodies
-        console.log('Querying registration bodies...');
-        const registrationBodies = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Registration bodies result:', registrationBodies);
+        const registrationBodies = await dbAll('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [id]);
 
         // Get PPRA registrations
-        console.log('Querying PPRA registrations...');
-        const ppraRegistrations = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('PPRA registrations result:', ppraRegistrations);
+        const ppraRegistrations = await dbAll('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [id]);
 
         // Get past experience
-        console.log('Querying past experience...');
-        const pastExperience = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_past_experience WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Past experience result:', pastExperience);
+        const pastExperience = await dbAll('SELECT * FROM supplier_past_experience WHERE supplier_id = ?', [id]);
 
         // Get client references
-        console.log('Querying client references...');
-        const clientReferences = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_client_references WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Client references result:', clientReferences);
+        const clientReferences = await dbAll('SELECT * FROM supplier_client_references WHERE supplier_id = ?', [id]);
 
         // Get work proof images
-        console.log('Querying work proof images...');
-        const workProofImages = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_work_proof_images WHERE supplier_id = ?', [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Work proof images result:', workProofImages);
+        const workProofImages = await dbAll('SELECT * FROM supplier_work_proof_images WHERE supplier_id = ?', [id]);
 
         // Get existing evaluations
-        console.log('Querying evaluations...');
-        const evaluations = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT 
-                    se.*,
-                    u.username as evaluator_name
-                FROM supplier_evaluations se
-                LEFT JOIN users u ON se.evaluator_id = u.id
-                WHERE se.supplier_id = ?
-                ORDER BY se.created_at DESC
-            `, [id], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        console.log('Evaluations result:', evaluations);
+        const evaluations = await dbAll(`
+            SELECT 
+                se.*,
+                u.username as evaluator_name
+            FROM supplier_evaluations se
+            LEFT JOIN users u ON se.evaluator_id = u.id
+            WHERE se.supplier_id = ?
+            ORDER BY se.created_at DESC
+        `, [id]);
 
         // Get committee count for progress tracking
-        console.log('Querying committee count...');
-        const committeeCount = await new Promise((resolve, reject) => {
-            db.get('SELECT COUNT(*) as count FROM users WHERE role = ?', ['committee'], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        console.log('Committee count result:', committeeCount);
+        const committeeCount = await dbGet('SELECT COUNT(*) as count FROM users WHERE role = ?', ['committee']);
 
         const comprehensiveData = {
             supplier: supplier || null,
@@ -1499,11 +1005,10 @@ const getComprehensiveSupplierData = async (req, res) => {
             pastExperience: Array.isArray(pastExperience) ? pastExperience.filter(exp => exp !== null && exp !== undefined) : [],
             clientReferences: Array.isArray(clientReferences) ? clientReferences.filter(ref => ref !== null && ref !== undefined) : [],
             workProofImages: Array.isArray(workProofImages) ? workProofImages.filter(img => img !== null && img !== undefined) : [],
-            evaluations: Array.isArray(evaluations) ? evaluations.filter(eval => eval !== null && eval !== undefined) : [],
+            evaluations: Array.isArray(evaluations) ? evaluations.filter((entry) => entry != null) : [],
             committeeCount: committeeCount?.count || 0
         };
 
-        console.log('Final comprehensive data:', comprehensiveData);
         res.json(comprehensiveData);
 
     } catch (error) {
@@ -1514,107 +1019,72 @@ const getComprehensiveSupplierData = async (req, res) => {
 
 // Get supplier registration data for autofilling forms
 const getSupplierRegistrationData = async (req, res) => {
-    console.log('🔍 getSupplierRegistrationData called');
-    console.log('👤 req.user:', req.user);
-    console.log('📋 req.params:', req.params);
-    
+
     const supplierId = req.user?.supplierId || req.params.supplierId;
-    
-    console.log('🔢 Resolved supplierId:', supplierId);
-    
+
     if (!supplierId) {
-        console.log('❌ No supplier ID found');
         return res.status(400).json({ error: 'Supplier ID is required' });
     }
 
-    const db = getDatabase();
-
     try {
-        console.log('Fetching registration data for supplier ID:', supplierId);
 
         // Get supplier basic info
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const supplier = await dbGet('SELECT * FROM suppliers WHERE id = ?', [supplierId]);
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
         // Get business profile
-        const businessProfile = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const businessProfile = await dbGet(
+            'SELECT * FROM supplier_business_profile WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get registration bodies
-        const registrationBodies = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const registrationBodies = await dbAll(
+            'SELECT * FROM supplier_registration_bodies WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get addresses
-        const addresses = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const addresses = await dbAll('SELECT * FROM supplier_addresses WHERE supplier_id = ?', [supplierId]);
 
         // Get PPRA registrations
-        const ppraRegistrations = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const ppraRegistrations = await dbAll(
+            'SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get past experience
-        const pastExperience = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_past_experience WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const pastExperience = await dbAll(
+            'SELECT * FROM supplier_past_experience WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get client references
-        const clientReferences = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_client_references WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const clientReferences = await dbAll(
+            'SELECT * FROM supplier_client_references WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get work proof images
-        const workProofImages = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_work_proof_images WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const workProofImages = await dbAll(
+            'SELECT * FROM supplier_work_proof_images WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get resubmission feedback
-        const resubmissionFeedback = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_resubmission_feedback WHERE supplier_id = ? AND is_active = 1 ORDER BY requested_at DESC', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const resubmissionFeedback = await dbGet(
+            'SELECT * FROM supplier_resubmission_feedback WHERE supplier_id = ? AND is_active = 1 ORDER BY requested_at DESC',
+            [supplierId]
+        );
 
         // Get documents
-        const documents = await new Promise((resolve, reject) => {
-            db.all('SELECT document_type, file_path, original_name FROM supplier_documents WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const documents = await dbAll(
+            'SELECT document_type, file_path, original_name FROM supplier_documents WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Format the data for the frontend form
         const formattedData = {
@@ -1706,7 +1176,6 @@ const getSupplierRegistrationData = async (req, res) => {
             }
         };
 
-        console.log('Registration data fetched successfully');
         res.json(formattedData);
 
     } catch (error) {
@@ -1721,38 +1190,27 @@ const requestResubmission = async (req, res) => {
     const { issues, additionalMessage, failedCriteria } = req.body;
     const evaluatorId = req.user.id;
     const evaluatorName = req.user.username || req.user.name || 'Supplier Evaluation Committee';
-    const db = getDatabase();
 
     try {
-        console.log('Resubmission request data:', { supplierId, issues, additionalMessage, failedCriteria });
 
         // Get supplier information
-        const supplier = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM suppliers WHERE id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const supplier = await dbGet('SELECT * FROM suppliers WHERE id = ?', [supplierId]);
 
         if (!supplier) {
             return res.status(404).json({ error: 'Supplier not found' });
         }
 
         // Get business profile for email
-        const businessProfile = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const businessProfile = await dbGet(
+            'SELECT * FROM supplier_business_profile WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Update supplier status to pending_resubmission
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE suppliers SET status = ? WHERE id = ?', ['pending_resubmission', supplierId], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+        await dbRun(
+            'UPDATE suppliers SET status = ? WHERE id = ?',
+            ['pending_resubmission', supplierId]
+        );
 
         // Store detailed resubmission feedback
         const feedbackData = {
@@ -1764,54 +1222,34 @@ const requestResubmission = async (req, res) => {
         };
 
         // Clear any existing active feedback for this supplier
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE supplier_resubmission_feedback SET is_active = 0 WHERE supplier_id = ?', [supplierId], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+        await dbRun(
+            'UPDATE supplier_resubmission_feedback SET is_active = 0 WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Insert new feedback
-        await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO supplier_resubmission_feedback 
-                 (supplier_id, evaluator_id, evaluator_name, failed_criteria, overall_comment, is_active) 
-                 VALUES (?, ?, ?, ?, ?, 1)`,
-                [
-                    supplierId,
-                    evaluatorId,
-                    evaluatorName,
-                    JSON.stringify(feedbackData),
-                    additionalMessage || null
-                ],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`INSERT INTO supplier_resubmission_feedback 
+         (supplier_id, evaluator_id, evaluator_name, failed_criteria, overall_comment, is_active) 
+         VALUES (?, ?, ?, ?, ?, 1)`, [
+            supplierId,
+            evaluatorId,
+            evaluatorName,
+            JSON.stringify(feedbackData),
+            additionalMessage || null
+        ]);
 
         // Log the resubmission request in evaluations table
-        await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT OR REPLACE INTO supplier_evaluations (
-                    supplier_id, 
-                    evaluator_id, 
-                    status, 
-                    comments,
-                    created_at
-                ) VALUES (?, ?, 'resubmission_requested', ?, CURRENT_TIMESTAMP)`,
-                [
-                    supplierId, 
-                    evaluatorId, 
-                    `Resubmission requested: ${additionalMessage || 'Please review and resubmit application'}`
-                ],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`INSERT OR REPLACE INTO supplier_evaluations (
+            supplier_id, 
+            evaluator_id, 
+            status, 
+            comments,
+            created_at
+        ) VALUES (?, ?, 'resubmission_requested', ?, CURRENT_TIMESTAMP)`, [
+            supplierId, 
+            evaluatorId, 
+            `Resubmission requested: ${additionalMessage || 'Please review and resubmit application'}`
+        ]);
 
         // Send email notification to supplier
         try {
@@ -1829,14 +1267,12 @@ const requestResubmission = async (req, res) => {
                 });
             }
             
-            console.log('Sending resubmission email to:', supplierEmail);
             await emailService.sendSupplierResubmissionEmail(
                 supplierEmail,
                 businessProfile?.business_name || supplier.username || 'Supplier',
                 issues || [],
                 additionalMessage || ''
             );
-            console.log('Resubmission email sent successfully');
         } catch (emailError) {
             console.error('Failed to send resubmission email:', emailError);
             // Don't fail the request if email fails
@@ -1853,157 +1289,22 @@ const requestResubmission = async (req, res) => {
     }
 };
 
-// Grievance-related functions
-const submitGrievance = async (req, res) => {
-    const { tenderId, itemId, grievanceText, grievanceType } = req.body;
-    const supplierId = req.user.id;
-
-    if (!tenderId || !grievanceText || !grievanceType) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const db = getDatabase();
-
-    try {
-        const grievanceId = Date.now().toString(); // Simple ID generation
-        
-        await new Promise((resolve, reject) => {
-            db.run(`
-                INSERT INTO grievances (
-                    id, supplierId, tenderId, itemId, grievanceText, grievanceType, 
-                    status, createdAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [
-                grievanceId, supplierId, tenderId, itemId, grievanceText, 
-                grievanceType, 'pending', new Date().toISOString()
-            ], function(err) {
-                if (err) reject(err);
-                else resolve(this);
-            });
-        });
-
-        res.status(201).json({
-            message: 'Grievance submitted successfully',
-            grievanceId: grievanceId
-        });
-
-    } catch (error) {
-        console.error('Error submitting grievance:', error);
-        res.status(500).json({ error: 'Failed to submit grievance' });
-    }
-};
-
-const getSupplierGrievances = async (req, res) => {
-    const supplierId = req.user.id;
-    const db = getDatabase();
-
-    try {
-        const grievances = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT g.*, t.title as tenderTitle, s.company_name as supplierName
-                FROM grievances g
-                LEFT JOIN tenders t ON g.tenderId = t.id
-                LEFT JOIN suppliers s ON g.supplierId = s.id
-                WHERE g.supplierId = ?
-                ORDER BY g.createdAt DESC
-            `, [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-
-        res.json(grievances);
-
-    } catch (error) {
-        console.error('Error fetching grievances:', error);
-        res.status(500).json({ error: 'Failed to fetch grievances' });
-    }
-};
-
-const getRejectedItems = async (req, res) => {
-    const supplierId = req.user.id;
-    const db = getDatabase();
-
-    try {
-        // This would typically fetch rejected bid items for the supplier
-        const rejectedItems = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT bi.*, t.title as tenderTitle, i.itemName, i.specifications
-                FROM bid_items bi
-                LEFT JOIN tenders t ON bi.tenderId = t.id
-                LEFT JOIN items i ON bi.itemId = i.id
-                WHERE bi.supplierId = ? AND bi.status = 'rejected'
-                ORDER BY bi.updatedAt DESC
-            `, [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-
-        res.json(rejectedItems);
-
-    } catch (error) {
-        console.error('Error fetching rejected items:', error);
-        res.status(500).json({ error: 'Failed to fetch rejected items' });
-    }
-};
-
-const getDeadlineStatus = async (req, res) => {
-    const supplierId = req.user.id;
-    const db = getDatabase();
-
-    try {
-        const deadlineStatus = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT t.id, t.title, t.submission_deadline as submissionDeadline, t.status,
-                       COUNT(b.id) as bidSubmitted
-                FROM tenders t
-                LEFT JOIN bids b ON t.id = b.tender_id AND b.supplier_id = ?
-                WHERE t.status = 'published' OR (t.status = 'closed' AND b.id IS NOT NULL)
-                GROUP BY t.id, t.title, t.submission_deadline, t.status
-                ORDER BY t.submission_deadline ASC
-            `, [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-
-        const currentDate = new Date();
-        const statusWithFlags = deadlineStatus.map(tender => ({
-            ...tender,
-            isExpired: new Date(tender.submissionDeadline) < currentDate,
-            hasBid: tender.bidSubmitted > 0
-        }));
-
-        res.json(statusWithFlags);
-
-    } catch (error) {
-        console.error('Error fetching deadline status:', error);
-        res.status(500).json({ error: 'Failed to fetch deadline status' });
-    }
-};
-
 // Get supplier profile for bid form auto-population
 const getSupplierProfile = async (req, res) => {
     const supplierId = req.user.id;
-    const db = getDatabase();
 
     try {
         // Get supplier business profile
-        const businessProfile = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM supplier_business_profile WHERE supplier_id = ?', [supplierId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
+        const businessProfile = await dbGet(
+            'SELECT * FROM supplier_business_profile WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get PPRA registrations to find registration number
-        const ppraRegistrations = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?', [supplierId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
+        const ppraRegistrations = await dbAll(
+            'SELECT * FROM supplier_ppra_registrations WHERE supplier_id = ?',
+            [supplierId]
+        );
 
         // Get the first PPRA registration number
         const ppraNumber = ppraRegistrations && ppraRegistrations.length > 0 
@@ -2023,9 +1324,38 @@ const getSupplierProfile = async (req, res) => {
     }
 };
 
+// Second step of a supplier sign-in when 2FA is enabled.
+const completeSupplier2FALogin = async (req, res) => {
+    const { challenge, token, isBackupCode } = req.body;
+    let supplierId;
+    try {
+        const claims = jwt.verify(String(challenge || ''), JWT_SECRET);
+        if (claims.purpose !== 'supplier-2fa') throw new Error('wrong purpose');
+        supplierId = claims.supplierId;
+    } catch {
+        return res.status(401).json({ error: 'Your sign-in attempt expired. Please enter your password again.' });
+    }
+    if (!token) return res.status(400).json({ error: 'Verification code is required' });
+
+    try {
+        const { verifySupplierSecondFactor } = require('./supplierTwoFactorController');
+        if (!(await verifySupplierSecondFactor(supplierId, token, isBackupCode))) {
+            return res.status(400).json({ error: 'Invalid verification code' });
+        }
+        const supplier = await dbGet('SELECT * FROM suppliers WHERE id = ?', [supplierId]);
+        if (!supplier || supplier.status !== 'approved') return res.status(403).json({ error: 'This account cannot sign in.' });
+        const session = jwt.sign({ supplierId: supplier.id, username: supplier.username, businessEmail: supplier.business_email }, JWT_SECRET, { expiresIn: '24h' });
+        res.json({ message: 'Login successful', token: session, supplier: supplierSession(supplier) });
+    } catch (error) {
+        console.error('Supplier 2FA login error:', error);
+        res.status(500).json({ error: 'Error completing 2FA login' });
+    }
+};
+
 module.exports = {
     registerSupplier,
     loginSupplier,
+    completeSupplier2FALogin,
     sendEmailOTP,
     verifyEmailOTP,
     saveRegistrationStep,
@@ -2038,17 +1368,6 @@ module.exports = {
     submitBid,
     getSupplierBids,
     getSupplierProfile,
-    // Grievance functions
-    submitGrievance,
-    getSupplierGrievances,
-    getRejectedItems,
-    getDeadlineStatus,
-    // Legacy exports for backward compatibility
-    legacyRegisterSupplier,
-    sendRegistrationOTP,
-    verifySMSOTP,
-    completeRegistration,
-    resendOTP,
     getComprehensiveSupplierData,
     getSupplierRegistrationData,
     requestResubmission

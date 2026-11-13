@@ -1,1 +1,39 @@
-@import "tailwindcss";
+@import '@fontsource-variable/atkinson-hyperlegible-next';
+@import 'tailwindcss';
+@import './styles/tokens.css';
+@import './styles/palette.css';
+@import './styles/icons.css';
+@import './styles/base.css';
+@import './styles/ui.css';
+@import './app/shell.css';
+@import './styles/legacy.css';
+
+/* Dark utilities follow the app's theme attribute, not the OS directly. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+
+  /* bg-white means "a card": it follows the theme. text-white stays white (see legacy.css). */
+  --color-white: var(--surface);
+
+  /* Softer, larger radii. */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 24px;
+
+  /* Cards are flat with a hairline edge; only overlays float. */
+  --shadow-2xs: var(--shadow-hairline);
+  --shadow-xs: var(--shadow-hairline);
+  --shadow-sm: var(--shadow-hairline), var(--shadow-card);
+  --shadow: var(--shadow-hairline), var(--shadow-card);
+  --shadow-md: var(--shadow-hairline), var(--shadow-card);
+  --shadow-lg: var(--shadow-hairline), var(--shadow-lift);
+  --shadow-xl: var(--shadow-overlay);
+  --shadow-2xl: var(--shadow-overlay);
+}

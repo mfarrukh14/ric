@@ -1,477 +1,143 @@
+/**
+ * Outgoing email. Every message uses one layout: RIC logo (embedded, so it shows without
+ * loading remote images), a title, a short body and a one-line footer. Copy stays brief:
+ * what happened, what the supplier needs to do, and by when.
+ */
+const fs = require('fs');
 const nodemailer = require('nodemailer');
-require('dotenv').config();
+require('../config/env');
+const { formatClock, formatLongDate, formatLongDateTime } = require('./time');
+const { ORG, LOGO_PATH } = require('../reports/brand');
+
+const INK = '#1c1c1f';
+const MUTED = '#5c5c63';
+const LINE = '#e3e3e6';
+const BRAND = '#a3263f';
+const FONT = "'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif";
+const LOGO_CID = 'ric-logo';
+
+// Must match the OTP lifetime in supplierController.
+const OTP_TTL_MINUTES = 2;
+
+const senderAddress = () => process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER;
+const portalUrl = () => (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+
+// ── Building blocks (each returns HTML; text arguments are escaped by the caller via esc) ──
+
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const multiline = (value) => esc(value).replace(/\r?\n/g, '<br>');
+const longDate = (value = new Date()) => formatLongDate(value, '');
+const longDateTime = (value) => formatLongDateTime(value, '');
+
+const p = (html) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:${INK};">${html}</p>`;
+const small = (html) => `<p style="margin:0 0 14px;font-size:13px;line-height:1.55;color:${MUTED};">${html}</p>`;
+
+/** Label / value rows; empty values are skipped. rows: [[label, html], …] */
+const details = (rows) => {
+    const shown = rows.filter(([, value]) => value !== undefined && value !== null && value !== '');
+    if (!shown.length) return '';
+    return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:4px 0 18px;border-collapse:collapse;">
+${shown.map(([label, value]) => `<tr>
+  <td style="padding:8px 0;border-top:1px solid ${LINE};font-size:13px;color:${MUTED};width:34%;vertical-align:top;">${esc(label)}</td>
+  <td style="padding:8px 0;border-top:1px solid ${LINE};font-size:14px;color:${INK};font-weight:600;vertical-align:top;">${value}</td>
+</tr>`).join('')}
+</table>`;
+};
+
+/** A quoted block (a reason, the committee's notes). */
+const quote = (label, html) => `<div style="margin:0 0 18px;padding:2px 0 2px 14px;border-left:3px solid ${LINE};">
+  ${label ? `<p style="margin:0 0 4px;font-size:13px;color:${MUTED};">${esc(label)}</p>` : ''}
+  <div style="font-size:14px;line-height:1.6;color:${INK};">${html}</div>
+</div>`;
+
+const list = (items) => `<ul style="margin:0 0 16px;padding-left:18px;font-size:14px;line-height:1.6;color:${INK};">${items.map((i) => `<li style="margin:0 0 4px;">${i}</li>`).join('')}</ul>`;
+
+const button = (href, label) => (href
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:6px 0 20px;"><tr><td style="border-radius:8px;background:${BRAND};">
+  <a href="${esc(href)}" style="display:inline-block;padding:11px 20px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${esc(label)}</a>
+</td></tr></table>`
+    : '');
+
+const greeting = (name) => p(`Dear ${esc(name || 'Supplier')},`);
+const signature = (team) => `<p style="margin:22px 0 0;font-size:14px;line-height:1.5;color:${INK};">${esc(team)}<br><span style="color:${MUTED};">${ORG}</span></p>`;
+
+const layout = ({ title, body }) => `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(title)}</title></head>
+<body style="margin:0;padding:0;background:#f4f4f6;font-family:${FONT};-webkit-font-smoothing:antialiased;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f6;">
+<tr><td align="center" style="padding:28px 14px;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background:#ffffff;border:1px solid ${LINE};border-radius:12px;">
+    <tr><td style="padding:24px 32px 0;">
+      <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+        <td style="padding-right:12px;"><img src="cid:${LOGO_CID}" width="40" height="40" alt="RIC" style="display:block;border:0;border-radius:6px;"></td>
+        <td style="font-size:13px;font-weight:600;color:${MUTED};">${ORG}</td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding:22px 32px 26px;">
+      <h1 style="margin:0 0 18px;font-size:21px;line-height:1.3;font-weight:700;color:${INK};">${esc(title)}</h1>
+      ${body}
+    </td></tr>
+    <tr><td style="padding:16px 32px;border-top:1px solid ${LINE};font-size:12px;line-height:1.5;color:${MUTED};">
+      RIC e-Tender · Automated message, replies are not monitored.
+    </td></tr>
+  </table>
+</td></tr>
+</table>
+</body>
+</html>`;
+
+// ── Transport ───────────────────────────────────────────────────────────
+
+// Set EMAIL_DISABLED=true to log instead of sending, e.g. on a local test database.
+const EMAIL_DISABLED = /^(1|true|yes)$/i.test(process.env.EMAIL_DISABLED || '');
+
+// One pooled SMTP transport for the whole process; EmailService instances share it.
+let sharedTransporter = null;
+const getTransporter = () => {
+    if (!sharedTransporter) {
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+            console.warn('EMAIL_USER / EMAIL_PASSWORD are not set; outgoing email will fail.');
+        }
+        sharedTransporter = nodemailer.createTransport({
+            service: 'gmail',
+            pool: true,
+            auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
+        });
+    }
+    return sharedTransporter;
+};
+
+/** Attachment for a file on disk, or nothing when the path is missing. */
+const fileAttachment = (filePath, filename, contentType) =>
+    filePath && fs.existsSync(filePath) ? [{ filename, path: filePath, ...(contentType ? { contentType } : {}) }] : [];
+
+const logoAttachment = () => (fs.existsSync(LOGO_PATH) ? [{ filename: 'ric-logo.jpg', path: LOGO_PATH, cid: LOGO_CID, contentDisposition: 'inline' }] : []);
 
 class EmailService {
     constructor() {
-        // Check if email credentials are available
-        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-            console.error('Email credentials not found in environment variables');
-            console.error('EMAIL_USER:', process.env.EMAIL_USER ? 'Set' : 'Not set');
-            console.error('EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'Set' : 'Not set');
-        }
+        this.transporter = getTransporter();
+    }
 
-        this.transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASSWORD
-            },
-            debug: true, // Enable debug output
-            logger: true // Log to console
+    /** Sends one message from the standard sender. Resolves { success, messageId }; throws on failure. */
+    async send({ to, subject, html, attachments = [], fromName }) {
+        if (EMAIL_DISABLED) {
+            console.info(`Email not sent (EMAIL_DISABLED): "${subject}" to ${to}`);
+            return { success: true, messageId: null, html };
+        }
+        const info = await this.transporter.sendMail({
+            from: { name: fromName || process.env.EMAIL_FROM_NAME || 'RIC e-Tender', address: senderAddress() },
+            to,
+            subject,
+            html,
+            attachments: [...logoAttachment(), ...attachments],
         });
+        return { success: true, messageId: info.messageId };
     }
 
-    async sendSupplierApprovalEmail(supplierEmail, companyName) {
-        const htmlContent = this.generateApprovalEmailHTML(companyName);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: 'Congratulations! Your Supplier Application Has Been Approved',
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Approval email sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending approval email:', error);
-            throw error;
-        }
-    }
-
-    generateApprovalEmailHTML(companyName) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        return `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Supplier Application Approved</title>
-                <style>
-                    /* Reset */
-                    * {
-                        margin: 0;
-                        padding: 0;
-                        box-sizing: border-box;
-                    }
-                    body {
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        background-color: #f2f2f2;
-                        color: #333333;
-                        line-height: 1.6;
-                    }
-                    .email-container {
-                        max-width: 600px;
-                        margin: 40px auto;
-                        background-color: #ffffff;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-                        overflow: hidden;
-                    }
-                    /* Colors: Primary (#00509e) and Accent (#f2a900) */
-                    :root {
-                        --primary: #00509e;
-                        --accent: #f2a900;
-                    }
-                    .header {
-                        background-color: var(--primary);
-                        color: #ffffff;
-                        padding: 30px;
-                        text-align: center;
-                    }
-                    .header h1 {
-                        font-size: 24px;
-                        margin-bottom: 8px;
-                        font-weight: 700;
-                    }
-                    .header p {
-                        font-size: 16px;
-                        opacity: 0.9;
-                    }
-                    .content {
-                        padding: 30px;
-                    }
-                    .content p {
-                        margin-bottom: 20px;
-                        font-size: 16px;
-                    }
-                    .highlight {
-                        background-color: var(--accent);
-                        color: #ffffff;
-                        padding: 20px;
-                        border-radius: 4px;
-                        text-align: center;
-                        margin: 30px 0;
-                    }
-                    .next-steps {
-                        margin: 30px 0;
-                    }
-                    .next-steps h3 {
-                        font-size: 18px;
-                        color: var(--primary);
-                        margin-bottom: 12px;
-                    }
-                    .next-steps ul {
-                        list-style: none;
-                        padding-left: 0;
-                    }
-                    .next-steps li {
-                        position: relative;
-                        padding-left: 24px;
-                        margin-bottom: 12px;
-                        font-size: 15px;
-                    }
-                    .next-steps li::before {
-                        content: '✓';
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        color: var(--accent);
-                        font-weight: bold;
-                    }
-                    .button-container {
-                        text-align: center;
-                        margin: 30px 0;
-                    }
-                    .cta-button {
-                        display: inline-block;
-                        background-color: var(--primary);
-                        color: #ffffff;
-                        text-decoration: none;
-                        padding: 14px 28px;
-                        border-radius: 4px;
-                        font-weight: 600;
-                        transition: background-color 0.2s ease;
-                    }
-                    .cta-button:hover {
-                        background-color: #003c6b;
-                    }
-                    .footer {
-                        background-color: #fafafa;
-                        padding: 20px 30px;
-                        font-size: 13px;
-                        color: #777777;
-                        text-align: center;
-                    }
-                    .footer p {
-                        margin-bottom: 6px;
-                    }
-                    @media (max-width: 600px) {
-                        .email-container {
-                            margin: 20px;
-                        }
-                        .header h1 {
-                            font-size: 20px;
-                        }
-                        .content {
-                            padding: 20px;
-                        }
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="email-container">
-                    <div class="header">
-                        <h1>Congratulations!</h1>
-                        <p>Your supplier application has been approved</p>
-                    </div>
-                    <div class="content">
-                        <p>Dear <strong>${companyName}</strong> Team,</p>
-                        <p>We are pleased to inform you that your supplier application has been <strong>approved</strong> by the Rawalpindi Institute of Cardiology Supplier Evaluation Committee.</p>
-                        <div class="highlight">
-                            <p><strong>Welcome to our Supplier Network!</strong><br>You can now participate in procurement opportunities.</p>
-                        </div>
-                        <div class="next-steps">
-                            <h3>Next Steps:</h3>
-                            <ul>
-                                <li>Log in to your supplier dashboard</li>
-                                <li>Complete your profile details</li>
-                                <li>Explore active tenders</li>
-                                <li>Submit your competitive bids</li>
-                                <li>Ensure ongoing compliance</li>
-                            </ul>
-                        </div>
-                        <div class="button-container">
-                            <a href="${process.env.COMPANY_WEBSITE || '#'}" class="cta-button">Access Your Dashboard</a>
-                        </div>
-                        <p>If you need assistance, please contact our Purchasing Team at <a href="mailto:${process.env.EMAIL_FROM_EMAIL || 'procurement@ric.edu.pk'}">${process.env.EMAIL_FROM_EMAIL || 'procurement@ric.edu.pk'}</a>.</p>
-                        <p>Thank you for partnering with us.</p>
-                        <p><strong>Best regards,</strong><br>Procurement Team<br>Rawalpindi Institute of Cardiology</p>
-                    </div>
-                    <div class="footer">
-                        <p>Rawalpindi Institute of Cardiology | Rawalpindi, Pakistan</p>
-                        <p>Email: ${process.env.EMAIL_FROM_EMAIL || 'procurement@ric.edu.pk'} | Website: ${process.env.COMPANY_WEBSITE || 'www.ric.edu.pk'}</p>
-                        <p style="font-size:12px;opacity:0.6;">This is an automated message. Please do not reply.</p>
-                        <p style="font-size:11px;opacity:0.6;">© ${new Date().getFullYear()} Rawalpindi Institute of Cardiology. All rights reserved.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `;
-    }
-
-    async sendSupplyOrderEmail(supplierEmail, companyName, orderData, pdfBuffer) {
-        const htmlContent = this.generateSupplyOrderEmailHTML(companyName, orderData);
-        const orderNumber = `SO-${orderData.tender_id}-${Date.now()}`;
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `Congratulations! Supply Order Awarded - ${orderNumber}`,
-            html: htmlContent,
-            attachments: [
-                {
-                    filename: `Supply_Order_${orderNumber}.pdf`,
-                    content: pdfBuffer,
-                    contentType: 'application/pdf'
-                }
-            ]
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Supply order email sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending supply order email:', error);
-            throw error;
-        }
-    }
-
-    generateSupplyOrderEmailHTML(companyName, orderData) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-        const orderNumber = `SO-${orderData.tender_id}-${Date.now()}`;
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Supply Order Awarded</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#00509e) and Accent (#f2a900) */
-        :root { --primary: #00509e; --accent: #f2a900; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .content { padding: 30px; }
-        .badge {
-            display: inline-block;
-            background-color: var(--accent);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 20px;
-        }
-        .greeting { font-size: 18px; margin-bottom: 20px; color: #374151; }
-        .message { font-size: 16px; color: #555555; margin-bottom: 30px; line-height: 1.7; }
-        .order-details {
-            background-color: #f9fafb;
-            border-left: 4px solid var(--accent);
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 25px;
-        }
-        .order-details h3 {
-            font-size: 18px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 15px;
-        }
-        .detail-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .detail-row:last-child { border-bottom: none; }
-        .detail-label { font-weight: 600; color: #374151; }
-        .detail-value { color: #555555; }
-        .amount { font-size: 20px; font-weight: 700; color: var(--accent); }
-        .attachment {
-            background-color: #fff4e5;
-            border-left: 4px solid var(--accent);
-            border-radius: 4px;
-            padding: 15px;
-            text-align: center;
-            margin-bottom: 25px;
-            font-weight: 600;
-            color: #92400e;
-        }
-        .next-steps {
-            background-color: #eef6ff;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 25px;
-        }
-        .next-steps h3 {
-            font-size: 18px;
-            color: var(--primary);
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
-        .next-steps ul {
-            list-style: none;
-            padding-left: 0;
-        }
-        .next-steps li {
-            position: relative;
-            padding-left: 24px;
-            margin-bottom: 10px;
-            color: #374151;
-        }
-        .next-steps li::before {
-            content: '✓';
-            position: absolute;
-            left: 0;
-            top: 0;
-            color: var(--accent);
-            font-weight: bold;
-        }
-        .contact {
-            background-color: #fafafa;
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 30px;
-            text-align: left;
-            font-size: 15px;
-        }
-        .contact h4 {
-            font-size: 16px;
-            color: var(--primary);
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-        .contact p {
-            margin: 4px 0;
-            color: #555555;
-        }
-        .footer {
-            background-color: #fafafa;
-            text-align: center;
-            padding: 20px;
-            font-size: 13px;
-            color: #777777;
-        }
-        .footer p { margin-bottom: 6px; }
-        @media (max-width: 600px) {
-            .email-container { margin: 20px; }
-            .header h1 { font-size: 20px; }
-            .content { padding: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <h1>Supply Order Awarded!</h1>
-            <p>Rawalpindi Institute of Cardiology</p>
-        </div>
-        <div class="content">
-            <div class="badge">ORDER AWARDED</div>
-            <div class="greeting">Dear <strong>${companyName}</strong> Team,</div>
-            <div class="message">
-                Congratulations! Your bid has been selected for the supply order. Your competitive pricing and commitment to quality make you our preferred supplier for this requirement.
-            </div>
-            <div class="order-details">
-                <h3>📋 Order Summary</h3>
-                <div class="detail-row"><span class="detail-label">Order Number:</span><span class="detail-value">${orderNumber}</span></div>
-                <div class="detail-row"><span class="detail-label">Order Date:</span><span class="detail-value">${currentDate}</span></div>
-                <div class="detail-row"><span class="detail-label">Item:</span><span class="detail-value">${orderData.item_name}</span></div>
-                <div class="detail-row"><span class="detail-label">Quantity:</span><span class="detail-value">${orderData.quantity}</span></div>
-                <div class="detail-row"><span class="detail-label">Delivery Timeline:</span><span class="detail-value">${orderData.delivery_time_days} days</span></div>
-                <div class="detail-row"><span class="detail-label">Award Amount:</span><span class="detail-value amount">PKR ${(orderData.awarded_bid_amount || 0).toLocaleString()}</span></div>
-            </div>
-            <div class="attachment">📎 Detailed supply order document is attached to this email</div>
-            <div class="next-steps">
-                <h3>📌 Next Steps</h3>
-                <ul>
-                    <li>Review the attached supply order document carefully</li>
-                    <li>Confirm order acceptance within 48 hours</li>
-                    <li>Begin procurement and preparation for delivery</li>
-                    <li>Ensure delivery within ${orderData.delivery_time_days} days as committed</li>
-                    <li>Contact us for any clarifications or special requirements</li>
-                </ul>
-            </div>
-            <div class="contact">
-                <h4>📞 Contact Information</h4>
-                <p><strong>Purchase Department</strong></p>
-                <p>Email: purchase@ric.edu.pk</p>
-                <p>Phone: +92-XXX-XXXXXXX</p>
-                <p>Office Hours: Monday - Friday, 9:00 AM - 5:00 PM</p>
-            </div>
-            <div class="message">
-                We look forward to a successful partnership and timely delivery of the ordered items. Thank you for participating in our tender process.
-            </div>
-        </div>
-        <div class="footer">
-            <p><strong>Rawalpindi Institute of Cardiology</strong></p>
-            <p>RIC e-Tender System | Automated Message</p>
-            <p>This email was sent on ${currentDate}</p>
-            <p>Please do not reply to this automated email. For inquiries, contact our Purchase Department.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    // Test email connectivity
     async testConnection() {
         try {
             await this.transporter.verify();
-            console.log('Email service is ready to send emails');
             return true;
         } catch (error) {
             console.error('Email service configuration error:', error);
@@ -479,2491 +145,332 @@ class EmailService {
         }
     }
 
-    // Send grievance meeting notification email
-    async sendGrievanceMeetingNotification(supplierEmail, companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails, grievanceLetterPath = null) {
-        const htmlContent = this.generateGrievanceMeetingEmailHTML(companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails);
+    // ── Supplier registration ───────────────────────────────────────────
 
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `Grievance Meeting Scheduled - ${itemName}`,
-            html: htmlContent,
-            attachments: []
-        };
-
-        // Add grievance letter attachment if provided
-        if (grievanceLetterPath && require('fs').existsSync(grievanceLetterPath)) {
-            mailOptions.attachments.push({
-                filename: 'Grievance_Letter.pdf',
-                path: grievanceLetterPath,
-                contentType: 'application/pdf'
-            });
-        }
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Grievance meeting notification sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending grievance meeting notification:', error);
-            throw error;
-        }
-    }
-
-    generateGrievanceMeetingEmailHTML(companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+    async sendSupplierApprovalEmail(supplierEmail, companyName) {
+        const portal = portalUrl();
+        const html = layout({
+            title: 'Application approved',
+            body: [
+                greeting(companyName),
+                p(`Your supplier registration with the ${ORG} has been approved. You can now bid on open tenders.`),
+                button(portal && `${portal}/login`, 'Sign in'),
+                signature('Supplier Evaluation Committee'),
+            ].join(''),
         });
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grievance Meeting Scheduled</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#00509e) and Accent (#f2a900) */
-        :root { --primary: #00509e; --accent: #f2a900; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .badge {
-            display: inline-block;
-            background-color: var(--accent);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-        .content { padding: 30px; }
-        .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--accent); font-weight: 700; }
-        .message { color: #555555; line-height: 1.7; }
-        .item-info {
-            background-color: #f9fafb;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .item-info h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 10px;
-        }
-        .meeting-details {
-            background-color: #eef6ff;
-            border-left: 4px solid var(--accent);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .meeting-details h3 {
-            font-size: 18px;
-            color: var(--primary);
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        .detail-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .detail-row:last-child { border-bottom: none; }
-        .detail-label { font-weight: 600; color: #374151; }
-        .detail-value { color: #555555; text-align: right; }
-        .instructions {
-            background-color: #fff4e5;
-            border-left: 4px solid var(--accent);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 30px 0;
-        }
-        .instructions h3 {
-            font-size: 18px;
-            color: var(--primary);
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
-        .instructions ul { list-style: none; padding-left: 0; }
-        .instructions li {
-            position: relative;
-            padding-left: 24px;
-            margin-bottom: 10px;
-            color: #374151;
-        }
-        .instructions li::before {
-            content: '⚠️';
-            position: absolute;
-            left: 0;
-            top: 0;
-            font-size: 16px;
-        }
-        .contact {
-            background-color: #fafafa;
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 30px;
-            text-align: left;
-            font-size: 15px;
-        }
-        .contact h4 {
-            font-size: 16px;
-            color: var(--primary);
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-        .contact p { margin: 4px 0; color: #555555; }
-        .footer {
-            background-color: #fafafa;
-            text-align: center;
-            padding: 20px;
-            font-size: 13px;
-            color: #777777;
-        }
-        .footer p { margin-bottom: 6px; }
-        @media (max-width: 600px) {
-            .email-container { margin: 20px; }
-            .header h1 { font-size: 20px; }
-            .content { padding: 20px; }
-            .detail-row { flex-direction: column; align-items: flex-start; }
-            .detail-value { text-align: left; margin-top: 5px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <div class="badge">MEETING SCHEDULED</div>
-            <h1>Grievance Meeting Scheduled</h1>
-            <p>Your grievance application has been reviewed</p>
-        </div>
-        <div class="content">
-            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-            <p class="message">Your grievance application has been reviewed by the <strong>Grievance Committee</strong>. We have scheduled a meeting to discuss your concerns regarding the technical evaluation decision.</p>
-            <div class="item-info">
-                <h4>📦 Regarding Item:</h4>
-                <p><strong>${itemName}</strong></p>
-            </div>
-            <div class="meeting-details">
-                <h3>📋 Meeting Details</h3>
-                <div class="detail-row"><span class="detail-label">Date:</span><span class="detail-value">${meetingDate}</span></div>
-                <div class="detail-row"><span class="detail-label">Time:</span><span class="detail-value">${meetingTime}</span></div>
-                <div class="detail-row"><span class="detail-label">Location:</span><span class="detail-value">${meetingLocation}</span></div>
-                ${meetingDetails ? `<div style="margin-top:12px;"><p style="font-weight:600;color:#374151;">Additional Details:</p><p style="color:#555555;">${meetingDetails}</p></div>` : ''}
-            </div>
-            <div class="instructions">
-                <h3>⚠️ Important Instructions</h3>
-                <ul>
-                    <li>Please confirm your attendance by responding to this email</li>
-                    <li>Bring all relevant documentation and evidence to support your case</li>
-                    <li>Arrive 15 minutes before the scheduled time</li>
-                    <li>If you cannot attend, contact us immediately to reschedule</li>
-                    <li>Be prepared to present your grievance clearly and concisely</li>
-                </ul>
-            </div>
-            <div class="contact">
-                <h4>📞 Contact Information</h4>
-                <p><strong>Grievance Committee Secretary</strong></p>
-                <p>Email: grievance@ric.edu.pk</p>
-                <p>Phone: +92-XXX-XXXXXXX</p>
-            </div>
-            <p class="message">We are committed to ensuring a fair and transparent grievance process. Your concerns will be thoroughly reviewed during the meeting.</p>
-            <p><strong>Best regards,</strong><br>The Grievance Committee<br>Rawalpindi Institute of Cardiology</p>
-        </div>
-        <div class="footer">
-            <p><strong>Grievance Committee</strong></p>
-            <p>Rawalpindi Institute of Cardiology</p>
-            <p>Email: grievance@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your grievance application.</p>
-            <p style="font-size:11px;opacity:0.6;">© ${new Date().getFullYear()} Rawalpindi Institute of Cardiology. All rights reserved.</p>
-            <p style="font-size:11px;opacity:0.6;">Sent on ${currentDate}</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
+        return this.send({ to: supplierEmail, subject: 'Your supplier application is approved', html });
     }
 
-    // Send grievance approval email
-    async sendGrievanceApprovalEmail(supplierEmail, companyName, itemName, contactPerson, minutesFilePath = null) {
-        const htmlContent = this.generateGrievanceApprovalEmailHTML(companyName, itemName, contactPerson);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `✅ Grievance Approved - ${itemName}`,
-            html: htmlContent
-        };
-
-        // Add minutes of meeting as attachment if provided
-        if (minutesFilePath) {
-            mailOptions.attachments = [
-                {
-                    filename: 'Minutes_of_Meeting.pdf',
-                    path: minutesFilePath,
-                    contentType: 'application/pdf'
-                }
-            ];
-        }
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Grievance approval notification sent successfully to:', supplierEmail);
-            if (minutesFilePath) {
-                console.log('Minutes of meeting attached to email');
-            }
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending grievance approval notification:', error);
-            throw error;
-        }
-    }
-
-    generateGrievanceApprovalEmailHTML(companyName, itemName, contactPerson) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+    async sendSupplierRejectionEmail(supplierEmail, companyName, rejectionReason) {
+        const html = layout({
+            title: 'Application not approved',
+            body: [
+                greeting(companyName),
+                p(`Your supplier registration with the ${ORG} was not approved.`),
+                rejectionReason ? quote('Reason', multiline(rejectionReason)) : '',
+                small(`To apply again, contact <a href="mailto:${esc(senderAddress())}" style="color:${BRAND};">${esc(senderAddress())}</a>.`),
+                signature('Supplier Evaluation Committee'),
+            ].join(''),
         });
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grievance Approved</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#00509e) and Accent (#f2a900) */
-        :root { --primary: #00509e; --accent: #f2a900; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .badge {
-            display: inline-block;
-            background-color: var(--accent);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-        .content { padding: 30px; }
-        .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--accent); font-weight: 700; }
-        .message { color: #555555; line-height: 1.7; }
-        .item-info {
-            background-color: #f9fafb;
-            border-left: 4px solid var(--accent);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .item-info h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 10px;
-        }
-        .next-steps {
-            background-color: #eef6ff;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 25px;
-        }
-        .next-steps h4 {
-            font-size: 18px;
-            color: var(--primary);
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
-        .next-steps ul {
-            list-style: none;
-            padding-left: 0;
-        }
-        .next-steps li {
-            margin-bottom: 8px;
-            padding-left: 24px;
-            position: relative;
-        }
-        .next-steps li::before {
-            content: '✓';
-            position: absolute;
-            left: 0;
-            color: var(--accent);
-            font-weight: bold;
-        }
-        .contact {
-            background-color: #fafafa;
-            border-radius: 4px;
-            padding: 20px;
-            margin-bottom: 30px;
-            text-align: left;
-            font-size: 15px;
-        }
-        .contact h4 {
-            font-size: 16px;
-            color: var(--primary);
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-        .contact p {
-            margin: 4px 0;
-            color: #555555;
-        }
-        .footer {
-            background-color: #fafafa;
-            text-align: center;
-            padding: 20px;
-            font-size: 13px;
-            color: #777777;
-        }
-        .footer p { margin-bottom: 6px; }
-        @media (max-width: 600px) {
-            .email-container { margin: 20px; }
-            .header h1 { font-size: 20px; }
-            .content { padding: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <div class="badge">GRIEVANCE APPROVED</div>
-            <h1>Congratulations!</h1>
-            <p>Your grievance has been approved by the committee</p>
-        </div>
-        <div class="content">
-            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-            <p class="message">We are pleased to inform you that your grievance application has been <strong>approved</strong> by the Grievance Committee after thorough review and consideration.</p>
-            <div class="item-info">
-                <h4>📦 Approved Item</h4>
-                <p><strong>${itemName}</strong></p>
-                <p style="margin-top:8px; font-size:14px; color:#374151;">Your company has been added to the temporary approval pool for this item.</p>
-            </div>
-            <div class="next-steps">
-                <h4>📋 Next Steps</h4>
-                <ul>
-                    <li>Your company is now eligible for consideration in the tender process for this item</li>
-                    <li>You will be included in the temporary approval pool for relevant tenders</li>
-                    <li>Please monitor your email for future tender notifications</li>
-                    <li>Ensure all your company documentation remains up to date</li>
-                </ul>
-            </div>
-            <div class="contact">
-                <h4>📞 Contact Information</h4>
-                <p>If you have any questions regarding this decision, please contact:</p>
-                <p><strong>Grievance Committee Secretary</strong></p>
-                <p>Email: grievance@ric.edu.pk</p>
-                <p>Phone: +92-XXX-XXXXXXX</p>
-            </div>
-            <p class="message">Thank you for your patience during the grievance review process. We look forward to your continued participation in our tender processes.</p>
-            <p><strong>Best regards,</strong><br>The Grievance Committee<br>Rawalpindi Institute of Cardiology</p>
-        </div>
-        <div class="footer">
-            <p><strong>Grievance Committee</strong></p>
-            <p>Rawalpindi Institute of Cardiology</p>
-            <p>Email: grievance@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your grievance application.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
+        return this.send({ to: supplierEmail, subject: 'Update on your supplier application', html });
     }
 
-    // Send grievance rejection email
-    async sendGrievanceRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, contactPerson, minutesFilePath = null) {
-        const htmlContent = this.generateGrievanceRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `Grievance Decision - ${itemName}`,
-            html: htmlContent
-        };
-
-        // Add minutes of meeting as attachment if provided
-        if (minutesFilePath) {
-            mailOptions.attachments = [
-                {
-                    filename: 'Minutes_of_Meeting.pdf',
-                    path: minutesFilePath,
-                    contentType: 'application/pdf'
-                }
-            ];
-        }
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Grievance rejection notification sent successfully to:', supplierEmail);
-            if (minutesFilePath) {
-                console.log('Minutes of meeting attached to email');
-            }
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending grievance rejection notification:', error);
-            throw error;
-        }
-    }
-
-    generateGrievanceRejectionEmailHTML(companyName, itemName, rejectionReason, contactPerson) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+    async sendSupplierResubmissionEmail(supplierEmail, companyName, issues, additionalMessage) {
+        const portal = portalUrl();
+        const issueItems = (issues || []).map(
+            (issue) => `<strong>${esc(issue.title)}</strong>: ${esc(issue.description)}${issue.comments ? `<br><span style="color:${MUTED};">${esc(issue.comments)}</span>` : ''}`,
+        );
+        const html = layout({
+            title: 'Changes needed on your application',
+            body: [
+                greeting(companyName),
+                p('Your supplier registration needs the following changes before it can be approved.'),
+                issueItems.length ? list(issueItems) : '',
+                additionalMessage ? quote('Notes from the committee', multiline(additionalMessage)) : '',
+                button(portal && `${portal}/login`, 'Update application'),
+                signature('Supplier Evaluation Committee'),
+            ].join(''),
         });
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grievance Decision</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#dc2626) for warning */
-        :root { --primary: #dc2626; --secondary: #f59e0b; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .badge {
-            display: inline-block;
-            background-color: var(--secondary);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-        .content { padding: 30px; }
-        .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--secondary); font-weight: 700; }
-        .message { color: #555555; line-height: 1.7; }
-        .item-info {
-            background-color: #fef2f2;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .item-info h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #991b1b;
-            margin-bottom: 10px;
-        }
-        .item-info p { color: #7f1d1d; }
-        .reason-details {
-            background-color: #fef9c3;
-            border-left: 4px solid #f59e0b;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .reason-details h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #92400e;
-            margin-bottom: 10px;
-        }
-        .reason-text {
-            background-color: #ffffff;
-            border: 1px solid #fed7aa;
-            border-radius: 4px;
-            padding: 15px;
-            color: #9a3412;
-            font-style: italic;
-        }
-        .grievance-info {
-            background-color: #dbeafe;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .grievance-info h4 {
-            font-size: 18px;
-            color: var(--primary);
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        .deadline-highlight {
-            background-color: #fef3c7;
-            border: 2px solid #f59e0b;
-            border-radius: 4px;
-            padding: 15px;
-            margin: 15px 0;
-            text-align: center;
-        }
-        .deadline-highlight strong {
-            color: #92400e;
-            font-size: 18px;
-        }
-        .steps-list {
-            list-style: none;
-            padding-left: 0;
-            margin: 15px 0;
-        }
-        .steps-list li {
-            margin: 10px 0;
-            padding-left: 25px;
-            position: relative;
-            color: var(--primary);
-        }
-        .steps-list li::before {
-            content: '👉';
-            position: absolute;
-            left: 0;
-            font-size: 16px;
-        }
-        .warning-box {
-            background-color: #fef2f2;
-            border: 2px solid #fca5a5;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 20px 0;
-            text-align: center;
-        }
-        .warning-box h5 {
-            color: #dc2626;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-        .warning-box p {
-            color: #991b1b;
-            font-size: 14px;
-        }
-        .contact {
-            background-color: #f0fdf4;
-            border-left: 4px solid #16a34a;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-            font-size: 15px;
-        }
-        .contact h4 {
-            font-size: 16px;
-            color: #15803d;
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-        .contact p { margin: 4px 0; color: #166534; }
-        .footer {
-            background-color: #fafafa;
-            text-align: center;
-            padding: 20px;
-            font-size: 13px;
-            color: #777777;
-        }
-        .footer p { margin-bottom: 6px; }
-        @media (max-width: 600px) {
-            .email-container { margin: 20px; }
-            .header h1 { font-size: 20px; }
-            .content { padding: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <div class="badge">GRIEVANCE REJECTED</div>
-            <h1>Grievance Decision</h1>
-            <p>Your grievance has been reviewed</p>
-        </div>
-        <div class="content">
-            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-            <p class="message">We regret to inform you that your grievance application regarding the technical evaluation of your bid for the item <strong>${itemName}</strong> has been <strong>rejected</strong>.</p>
-            <div class="item-info">
-                <h4>📦 Item Details</h4>
-                <p><strong>${itemName}</strong></p>
-            </div>
-            <div class="reason-details">
-                <h4>📝 Reason for Rejection</h4>
-                <div class="reason-text">
-                    ${rejectionReason}
-                </div>
-            </div>
-            <div class="grievance-info">
-                <h4>⚖️ Grievance Application Right</h4>
-                <p>If you believe this decision was made in error or if you have additional information that was not considered during the evaluation, you have the right to file a grievance application.</p>
-                <div class="deadline-highlight">
-                    <strong>⏰ Grievance Deadline: ${new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                    })}</strong>
-                    <p style="margin-top: 8px; font-size: 14px; color: #92400e;">You must submit your grievance within 3 days of receiving this notification</p>
-                </div>
-                <h5 style="color: var(--primary); margin: 20px 0 10px 0;">How to Apply for Grievance:</h5>
-                <ul class="steps-list">
-                    <li>Log in to your supplier portal account</li>
-                    <li>Navigate to the "Grievance Management" section</li>
-                    <li>Select the rejected item and submit your grievance application</li>
-                    <li>Provide detailed reasons and supporting documentation</li>
-                    <li>Submit before the deadline mentioned above</li>
-                </ul>
-            </div>
-            <div class="warning-box">
-                <h5>⚠️ Important Notice</h5>
-                <p>Grievance applications submitted after the 3-day deadline will not be accepted. Please ensure you submit your application on time if you wish to contest this decision.</p>
-            </div>
-            <div class="contact">
-                <h4>📞 Need Assistance?</h4>
-                <p>If you need help with the grievance application process or have questions about the evaluation, please contact:</p>
-                <p><strong>Grievance Committee Secretary</strong></p>
-                <p>Email: grievance@ric.edu.pk</p>
-                <p>Phone: +92-XXX-XXXXXXX</p>
-                <p style="margin-top: 10px; font-size: 14px;">Our team is available to assist you with the grievance process.</p>
-            </div>
-            <p class="message">We appreciate your participation in our tender process. Our evaluation decisions are made to ensure the highest quality standards and compliance with all technical requirements.</p>
-            <p><strong>Best regards,</strong><br>Technical Evaluation Committee<br>Rawalpindi Institute of Cardiology</p>
-        </div>
-        <div class="footer">
-            <p><strong>Technical Evaluation Committee</strong></p>
-            <p>Rawalpindi Institute of Cardiology</p>
-            <p>Email: technical@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your bid evaluation.</p>
-            <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    // Send technical evaluation rejection email with grievance information
-    async sendTechnicalEvaluationRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, deadlineString) {
-        const htmlContent = this.generateTechnicalEvaluationRejectionEmailHTML(companyName, itemName, rejectionReason, deadlineString);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Technical Evaluation Committee',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `Technical Evaluation Result - ${itemName}`,
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Technical evaluation rejection email sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending technical evaluation rejection email:', error);
-            throw error;
-        }
-    }
-
-    generateTechnicalEvaluationRejectionEmailHTML(companyName, itemName, rejectionReason, deadlineString) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Technical Evaluation Result</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#dc2626) for warning */
-        :root { --primary: #dc2626; --secondary: #f59e0b; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .badge {
-            display: inline-block;
-            background-color: var(--secondary);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-        .content { padding: 30px; }
-        .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--secondary); font-weight: 700; }
-        .message { color: #555555; line-height: 1.7; }
-        .item-info {
-            background-color: #fef2f2;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .item-info h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #991b1b;
-            margin-bottom: 10px;
-        }
-        .item-info p { color: #7f1d1d; }
-        .reason-details {
-            background-color: #fef9c3;
-            border-left: 4px solid #f59e0b;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .reason-details h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #92400e;
-            margin-bottom: 10px;
-        }
-        .reason-text {
-            background-color: #ffffff;
-            border: 1px solid #fed7aa;
-            border-radius: 4px;
-            padding: 15px;
-            color: #9a3412;
-            font-style: italic;
-        }
-        .grievance-info {
-            background-color: #dbeafe;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .grievance-info h4 {
-            font-size: 18px;
-            color: var(--primary);
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        .deadline-highlight {
-            background-color: #fef3c7;
-            border: 2px solid #f59e0b;
-            border-radius: 4px;
-            padding: 15px;
-            margin: 15px 0;
-            text-align: center;
-        }
-        .deadline-highlight strong {
-            color: #92400e;
-            font-size: 18px;
-        }
-        .steps-list {
-            list-style: none;
-            padding-left: 0;
-            margin: 15px 0;
-        }
-        .steps-list li {
-            margin: 10px 0;
-            padding-left: 25px;
-            position: relative;
-            color: var(--primary);
-        }
-        .steps-list li::before {
-            content: '👉';
-            position: absolute;
-            left: 0;
-            font-size: 16px;
-        }
-        .warning-box {
-            background-color: #fef2f2;
-            border: 2px solid #fca5a5;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 20px 0;
-            text-align: center;
-        }
-        .warning-box h5 {
-            color: #dc2626;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-        .warning-box p {
-            color: #991b1b;
-            font-size: 14px;
-        }
-        .contact {
-            background-color: #f0fdf4;
-            border-left: 4px solid #16a34a;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-            font-size: 15px;
-        }
-        .contact h4 {
-            font-size: 16px;
-            color: #15803d;
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-        .contact p { margin: 4px 0; color: #166534; }
-        .footer {
-            background-color: #fafafa;
-            text-align: center;
-            padding: 20px;
-            font-size: 13px;
-            color: #777777;
-        }
-        .footer p { margin-bottom: 6px; }
-        @media (max-width: 600px) {
-            .email-container { margin: 20px; }
-            .header h1 { font-size: 20px; }
-            .content { padding: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <div class="badge">TECHNICAL EVALUATION RESULT</div>
-            <h1>Technical Evaluation Complete</h1>
-            <p>Your bid has been technically evaluated</p>
-        </div>
-        <div class="content">
-            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-            <p class="message">We have completed the technical evaluation of your bid submission. After careful review by our <strong>Technical Evaluation Committee</strong>, we regret to inform you that your bid has been <strong>rejected</strong> during the technical evaluation phase.</p>
-            <div class="item-info">
-                <h4>📦 Evaluated Item</h4>
-                <p><strong>${itemName}</strong></p>
-            </div>
-            <div class="reason-details">
-                <h4>📝 Rejection Reason</h4>
-                <div class="reason-text">
-                    ${rejectionReason}
-                </div>
-            </div>
-            <div class="grievance-info">
-                <h4>⚖️ Grievance Application Right</h4>
-                <p>If you believe this decision was made in error or if you have additional information that was not considered during the evaluation, you have the right to file a grievance application.</p>
-                <div class="deadline-highlight">
-                    <strong>⏰ Grievance Deadline: ${deadlineString}</strong>
-                    <p style="margin-top: 8px; font-size: 14px; color: #92400e;">You must submit your grievance within the specified timeframe</p>
-                </div>
-                <h5 style="color: var(--primary); margin: 20px 0 10px 0;">How to Apply for Grievance:</h5>
-                <ul class="steps-list">
-                    <li>Log in to your supplier portal account</li>
-                    <li>Navigate to the "Grievance Management" section</li>
-                    <li>Select the rejected item and submit your grievance application</li>
-                    <li>Provide detailed reasons and supporting documentation</li>
-                    <li>Submit before the deadline mentioned above</li>
-                </ul>
-            </div>
-            <div class="warning-box">
-                <h5>⚠️ Important Notice</h5>
-                <p>Grievance applications submitted after the deadline will not be accepted. Please ensure you submit your application on time if you wish to contest this decision.</p>
-            </div>
-            <div class="contact">
-                <h4>📞 Need Assistance?</h4>
-                <p>If you need help with the grievance application process or have questions about the evaluation, please contact:</p>
-                <p><strong>Grievance Committee Secretary</strong></p>
-                <p>Email: grievance@ric.edu.pk</p>
-                <p>Phone: +92-XXX-XXXXXXX</p>
-                <p style="margin-top: 10px; font-size: 14px;">Our team is available to assist you with the grievance process.</p>
-            </div>
-            <p class="message">We appreciate your participation in our tender process. Our evaluation decisions are made to ensure the highest quality standards and compliance with all technical requirements.</p>
-            <p><strong>Best regards,</strong><br>Technical Evaluation Committee<br>Rawalpindi Institute of Cardiology</p>
-        </div>
-        <div class="footer">
-            <p><strong>Technical Evaluation Committee</strong></p>
-            <p>Rawalpindi Institute of Cardiology</p>
-            <p>Email: technical@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding your bid evaluation.</p>
-            <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    // Send grievance deadline expired email
-    async sendGrievanceDeadlineExpiredEmail(supplierEmail, companyName, itemName, contactPerson) {
-        const htmlContent = this.generateGrievanceDeadlineExpiredEmailHTML(companyName, itemName, contactPerson);
-        
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `Grievance Application Deadline Expired - ${itemName}`,
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Grievance deadline expired email sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending grievance deadline expired email:', error);
-            throw error;
-        }
-    }
-
-    generateGrievanceDeadlineExpiredEmailHTML(companyName, itemName, contactPerson) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grievance Deadline Expired</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#dc2626) for warning */
-        :root { --primary: #dc2626; --secondary: #f59e0b; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .badge {
-            display: inline-block;
-            background-color: var(--secondary);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-        .content { padding: 30px; }
-        .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--secondary); font-weight: 700; }
-        .message { color: #555555; line-height: 1.7; }
-        .item-info {
-            background-color: #fef2f2;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .item-info h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #991b1b;
-            margin-bottom: 10px;
-        }
-        .item-info p { color: #7f1d1d; }
-        .deadline-notice {
-            background-color: #fef3c7;
-            border: 2px solid var(--secondary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-            text-align: center;
-        }
-        .deadline-notice h4 {
-            font-size: 18px;
-            color: #92400e;
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        .deadline-notice p {
-            color: #9a3412;
-            font-size: 16px;
-            margin-bottom: 0;
-        }
-        .consequences {
-            background-color: #fee2e2;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .consequences h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #991b1b;
-            margin-bottom: 10px;
-        }
-        .consequences ul {
-            list-style: none;
-            padding-left: 0;
-            color: #7f1d1d;
-        }
-        .consequences li {
-            margin-bottom: 8px;
-            padding-left: 24px;
-            position: relative;
-        }
-        .consequences li::before {
-            content: '❌';
-            position: absolute;
-            left: 0;
-            font-size: 14px;
-        }
-        .future-info {
-            background-color: #eef6ff;
-            border-left: 4px solid #3b82f6;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .future-info h4 {
-            font-size: 16px;
-            color: #1e40af;
-            font-weight: 600;
-            margin-bottom: 10px;
-        }
-        .future-info p { color: #1e3a8a; }
-        .contact {
-            background-color: #f0fdf4;
-            border-left: 4px solid #16a34a;
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-            font-size: 15px;
-        }
-        .contact h4 {
-            font-size: 16px;
-            color: #15803d;
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-        .contact p { margin: 4px 0; color: #166534; }
-        .footer {
-            background-color: #fafafa;
-            text-align: center;
-            padding: 20px;
-            font-size: 13px;
-            color: #777777;
-        }
-        .footer p { margin-bottom: 6px; }
-        @media (max-width: 600px) {
-            .email-container { margin: 20px; }
-            .header h1 { font-size: 20px; }
-            .content { padding: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <div class="badge">DEADLINE EXPIRED</div>
-            <h1>Grievance Deadline Expired</h1>
-            <p>The deadline for submitting your grievance has passed</p>
-        </div>
-        <div class="content">
-            <p>Dear <span class="company-name">${companyName}</span> Team,</p>
-            <p class="message">We regret to inform you that the deadline for submitting a grievance application regarding the technical evaluation decision has <strong>expired</strong>.</p>
-            <div class="item-info">
-                <h4>📦 Regarding Item</h4>
-                <p><strong>${itemName}</strong></p>
-                <p style="margin-top:8px; font-size:14px;">Your bid for this item was rejected during technical evaluation.</p>
-            </div>
-            <div class="deadline-notice">
-                <h4>⏰ Deadline Status</h4>
-                <p><strong>The grievance application deadline has officially expired.</strong></p>
-                <p style="margin-top:8px; font-size:14px;">No further grievance applications will be accepted for this tender.</p>
-            </div>
-            <div class="consequences">
-                <h4>📋 What This Means</h4>
-                <ul>
-                    <li>Your technical evaluation rejection decision is now final</li>
-                    <li>No grievance applications can be submitted for this tender</li>
-                    <li>Your company will not be included in the approved pool for this item</li>
-                    <li>The tender process will proceed with the approved suppliers only</li>
-                </ul>
-            </div>
-            <div class="future-info">
-                <h4>🔮 Future Opportunities</h4>
-                <p>While this grievance opportunity has passed, your company remains eligible to participate in future tenders. We encourage you to:</p>
-                <ul style="list-style: none; padding-left: 0; margin-top: 10px;">
-                    <li style="margin-bottom: 6px; padding-left: 20px; position: relative; color: #1e3a8a;">
-                        <span style="position: absolute; left: 0;">✓</span>
-                        Continue monitoring our tender opportunities
-                    </li>
-                    <li style="margin-bottom: 6px; padding-left: 20px; position: relative; color: #1e3a8a;">
-                        <span style="position: absolute; left: 0;">✓</span>
-                        Pay attention to future grievance deadlines
-                    </li>
-                    <li style="margin-bottom: 6px; padding-left: 20px; position: relative; color: #1e3a8a;">
-                        <span style="position: absolute; left: 0;">✓</span>
-                        Ensure all technical documentation meets requirements
-                    </li>
-                    <li style="padding-left: 20px; position: relative; color: #1e3a8a;">
-                        <span style="position: absolute; left: 0;">✓</span>
-                        Submit grievances promptly if needed in future
-                    </li>
-                </ul>
-            </div>
-            <div class="contact">
-                <h4>📞 Questions?</h4>
-                <p>If you have questions about future tender opportunities or the tender process in general, please contact:</p>
-                <p><strong>Procurement Department</strong></p>
-                <p>Email: procurement@ric.edu.pk</p>
-                <p>Phone: +92-XXX-XXXXXXX</p>
-            </div>
-            <p class="message">We appreciate your understanding and look forward to your participation in future tender opportunities.</p>
-            <p><strong>Best regards,</strong><br>Grievance Committee<br>Rawalpindi Institute of Cardiology</p>
-        </div>
-        <div class="footer">
-            <p><strong>Grievance Committee</strong></p>
-            <p>Rawalpindi Institute of Cardiology</p>
-            <p>Email: grievance@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-            <p style="font-size:12px;opacity:0.6;">This is an automated message regarding the grievance deadline.</p>
-            <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
+        return this.send({ to: supplierEmail, subject: 'Action needed on your supplier application', html });
     }
 
     async sendOTPEmail(supplierEmail, otpCode, companyName) {
-        const htmlContent = this.generateOTPEmailHTML(otpCode, companyName);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: 'Email Verification - RIC Supplier Registration',
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('OTP email sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending OTP email:', error);
-            throw error;
-        }
-    }
-
-    generateOTPEmailHTML(otpCode, companyName) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+        const html = layout({
+            title: 'Your verification code',
+            body: [
+                greeting(companyName),
+                p('Enter this code to verify your email address:'),
+                `<p style="margin:4px 0 18px;font-family:'SF Mono',Consolas,monospace;font-size:30px;font-weight:700;letter-spacing:.3em;color:${INK};">${esc(otpCode)}</p>`,
+                small(`It expires in ${OTP_TTL_MINUTES} minutes. If you did not request it, you can ignore this email; staff will never ask you for the code.`),
+            ].join(''),
         });
-
-        return `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Email Verification - RIC Supplier Registration</title>
-                <style>
-                    body {
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        margin: 0;
-                        padding: 20px;
-                        min-height: 100vh;
-                    }
-                    .container {
-                        max-width: 600px;
-                        margin: 0 auto;
-                        background: white;
-                        border-radius: 20px;
-                        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-                        overflow: hidden;
-                        position: relative;
-                    }
-                    .header {
-                        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-                        color: white;
-                        padding: 40px 30px;
-                        text-align: center;
-                        position: relative;
-                    }
-                    .header::before {
-                        content: '';
-                        position: absolute;
-                        top: 0;
-                        left: 0;
-                        right: 0;
-                        bottom: 0;
-                        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="50" cy="50" r="1" fill="white" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
-                    }
-                    .header h1 {
-                        margin: 0;
-                        font-size: 28px;
-                        font-weight: 700;
-                        position: relative;
-                        z-index: 1;
-                    }
-                    .header p {
-                        margin: 10px 0 0 0;
-                        font-size: 16px;
-                        opacity: 0.9;
-                        position: relative;
-                        z-index: 1;
-                    }
-                    .content {
-                        padding: 40px 30px;
-                        line-height: 1.6;
-                        color: #333;
-                    }
-                    .otp-section {
-                        text-align: center;
-                        margin: 30px 0;
-                        padding: 30px;
-                        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-                        border-radius: 15px;
-                        border: 2px dashed #2563eb;
-                    }
-                    .otp-code {
-                        font-size: 36px;
-                        font-weight: 700;
-                        color: #2563eb;
-                        letter-spacing: 8px;
-                        margin: 15px 0;
-                        padding: 15px;
-                        background: white;
-                        border-radius: 10px;
-                        border: 2px solid #e2e8f0;
-                        display: inline-block;
-                        font-family: 'Courier New', monospace;
-                    }
-                    .warning {
-                        background: #fef3c7;
-                        border: 1px solid #f59e0b;
-                        border-radius: 10px;
-                        padding: 20px;
-                        margin: 20px 0;
-                        color: #92400e;
-                    }
-                    .warning h4 {
-                        margin: 0 0 10px 0;
-                        color: #92400e;
-                        font-size: 16px;
-                    }
-                    .instructions {
-                        background: #f0f9ff;
-                        border-left: 4px solid #2563eb;
-                        padding: 20px;
-                        margin: 20px 0;
-                        border-radius: 0 10px 10px 0;
-                    }
-                    .instructions h4 {
-                        margin: 0 0 15px 0;
-                        color: #1e40af;
-                        font-size: 18px;
-                    }
-                    .instructions ul {
-                        margin: 0;
-                        padding-left: 20px;
-                    }
-                    .instructions li {
-                        margin: 8px 0;
-                        color: #1e40af;
-                    }
-                    .footer {
-                        background: #f8fafc;
-                        padding: 30px;
-                        text-align: center;
-                        border-top: 1px solid #e2e8f0;
-                        color: #64748b;
-                    }
-                    .footer p {
-                        margin: 5px 0;
-                    }
-                    .security-notice {
-                        background: #fee2e2;
-                        border: 1px solid #f87171;
-                        border-radius: 10px;
-                        padding: 15px;
-                        margin: 20px 0;
-                        color: #dc2626;
-                        font-size: 14px;
-                    }
-                    .company-name {
-                        font-weight: 700;
-                        color: #2563eb;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>🔐 Email Verification</h1>
-                        <p>RIC E-Tender System</p>
-                    </div>
-                    <div class="content">
-                        <h2>Hello <span class="company-name">${companyName}</span>,</h2>
-                        <p>Thank you for registering as a supplier with the Rawalpindi Institute of Cardiology E-Tender System. To complete your registration and ensure the security of your account, please verify your email address.</p>
-                        
-                        <div class="otp-section">
-                            <h3 style="margin: 0 0 15px 0; color: #2563eb;">Your Verification Code</h3>
-                            <div class="otp-code">${otpCode}</div>
-                            <p style="margin: 15px 0 0 0; color: #64748b; font-size: 14px;">
-                                This code expires in <strong>15 minutes</strong>
-                            </p>
-                        </div>
-
-                        <div class="instructions">
-                            <h4>📋 How to complete verification:</h4>
-                            <ul>
-                                <li>Enter the 6-digit code above in the verification form</li>
-                                <li>Complete the verification within 15 minutes</li>
-                                <li>If the code expires, you can request a new one</li>
-                                <li>After verification, your registration will be submitted to our supplier evaluation committee</li>
-                            </ul>
-                        </div>
-
-                        <div class="warning">
-                            <h4>⏰ Important Notice</h4>
-                            <p>This verification code will expire in 15 minutes for security reasons. If you don't complete the verification in time, you can request a new code from the registration page.</p>
-                        </div>
-
-                        <div class="security-notice">
-                            <strong>🔒 Security Notice:</strong> Never share this verification code with anyone. RIC staff will never ask for your verification code via phone or email.
-                        </div>
-
-                        <p><strong>What happens next?</strong></p>
-                        <p>Once you verify your email, your supplier registration will be forwarded to our supplier evaluation committee for review. You will receive another email notification once the evaluation is complete.</p>
-                        
-                        <p>If you didn't request this registration, please ignore this email or contact our support team.</p>
-                    </div>
-                    <div class="footer">
-                        <p><strong>Procurement Department</strong></p>
-                        <p>Rawalpindi Institute of Cardiology</p>
-                        <p>Email: procurement@ric.edu.pk | Phone: +92-XXX-XXXXXXX</p>
-                        <p style="font-size:12px;opacity:0.6;">This is an automated verification email.</p>
-                        <p style="font-size:11px;opacity:0.6;">Generated on ${currentDate}</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `;
+        return this.send({ to: supplierEmail, subject: 'Your RIC e-Tender verification code', html });
     }
 
-    // Send supplier resubmission request email
-    async sendSupplierResubmissionEmail(supplierEmail, companyName, issues, additionalMessage) {
-        const htmlContent = this.generateResubmissionEmailHTML(companyName, issues, additionalMessage);
+    // ── Letters ─────────────────────────────────────────────────────────
 
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: 'Action Required: Resubmission Request - RIC Supplier Registration',
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Resubmission email sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending resubmission email:', error);
-            throw error;
-        }
-    }
-
-    generateResubmissionEmailHTML(companyName, issues, additionalMessage) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+    async sendLetterOfIntentEmail({ to, companyName, contactPerson, letterTitle, letterContent, filePath, fileName }) {
+        const html = layout({
+            title: 'Letter of intent',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`<strong>${esc(companyName)}</strong> has been shortlisted for ${esc(letterTitle)}. The letter of intent is attached.`),
+                letterContent ? quote(null, multiline(letterContent)) : '',
+                signature('Purchase Department'),
+            ].join(''),
         });
-
-        let issuesHTML = '';
-        if (issues && issues.length > 0) {
-            issuesHTML = `
-                <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 15px; margin: 20px 0;">
-                    <h3 style="color: #856404; margin: 0 0 10px 0; font-size: 16px;">Issues to Address:</h3>
-                    <ul style="margin: 0; padding-left: 20px; color: #856404;">
-                        ${issues.map(issue => `
-                            <li style="margin-bottom: 8px;">
-                                <strong>${issue.title}:</strong> ${issue.description}
-                                ${issue.comments ? `<br><em style="color: #6c757d;">${issue.comments}</em>` : ''}
-                            </li>
-                        `).join('')}
-                    </ul>
-                </div>
-            `;
-        }
-
-        return `
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Resubmission Required</title>
-            </head>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-                    <h1 style="margin: 0; font-size: 28px; font-weight: bold;">Resubmission Required</h1>
-                    <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">RIC E-Tender System</p>
-                </div>
-                
-                <div style="background-color: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-                    <p style="margin: 0 0 20px 0; font-size: 16px;">Dear <strong>${companyName}</strong>,</p>
-                    
-                    <p style="margin: 0 0 20px 0;">We have reviewed your supplier registration application and require some additional information or corrections before we can proceed with the approval process.</p>
-                    
-                    ${issuesHTML}
-                    
-                    ${additionalMessage ? `
-                        <div style="background-color: #e7f3ff; border: 1px solid #b6d4fe; border-radius: 6px; padding: 15px; margin: 20px 0;">
-                            <h3 style="color: #004085; margin: 0 0 10px 0; font-size: 16px;">Additional Instructions:</h3>
-                            <p style="margin: 0; color: #004085;">${additionalMessage}</p>
-                        </div>
-                    ` : ''}
-                    
-                    <div style="background-color: #ffffff; border: 1px solid #dee2e6; border-radius: 6px; padding: 20px; margin: 20px 0;">
-                        <h3 style="color: #333; margin: 0 0 15px 0; font-size: 18px;">What You Need to Do:</h3>
-                        <ol style="margin: 0; padding-left: 20px; color: #333;">
-                            <li style="margin-bottom: 8px;">Log in to your supplier portal</li>
-                            <li style="margin-bottom: 8px;">Update your application with the required information</li>
-                            <li style="margin-bottom: 8px;">Upload any missing or corrected documents</li>
-                            <li style="margin-bottom: 8px;">Resubmit your application for review</li>
-                        </ol>
-                    </div>
-                    
-                    <div style="text-align: center; margin: 30px 0;">
-                        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/supplier/login" 
-                           style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block; font-size: 16px;">
-                            Access Supplier Portal
-                        </a>
-                    </div>
-                    
-                    <div style="border-top: 1px solid #dee2e6; padding-top: 20px; margin-top: 30px;">
-                        <p style="margin: 0 0 10px 0; font-size: 14px; color: #6c757d;">
-                            <strong>Important:</strong> Please address all the issues mentioned above and resubmit your application as soon as possible. If you have any questions, please contact our support team.
-                        </p>
-                        
-                        <p style="margin: 0; font-size: 14px; color: #6c757d;">
-                            This is an automated message from the RIC E-Tender System. Please do not reply to this email.
-                        </p>
-                    </div>
-                    
-                    <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #dee2e6;">
-                        <p style="margin: 0; font-size: 12px; color: #6c757d;">
-                            © ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.
-                        </p>
-                        <p style="margin: 5px 0 0 0; font-size: 12px; color: #6c757d;">
-                            Date: ${currentDate}
-                        </p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `;
+        // The letter is the point of the email: fail if the file is missing.
+        return this.send({ to, subject: `Letter of intent: ${letterTitle}`, html, attachments: [{ filename: fileName, path: filePath }] });
     }
 
-    // Send bulk grievance meeting notification email (for multiple grievances)
+    async sendLetterOfAwardEmail({ to, companyName, contactPerson, letterTitle, letterContent, filePath, fileName, awardAmount }) {
+        const html = layout({
+            title: 'Contract awarded',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`<strong>${esc(companyName)}</strong> has been awarded the contract. The letter of award is attached.`),
+                details([
+                    ['Tender', esc(letterTitle)],
+                    ['Award amount', awardAmount ? `Rs ${esc(Number(awardAmount).toLocaleString('en-PK', { maximumFractionDigits: 2 }))}` : ''],
+                ]),
+                letterContent ? quote(null, multiline(letterContent)) : '',
+                p('Please contact the Purchase Department to finalise the contract.'),
+                signature('Purchase Department'),
+            ].join(''),
+        });
+        return this.send({ to, subject: `Contract awarded: ${letterTitle}`, html, attachments: [{ filename: fileName, path: filePath }] });
+    }
+
+    // ── Technical evaluation and grievances ─────────────────────────────
+
+    async sendTechnicalEvaluationRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, deadlineString) {
+        const html = layout({
+            title: 'Technical evaluation result',
+            body: [
+                greeting(companyName),
+                p(`Your bid for <strong>${esc(itemName)}</strong> did not pass the technical evaluation.`),
+                rejectionReason ? quote('Reason', multiline(rejectionReason)) : '',
+                p(`If you disagree, you can file a grievance under Grievances in the supplier portal until <strong>${esc(deadlineString)}</strong>.`),
+                signature('Technical Evaluation Committee'),
+            ].join(''),
+        });
+        return this.send({ to: supplierEmail, subject: `Technical evaluation result: ${itemName}`, html, fromName: process.env.EMAIL_FROM_NAME || 'RIC Technical Evaluation Committee' });
+    }
+
+    async sendGrievanceMeetingNotification(supplierEmail, companyName, itemName, meetingDate, meetingTime, meetingLocation, meetingDetails, grievanceLetterPath = null) {
+        const html = layout({
+            title: 'Grievance hearing scheduled',
+            body: [
+                greeting(companyName),
+                p(`Your grievance about <strong>${esc(itemName)}</strong> will be heard at:`),
+                details([
+                    ['Date', esc(longDate(meetingDate) || meetingDate)],
+                    ['Time', esc(formatClock(meetingTime))],
+                    ['Location', esc(meetingLocation)],
+                    ['Details', meetingDetails ? multiline(meetingDetails) : ''],
+                ]),
+                p(`Please bring any supporting documents.${grievanceLetterPath ? ' The committee’s letter is attached.' : ''}`),
+                signature('Grievance Committee'),
+            ].join(''),
+        });
+        return this.send({
+            to: supplierEmail,
+            subject: `Grievance hearing: ${itemName}`,
+            html,
+            fromName: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+            attachments: fileAttachment(grievanceLetterPath, 'Grievance_letter.pdf', 'application/pdf'),
+        });
+    }
+
     async sendBulkGrievanceMeetingNotification(supplierEmail, companyName, grievanceItems, meetingDate, meetingTime, meetingLocation, meetingDetails, grievanceLetterPath = null) {
-        const htmlContent = this.generateBulkGrievanceMeetingEmailHTML(companyName, grievanceItems, meetingDate, meetingTime, meetingLocation, meetingDetails);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
+        const html = layout({
+            title: 'Grievance hearing scheduled',
+            body: [
+                greeting(companyName),
+                p('Your grievances will be heard together at:'),
+                details([
+                    ['Items', esc(grievanceItems)],
+                    ['Date', esc(longDate(meetingDate) || meetingDate)],
+                    ['Time', esc(formatClock(meetingTime))],
+                    ['Location', esc(meetingLocation)],
+                    ['Details', meetingDetails ? multiline(meetingDetails) : ''],
+                ]),
+                p(`Please bring any supporting documents.${grievanceLetterPath ? ' The committee’s letter is attached.' : ''}`),
+                signature('Grievance Committee'),
+            ].join(''),
+        });
+        return this.send({
             to: supplierEmail,
-            subject: `Grievance Meeting Scheduled - Multiple Items`,
-            html: htmlContent,
-            attachments: []
-        };
+            subject: 'Grievance hearing scheduled',
+            html,
+            fromName: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+            attachments: fileAttachment(grievanceLetterPath, 'Grievance_letter.pdf', 'application/pdf'),
+        });
+    }
 
-        // Add grievance letter attachment if provided
-        if (grievanceLetterPath && require('fs').existsSync(grievanceLetterPath)) {
-            mailOptions.attachments.push({
-                filename: 'Grievance_Letter.pdf',
-                path: grievanceLetterPath,
-                contentType: 'application/pdf'
+    async sendGrievanceApprovalEmail(supplierEmail, companyName, itemName, contactPerson, minutesFilePath = null) {
+        const html = layout({
+            title: 'Grievance upheld',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`Your grievance about <strong>${esc(itemName)}</strong> has been upheld. Your bid for this item is back in the evaluation.`),
+                minutesFilePath ? small('The minutes of the meeting are attached.') : '',
+                signature('Grievance Committee'),
+            ].join(''),
+        });
+        return this.send({
+            to: supplierEmail,
+            subject: `Grievance upheld: ${itemName}`,
+            html,
+            fromName: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+            attachments: fileAttachment(minutesFilePath, 'Minutes_of_meeting.pdf', 'application/pdf'),
+        });
+    }
+
+    async sendGrievanceRejectionEmail(supplierEmail, companyName, itemName, rejectionReason, contactPerson, minutesFilePath = null) {
+        const html = layout({
+            title: 'Grievance decision',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`Your grievance about <strong>${esc(itemName)}</strong> was not upheld. The technical evaluation stands.`),
+                rejectionReason ? quote('Reasons', multiline(rejectionReason)) : '',
+                minutesFilePath ? small('The minutes of the meeting are attached.') : '',
+                signature('Grievance Committee'),
+            ].join(''),
+        });
+        return this.send({
+            to: supplierEmail,
+            subject: `Grievance decision: ${itemName}`,
+            html,
+            fromName: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee',
+            attachments: fileAttachment(minutesFilePath, 'Minutes_of_meeting.pdf', 'application/pdf'),
+        });
+    }
+
+    async sendGrievanceDeadlineExpiredEmail(supplierEmail, companyName, itemName, contactPerson) {
+        const html = layout({
+            title: 'Grievance period closed',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`The grievance period for <strong>${esc(itemName)}</strong> has closed, so the technical evaluation is now final.`),
+                signature('Grievance Committee'),
+            ].join(''),
+        });
+        return this.send({ to: supplierEmail, subject: `Grievance period closed: ${itemName}`, html, fromName: process.env.EMAIL_FROM_NAME || 'RIC Grievance Committee' });
+    }
+
+    // ── Pre-bid meetings ────────────────────────────────────────────────
+
+    async sendPreBidMeetingNotification(supplierEmail, companyName, contactPerson, meetingDetails) {
+        const m = meetingDetails;
+        const html = layout({
+            title: 'Pre-bid meeting',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`A pre-bid meeting has been scheduled for tender <strong>${esc(m.tender_number)}</strong>${m.tender_title ? ` (${esc(m.tender_title)})` : ''}.`),
+                details([
+                    ['Date', esc(longDate(m.meeting_date))],
+                    ['Time', esc(formatClock(m.meeting_time))],
+                    ['Location', esc([m.location, m.venue].filter(Boolean).join(', '))],
+                    ['Agenda', m.agenda ? multiline(m.agenda) : ''],
+                    ['Notes', m.additional_notes ? multiline(m.additional_notes) : ''],
+                ]),
+                p('Please send a representative who can answer questions about your bid. Minutes will be shared afterwards.'),
+                signature('Purchase Department'),
+            ].join(''),
+        });
+        return this.send({ to: supplierEmail, subject: `Pre-bid meeting: tender ${m.tender_number}`, html });
+    }
+
+    async sendMeetingMinutes(supplierEmail, companyName, contactPerson, meetingDetails, minutesBuffer, fileName) {
+        const m = meetingDetails;
+        const html = layout({
+            title: 'Pre-bid meeting minutes',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`The minutes of the pre-bid meeting for tender <strong>${esc(m.tender_number)}</strong> are attached. Any clarifications agreed in the meeting are recorded there.`),
+                details([
+                    ['Meeting', esc([longDate(m.meeting_date), m.meeting_time && formatClock(m.meeting_time)].filter(Boolean).join(', '))],
+                    ['Location', esc(m.location)],
+                ]),
+                signature('Purchase Department'),
+            ].join(''),
+        });
+        return this.send({
+            to: supplierEmail,
+            subject: `Pre-bid meeting minutes: tender ${m.tender_number}`,
+            html,
+            attachments: [{ filename: fileName, content: minutesBuffer }],
+        });
+    }
+
+    async sendMeetingCancellation(supplierEmail, companyName, contactPerson, meetingDetails) {
+        const m = meetingDetails;
+        const html = layout({
+            title: 'Pre-bid meeting cancelled',
+            body: [
+                greeting(contactPerson || companyName),
+                p(`The pre-bid meeting for tender <strong>${esc(m.tender_number)}</strong> on ${esc([longDate(m.meeting_date), m.meeting_time && formatClock(m.meeting_time)].filter(Boolean).join(', '))} has been cancelled.`),
+                m.cancellation_reason ? quote('Reason', multiline(m.cancellation_reason)) : '',
+                p('We will let you know if it is rescheduled. The tender timeline is unchanged.'),
+                signature('Purchase Department'),
+            ].join(''),
+        });
+        return this.send({ to: supplierEmail, subject: `Cancelled: pre-bid meeting for tender ${m.tender_number}`, html });
+    }
+
+    // ── Financial opening ───────────────────────────────────────────────
+
+    async sendFinancialGrievanceEmail(supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath = null, emailType = 'grievance') {
+        if (emailType === 'meeting_minutes') {
+            const html = layout({
+                title: 'Financial grievance meeting minutes',
+                body: [
+                    greeting(companyName),
+                    p(`The financial grievance process for tender <strong>${esc(tenderNo)}</strong> is complete. The meeting minutes are attached.`),
+                    signature('Purchase Department'),
+                ].join(''),
+            });
+            return this.send({
+                to: supplierEmail,
+                subject: `Financial grievance minutes: tender ${tenderNo}`,
+                html,
+                attachments: fileAttachment(reportPath, `Meeting_minutes_${tenderNo}.pdf`),
             });
         }
 
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Bulk grievance meeting notification sent successfully to:', supplierEmail);
-            console.log('Message ID:', info.messageId);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending bulk grievance meeting notification:', error);
-            throw error;
-        }
-    }
-
-    generateBulkGrievanceMeetingEmailHTML(companyName, grievanceItems, meetingDate, meetingTime, meetingLocation, meetingDetails) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+        const periodEnd = new Date(Date.now() + 10 * 86_400_000);
+        const html = layout({
+            title: 'Financial bids opened',
+            body: [
+                greeting(companyName),
+                p(`Financial bids for tender <strong>${esc(tenderNo)}</strong>${tenderTitle ? ` (${esc(tenderTitle)})` : ''} have been opened. The comparative statement is attached.`),
+                details([
+                    ['Grievances accepted until', esc(longDate(periodEnd))],
+                    ['Grievance meeting', esc(longDateTime(meetingDateTime))],
+                    ['Venue', 'Purchase Department, RIC'],
+                ]),
+                p('To raise a grievance, write to the Purchase Department before the date above with your grounds and supporting documents.'),
+                signature('Purchase Department'),
+            ].join(''),
         });
-
-        return `
-        <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grievance Meeting Scheduled</title>
-    <style>
-        /* Reset */
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f2f2f2;
-            color: #333333;
-            line-height: 1.6;
-        }
-        .email-container {
-            max-width: 600px;
-            margin: 40px auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        /* Colors: Primary (#00509e) and Accent (#f2a900) */
-        :root { --primary: #00509e; --accent: #f2a900; }
-        .header {
-            background-color: var(--primary);
-            color: #ffffff;
-            text-align: center;
-            padding: 30px;
-        }
-        .header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .header p {
-            font-size: 16px;
-            opacity: 0.9;
-        }
-        .badge {
-            display: inline-block;
-            background-color: var(--accent);
-            color: #ffffff;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 15px;
-        }
-        .content { padding: 30px; }
-        .content p { margin-bottom: 20px; font-size: 16px; }
-        .company-name { color: var(--accent); font-weight: 700; }
-        .message { color: #555555; line-height: 1.7; }
-        .item-info {
-            background-color: #f9fafb;
-            border-left: 4px solid var(--primary);
-            border-radius: 4px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .item-info h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 10px;
-        }
-        .meeting-details {
-            background-color: #fef3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 6px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .meeting-details h4 {
-            color: #856404;
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-        }
-        .meeting-details p {
-            margin-bottom: 10px;
-            color: #856404;
-        }
-        .meeting-details strong { color: #6c5ce7; }
-        .footer {
-            background-color: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            border-top: 1px solid #dee2e6;
-        }
-        .footer p { font-size: 12px; color: #6c757d; margin: 5px 0; }
-    </style>
-</head>
-<body>
-    <div class="email-container">
-        <div class="header">
-            <h1>Grievance Meeting Scheduled</h1>
-            <p>RIC Grievance Committee</p>
-        </div>
-        
-        <div class="content">
-            <div class="badge">Meeting Notice</div>
-            
-            <p>Dear <span class="company-name">${companyName}</span>,</p>
-            
-            <p class="message">
-                The Grievance Committee has reviewed your grievance applications and has scheduled a meeting to discuss your concerns regarding multiple items.
-            </p>
-            
-            <div class="item-info">
-                <h4>📋 Grievance Items:</h4>
-                <p><strong>${grievanceItems}</strong></p>
-            </div>
-            
-            <div class="meeting-details">
-                <h4>📅 Meeting Details</h4>
-                <p><strong>Date:</strong> ${meetingDate}</p>
-                <p><strong>Time:</strong> ${meetingTime}</p>
-                <p><strong>Location:</strong> ${meetingLocation}</p>
-                <p><strong>Additional Details:</strong> ${meetingDetails}</p>
-            </div>
-            
-            <p class="message">
-                Please ensure your attendance at the scheduled meeting. If you have any questions or need to reschedule, please contact us immediately.
-            </p>
-            
-            <p class="message">
-                <strong>Important:</strong> Please bring all relevant documentation and be prepared to discuss your grievances in detail.
-            </p>
-            
-            <p>
-                Thank you for your cooperation.
-            </p>
-            
-            <p>
-                <strong>Best regards,</strong><br>
-                RIC Grievance Committee
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
-            <p>Date: ${currentDate}</p>
-            <p>This is an automated message. Please do not reply to this email.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    // Pre-bid meeting notification email
-    async sendPreBidMeetingNotification(supplierEmail, companyName, contactPerson, meetingDetails) {
-        const htmlContent = this.generatePreBidMeetingHTML(companyName, contactPerson, meetingDetails);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
+        return this.send({
             to: supplierEmail,
-            subject: `Pre-Bid Meeting Scheduled - Tender ${meetingDetails.tender_number}`,
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Pre-bid meeting notification sent successfully to:', supplierEmail);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending pre-bid meeting notification:', error);
-            throw error;
-        }
-    }
-
-    generatePreBidMeetingHTML(companyName, contactPerson, meetingDetails) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
+            subject: `Financial bids opened: tender ${tenderNo}`,
+            html,
+            attachments: fileAttachment(reportPath, `Comparative_statement_${tenderNo}.xlsx`),
         });
-
-        const meetingDate = new Date(meetingDetails.meeting_date).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pre-Bid Meeting Notification</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
-        .content { padding: 20px; }
-        .meeting-details { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .detail-item { margin: 10px 0; }
-        .detail-label { font-weight: bold; color: #495057; }
-        .important-note { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .footer { background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 10px 10px; margin-top: 20px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Pre-Bid Meeting Notification</h1>
-            <p>RIC E-Tender System</p>
-        </div>
-        
-        <div class="content">
-            <p><strong>Dear ${contactPerson || companyName},</strong></p>
-            
-            <p>We are pleased to inform you that a <strong>Pre-Bid Meeting</strong> has been scheduled for the following tender:</p>
-            
-            <div class="meeting-details">
-                <h3 style="color: #495057; margin-top: 0;">Tender Details</h3>
-                <div class="detail-item">
-                    <span class="detail-label">Tender Number:</span> ${meetingDetails.tender_number}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Tender Title:</span> ${meetingDetails.tender_title}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Description:</span> ${meetingDetails.tender_description || 'N/A'}
-                </div>
-            </div>
-
-            <div class="meeting-details">
-                <h3 style="color: #495057; margin-top: 0;">Meeting Details</h3>
-                <div class="detail-item">
-                    <span class="detail-label">Date:</span> ${meetingDate}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Time:</span> ${meetingDetails.meeting_time}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Location:</span> ${meetingDetails.location}
-                </div>
-                ${meetingDetails.venue ? `<div class="detail-item"><span class="detail-label">Venue:</span> ${meetingDetails.venue}</div>` : ''}
-                ${meetingDetails.agenda ? `<div class="detail-item"><span class="detail-label">Agenda:</span> ${meetingDetails.agenda}</div>` : ''}
-            </div>
-
-            ${meetingDetails.additional_notes ? `
-            <div class="important-note">
-                <h4 style="margin-top: 0; color: #856404;">Additional Notes:</h4>
-                <p style="margin-bottom: 0;">${meetingDetails.additional_notes}</p>
-            </div>
-            ` : ''}
-
-            <div class="important-note">
-                <h4 style="margin-top: 0; color: #856404;">Important Information:</h4>
-                <ul style="margin-bottom: 0;">
-                    <li>This meeting is mandatory for all interested bidders</li>
-                    <li>Please bring authorized representative with decision-making authority</li>
-                    <li>Bring necessary documents and questions related to the tender</li>
-                    <li>Meeting minutes will be shared with all participants after the meeting</li>
-                </ul>
-            </div>
-
-            <p>We look forward to your participation in this important pre-bid meeting. Should you have any questions, please contact our office.</p>
-            
-            <p>
-                <strong>Best regards,</strong><br>
-                RIC Purchase Department<br>
-                E-Tender System
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
-            <p>Date: ${currentDate}</p>
-            <p>This is an automated message. Please do not reply to this email.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    // Send meeting minutes to suppliers
-    async sendMeetingMinutes(supplierEmail, companyName, contactPerson, meetingDetails, minutesBuffer, fileName) {
-        const htmlContent = this.generateMeetingMinutesHTML(companyName, contactPerson, meetingDetails);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `Meeting Minutes - Pre-Bid Meeting for Tender ${meetingDetails.tender_number}`,
-            html: htmlContent,
-            attachments: [
-                {
-                    filename: fileName,
-                    content: minutesBuffer
-                }
-            ]
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Meeting minutes sent successfully to:', supplierEmail);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending meeting minutes:', error);
-            throw error;
-        }
-    }
-
-    generateMeetingMinutesHTML(companyName, contactPerson, meetingDetails) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        const meetingDate = new Date(meetingDetails.meeting_date).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pre-Bid Meeting Minutes</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
-        .content { padding: 20px; }
-        .meeting-details { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .detail-item { margin: 10px 0; }
-        .detail-label { font-weight: bold; color: #495057; }
-        .attachment-info { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .footer { background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 10px 10px; margin-top: 20px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Pre-Bid Meeting Minutes</h1>
-            <p>RIC E-Tender System</p>
-        </div>
-        
-        <div class="content">
-            <p><strong>Dear ${contactPerson || companyName},</strong></p>
-            
-            <p>Please find attached the minutes from the pre-bid meeting held for the following tender:</p>
-            
-            <div class="meeting-details">
-                <h3 style="color: #495057; margin-top: 0;">Meeting Details</h3>
-                <div class="detail-item">
-                    <span class="detail-label">Tender Number:</span> ${meetingDetails.tender_number}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Tender Title:</span> ${meetingDetails.tender_title}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Meeting Date:</span> ${meetingDate}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Meeting Time:</span> ${meetingDetails.meeting_time}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Location:</span> ${meetingDetails.location}
-                </div>
-            </div>
-
-            <div class="attachment-info">
-                <h4 style="margin-top: 0; color: #0c5460;">📎 Attachment Information</h4>
-                <p style="margin-bottom: 0;">The meeting minutes document is attached to this email. Please review it carefully as it contains important information discussed during the meeting.</p>
-            </div>
-
-            <p><strong>Important:</strong> Please ensure that you review the attached meeting minutes thoroughly. Any clarifications, addendums, or changes to the tender requirements discussed during the meeting are documented in these minutes.</p>
-
-            <p>If you have any questions regarding the meeting minutes or require any clarifications, please contact our office immediately.</p>
-            
-            <p>
-                <strong>Best regards,</strong><br>
-                RIC Purchase Department<br>
-                E-Tender System
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
-            <p>Date: ${currentDate}</p>
-            <p>This is an automated message. Please do not reply to this email.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    // Send meeting cancellation notification
-    async sendMeetingCancellation(supplierEmail, companyName, contactPerson, meetingDetails) {
-        const htmlContent = this.generateMeetingCancellationHTML(companyName, contactPerson, meetingDetails);
-
-        const mailOptions = {
-            from: {
-                name: process.env.EMAIL_FROM_NAME || 'RIC E-Tender System',
-                address: process.env.EMAIL_FROM_EMAIL || process.env.EMAIL_USER
-            },
-            to: supplierEmail,
-            subject: `CANCELLED: Pre-Bid Meeting for Tender ${meetingDetails.tender_number}`,
-            html: htmlContent
-        };
-
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            console.log('Meeting cancellation notification sent successfully to:', supplierEmail);
-            return { success: true, messageId: info.messageId };
-        } catch (error) {
-            console.error('Error sending meeting cancellation notification:', error);
-            throw error;
-        }
-    }
-
-    generateMeetingCancellationHTML(companyName, contactPerson, meetingDetails) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        const meetingDate = new Date(meetingDetails.meeting_date).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pre-Bid Meeting Cancelled</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 20px; border-radius: 10px 10px 0 0; text-align: center; }
-        .content { padding: 20px; }
-        .meeting-details { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .detail-item { margin: 10px 0; }
-        .detail-label { font-weight: bold; color: #495057; }
-        .cancellation-notice { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; margin: 15px 0; }
-        .footer { background-color: #f8f9fa; padding: 15px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 10px 10px; margin-top: 20px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚫 Meeting Cancelled</h1>
-            <p>Pre-Bid Meeting Cancellation Notice</p>
-        </div>
-        
-        <div class="content">
-            <p><strong>Dear ${contactPerson || companyName},</strong></p>
-            
-            <div class="cancellation-notice">
-                <h3 style="color: #721c24; margin-top: 0;">IMPORTANT: Meeting Cancelled</h3>
-                <p style="margin-bottom: 0;">We regret to inform you that the pre-bid meeting scheduled for the following tender has been <strong>CANCELLED</strong>.</p>
-            </div>
-            
-            <div class="meeting-details">
-                <h3 style="color: #495057; margin-top: 0;">Cancelled Meeting Details</h3>
-                <div class="detail-item">
-                    <span class="detail-label">Tender Number:</span> ${meetingDetails.tender_number}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Tender Title:</span> ${meetingDetails.tender_title}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Originally Scheduled Date:</span> ${meetingDate}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Originally Scheduled Time:</span> ${meetingDetails.meeting_time}
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Location:</span> ${meetingDetails.location}
-                </div>
-            </div>
-
-            ${meetingDetails.cancellation_reason ? `
-            <div class="meeting-details">
-                <h3 style="color: #495057; margin-top: 0;">Reason for Cancellation</h3>
-                <p>${meetingDetails.cancellation_reason}</p>
-            </div>
-            ` : ''}
-
-            <p><strong>What's Next:</strong></p>
-            <ul>
-                <li>You will be notified if a new meeting is rescheduled</li>
-                <li>The tender process will continue as per the original timeline</li>
-                <li>Any questions can be submitted through the regular inquiry process</li>
-                <li>Please monitor your email for further updates</li>
-            </ul>
-
-            <p>We apologize for any inconvenience caused by this cancellation. If you have any urgent questions regarding this tender, please contact our office.</p>
-            
-            <p>
-                <strong>Best regards,</strong><br>
-                RIC Purchase Department<br>
-                E-Tender System
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
-            <p>Date: ${currentDate}</p>
-            <p>This is an automated message. Please do not reply to this email.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    async sendFinancialGrievanceEmail(supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath = null, emailType = 'grievance') {
-        try {
-            let mailOptions = {};
-            
-            if (emailType === 'meeting_minutes') {
-                // Meeting minutes distribution email
-                mailOptions = {
-                    from: process.env.EMAIL_USER,
-                    to: supplierEmail,
-                    subject: `Financial Grievance Meeting Minutes - Tender ${tenderNo}`,
-                    html: this.getMeetingMinutesEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime),
-                };
-
-                // Attach meeting minutes file if provided
-                if (reportPath && fs.existsSync(reportPath)) {
-                    mailOptions.attachments = [{
-                        filename: `Meeting_Minutes_${tenderNo}.pdf`,
-                        path: reportPath
-                    }];
-                }
-            } else {
-                // Regular grievance period email
-                mailOptions = {
-                    from: process.env.EMAIL_USER,
-                    to: supplierEmail,
-                    subject: `Financial Grievance Period - Tender ${tenderNo}`,
-                    html: this.getFinancialGrievanceEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime),
-                };
-
-                // Attach financial opening report if provided
-                if (reportPath && fs.existsSync(reportPath)) {
-                    mailOptions.attachments = [{
-                        filename: `Financial_Opening_Report_${tenderNo}.xlsx`,
-                        path: reportPath
-                    }];
-                }
-            }
-
-            const result = await this.transporter.sendMail(mailOptions);
-            console.log(`${emailType} email sent successfully:`, result.messageId);
-            return { success: true, messageId: result.messageId };
-        } catch (error) {
-            console.error(`Error sending ${emailType} email:`, error);
-            throw error;
-        }
-    }
-
-    getFinancialGrievanceEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        const grievanceEndDate = new Date();
-        grievanceEndDate.setDate(grievanceEndDate.getDate() + 10);
-        const formattedGrievanceEndDate = grievanceEndDate.toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        const formattedMeetingDateTime = new Date(meetingDateTime).toLocaleString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-
-        return `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Financial Grievance Period - RIC E-Tender</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 28px; font-weight: 300; }
-        .content { padding: 30px; }
-        .tender-info { background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 20px; margin: 20px 0; border-radius: 5px; }
-        .grievance-period { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; margin: 20px 0; border-radius: 5px; text-align: center; }
-        .meeting-info { background-color: #e8f4fd; border: 1px solid #bee5eb; padding: 20px; margin: 20px 0; border-radius: 5px; }
-        .important { color: #e74c3c; font-weight: bold; }
-        .footer { background-color: #f8f9fa; color: #6c757d; text-align: center; padding: 20px; font-size: 12px; }
-        ul { padding-left: 20px; }
-        li { margin-bottom: 8px; }
-        .highlight { background-color: #fff3cd; padding: 2px 5px; border-radius: 3px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Financial Grievance Period</h1>
-            <p>Rawalpindi Institute of Cardiology</p>
-        </div>
-        
-        <div class="content">
-            <p>Dear <strong>${companyName}</strong>,</p>
-            
-            <p>We hope this email finds you well. We are writing to inform you about the commencement of the <strong>Financial Grievance Period</strong> for the following tender:</p>
-            
-            <div class="tender-info">
-                <h3>Tender Information</h3>
-                <p><strong>Tender Title:</strong> ${tenderTitle}</p>
-                <p><strong>Tender Number:</strong> ${tenderNo}</p>
-                <p><strong>Financial Opening:</strong> Completed</p>
-            </div>
-
-            <div class="grievance-period">
-                <h3 class="important">⏰ Financial Grievance Period: 10 Days</h3>
-                <p><strong>Period Start:</strong> ${currentDate}</p>
-                <p><strong>Period End:</strong> ${formattedGrievanceEndDate}</p>
-                <p class="important">All grievances must be submitted before the deadline</p>
-            </div>
-
-            <div class="meeting-info">
-                <h3>📅 Grievance Meeting Details</h3>
-                <p><strong>Date & Time:</strong> ${formattedMeetingDateTime}</p>
-                <p><strong>Venue:</strong> RIC Purchase Department</p>
-                <p><strong>Purpose:</strong> Financial Grievance Discussion</p>
-            </div>
-
-            <h3>Financial Opening Report</h3>
-            <p>Please find attached the financial opening report containing the bid evaluation results. You are encouraged to review this report carefully.</p>
-
-            <h3>Grievance Submission Guidelines</h3>
-            <ul>
-                <li>Grievances must be submitted in writing within the 10-day period</li>
-                <li>All submissions should be addressed to the Purchase Department</li>
-                <li>Please provide detailed justification for any grievances raised</li>
-                <li>Supporting documentation should be attached where applicable</li>
-                <li>Late submissions will not be entertained</li>
-            </ul>
-
-            <h3>Important Notes</h3>
-            <ul>
-                <li>This is a <span class="highlight">mandatory grievance period</span> as per procurement rules</li>
-                <li>The grievance meeting will be conducted by the Purchase Department</li>
-                <li>Meeting minutes will be shared with all approved suppliers after the meeting</li>
-                <li>The tender process will proceed as per schedule after the grievance period</li>
-                <li>For urgent queries, please contact the Purchase Department office</li>
-            </ul>
-
-            <p>We encourage all approved suppliers to actively participate in this process to ensure transparency and fairness in the procurement procedure.</p>
-            
-            <p>
-                <strong>Best regards,</strong><br>
-                RIC Purchase Department<br>
-                Rawalpindi Institute of Cardiology<br>
-                E-Tender System
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
-            <p>Date: ${currentDate}</p>
-            <p>This is an automated message. Please do not reply to this email.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
-    }
-
-    getMeetingMinutesEmailTemplate(companyName, tenderTitle, tenderNo, meetingDateTime) {
-        const currentDate = new Date().toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        const formattedMeetingDateTime = new Date(meetingDateTime).toLocaleString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-
-        return `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Financial Grievance Meeting Minutes - RIC E-Tender</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); color: white; padding: 30px; text-align: center; }
-        .header h1 { margin: 0; font-size: 28px; font-weight: 300; }
-        .content { padding: 30px; }
-        .tender-info { background-color: #f8f9fa; border-left: 4px solid #27ae60; padding: 20px; margin: 20px 0; border-radius: 5px; }
-        .meeting-info { background-color: #e8f4fd; border: 1px solid #bee5eb; padding: 20px; margin: 20px 0; border-radius: 5px; }
-        .completion-notice { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 20px; margin: 20px 0; border-radius: 5px; text-align: center; color: #155724; }
-        .footer { background-color: #f8f9fa; color: #6c757d; text-align: center; padding: 20px; font-size: 12px; }
-        .highlight { background-color: #d4edda; padding: 2px 5px; border-radius: 3px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📋 Meeting Minutes Distribution</h1>
-            <p style="margin: 0; font-size: 16px; opacity: 0.9;">Financial Grievance Process Completed</p>
-        </div>
-        
-        <div class="content">
-            <p>Dear <strong>${companyName}</strong>,</p>
-            
-            <p>The Financial Grievance Meeting has been completed for the following tender. Please find the meeting minutes attached to this email.</p>
-            
-            <div class="tender-info">
-                <h3 style="color: #27ae60; margin-top: 0;">📄 Tender Information</h3>
-                <p><strong>Tender Number:</strong> ${tenderNo}</p>
-                <p><strong>Tender Title:</strong> ${tenderTitle}</p>
-                <p><strong>Meeting Date & Time:</strong> ${formattedMeetingDateTime}</p>
-            </div>
-            
-            <div class="completion-notice">
-                <h3 style="margin-top: 0;">✅ Financial Grievance Process Completed</h3>
-                <p>The financial grievance process for this tender has been officially completed. Please review the attached meeting minutes for details of any discussions or decisions made during the meeting.</p>
-            </div>
-            
-            <div class="meeting-info">
-                <h3 style="color: #17a2b8; margin-top: 0;">📎 Attached Documents</h3>
-                <p>• Meeting Minutes (PDF)</p>
-                <p><strong>Note:</strong> Please save these minutes for your records.</p>
-            </div>
-            
-            <p>If you have any questions regarding the meeting minutes or the grievance process, please contact our procurement office during business hours.</p>
-            
-            <p>Thank you for your participation in the tender process.</p>
-            
-            <p style="margin-top: 30px;">Best regards,<br>
-                <strong>Procurement Department</strong><br>
-                Rawalpindi Institute of Cardiology<br>
-                E-Tender System
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p>© ${new Date().getFullYear()} RIC E-Tender System. All rights reserved.</p>
-            <p>Date: ${currentDate}</p>
-            <p>This is an automated message. Please do not reply to this email.</p>
-        </div>
-    </div>
-</body>
-</html>
-        `;
     }
 }
 
-// Create instance and export common functions
 const emailService = new EmailService();
 
-const sendOTPEmail = async (email, otp, companyName = '') => {
-    return await emailService.sendOTPEmail(email, otp, companyName);
-};
+const sendOTPEmail = (email, otp, companyName = '') => emailService.sendOTPEmail(email, otp, companyName);
 
-const sendFinancialGrievanceEmail = async (supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath = null, emailType = 'grievance') => {
-    return await emailService.sendFinancialGrievanceEmail(supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath, emailType);
-};
+const sendFinancialGrievanceEmail = (supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath = null, emailType = 'grievance') =>
+    emailService.sendFinancialGrievanceEmail(supplierEmail, companyName, tenderTitle, tenderNo, meetingDateTime, reportPath, emailType);
 
 module.exports = EmailService;
 module.exports.sendOTPEmail = sendOTPEmail;
 module.exports.sendFinancialGrievanceEmail = sendFinancialGrievanceEmail;
+module.exports.layout = layout;

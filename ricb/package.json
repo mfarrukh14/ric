@@ -1,12 +1,12 @@
 {
   "name": "ricb",
   "version": "1.0.0",
-  "description": "ric tender automation backend",
+  "description": "RIC e-procurement API",
   "main": "server.js",
   "bin": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
+    "dev": "node --watch server.js",
     "build": "pkg ."
   },
   "author": "Muhammad Farrukh Naveed",
@@ -22,14 +22,12 @@
     "mssql": "^12.2.3",
     "multer": "^2.0.0",
     "node-cron": "^4.2.1",
-    "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.3",
     "puppeteer": "^24.9.0",
     "qrcode": "^1.5.4",
-    "router": "^2.2.0",
-    "speakeasy": "^2.0.0",
-    "sqlite3": "^5.1.7",
-    "twilio": "^5.7.3",
-    "xlsx": "^0.18.5"
+    "speakeasy": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

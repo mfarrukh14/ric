@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
     listDepartments,
     listCommittees,
@@ -9,123 +9,177 @@ import {
     deleteDepartment,
     deleteCommittee,
     deleteUser,
+    resetUserPassword,
+    revealUserPassword,
     updateHodStatus,
     updateEprocStatus,
-    getItemCategories,
-    getAllItemNames,
-    createItemCategory,
-    createItemName,
-    updateItemCategory,
-    updateItemName,
-    deleteItemCategory,
-    deleteItemName,
-    getItemNamesByCategory
 } from '../../config/api';
-import Modal from '../modals/Modal';
-import UserListModal from '../modals/UserListModal';
+import UserListModal, { CopyButton } from '../modals/UserListModal';
 import DemandManagement from './DemandManagement';
 import GrievanceDeadlineManagement from './GrievanceDeadlineManagement';
 import SecurityManagement from './SecurityManagement';
 import UnifiedItemManagement from './UnifiedItemManagement';
 import AuditManagement from './AuditManagement';
-import TwoFactorSetup from '../auth/TwoFactorSetup/TwoFactorSetup';
-import { UserPlus, Trash2, Eye, Package, Clock, Settings, Shield } from 'lucide-react';
+import { UserPlus, Trash, Eye, Plus } from '@phosphor-icons/react';
+import { useRouteTab } from '../../lib/useRouteTab';
+import { ADMIN_TABS } from '../../app/navigation';
+import { Button, Modal, Notice, PageHeader, Panel } from '../../ui';
+import { confirmDialog } from '../../lib/confirm';
+import { toast } from '../../lib/notify';
+import './admin.css';
 
-const glassTableClass = `
-  w-full table-auto bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg
-  border border-white border-opacity-30 rounded-2xl shadow-lg overflow-hidden
-`;
+const ADMIN_PAGES = {
+    management: 'People & teams',
+    items: 'Item catalogue',
+    demands: 'Demands',
+    grievances: 'Grievance deadlines',
+    security: 'Security',
+    audit: 'Audit trail',
+};
+
+const EMPTY_USER = { name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false };
+
+const fail = (err, fallback) => toast.error(err?.error || err?.message || fallback);
+
+function GroupTable({ title, type, groups, memberCount, onAdd, onAddMember, onView, onDelete }) {
+    const noun = type === 'department' ? 'department' : 'committee';
+    return (
+        <Panel title={title} actions={<Button size="sm" variant="primary" icon={<Plus size={15} weight="bold" />} onClick={onAdd}>Add {noun}</Button>} flush>
+            <table className="admin-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th className="admin-table__num">Members</th>
+                        <th className="admin-table__actions"><span className="visually-hidden">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {groups.length === 0 ? (
+                        <tr><td colSpan="3" className="admin-table__empty">No {noun}s yet</td></tr>
+                    ) : (
+                        groups.map((group) => (
+                            <tr key={group.id}>
+                                <td className="admin-table__name">{group.name}</td>
+                                <td className="admin-table__num numeric">{memberCount(group.id)}</td>
+                                <td className="admin-table__actions">
+                                    <Button size="sm" variant="ghost" icon={<UserPlus size={16} />} aria-label="Add member" title="Add member" onClick={() => onAddMember(group.id)} />
+                                    <Button size="sm" variant="ghost" icon={<Eye size={16} />} aria-label="View members" title="View members" onClick={() => onView(group.id)} />
+                                    <Button size="sm" variant="ghost" className="admin-danger" icon={<Trash size={16} />} aria-label={`Delete ${noun}`} title={`Delete ${noun}`} onClick={() => onDelete(group)} />
+                                </td>
+                            </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
+        </Panel>
+    );
+}
 
 const AdminDashboard = () => {
-    // State hooks
     const [departments, setDepartments] = useState([]);
     const [committees, setCommittees] = useState([]);
     const [users, setUsers] = useState([]);
-    const [itemCategories, setItemCategories] = useState([]);
-    const [itemNames, setItemNames] = useState([]);
-    const [activeTab, setActiveTab] = useState('management'); // management, items, demands, grievances, security
-    const [showDepartmentModal, setShowDepartmentModal] = useState(false);
-    const [showCommitteeModal, setShowCommitteeModal] = useState(false);
-    const [showUserModal, setShowUserModal] = useState(false);
-    const [showUserListModal, setShowUserListModal] = useState(false);
-    const [showCategoryModal, setShowCategoryModal] = useState(false);
-    const [showItemNameModal, setShowItemNameModal] = useState(false);
-    const [show2FASetup, setShow2FASetup] = useState(false);
-    const [selectedGroup, setSelectedGroup] = useState({ id: null, type: '' });
-    const [searchTerm, setSearchTerm] = useState('');
+    const [activeTab] = useRouteTab(ADMIN_TABS, 'management');
 
+    const [groupModal, setGroupModal] = useState(null); // 'department' | 'committee' | null
     const [newName, setNewName] = useState('');
-    const [newUser, setNewUser] = useState({
-        name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false
-    });
-    const [newCategory, setNewCategory] = useState({ name: '', description: '' });
-    const [newItemName, setNewItemName] = useState({ categoryId: '', name: '', description: '' });
-    const [editingItem, setEditingItem] = useState(null);
-    const [error, setError] = useState('');
+    const [showUserModal, setShowUserModal] = useState(false);
+    const [newUser, setNewUser] = useState(EMPTY_USER);
     const [createdCredentials, setCreatedCredentials] = useState(null);
-
-    useEffect(() => { fetchAll(); }, []);
+    const [selectedGroup, setSelectedGroup] = useState(null); // { id, type }
+    const [searchTerm, setSearchTerm] = useState('');
 
     const fetchAll = async () => {
         try {
-            const [d, c, u, ic, in_] = await Promise.all([
-                listDepartments(), 
-                listCommittees(), 
-                listUsers(), 
-                getItemCategories(), 
-                getAllItemNames()
-            ]);
+            const [d, c, u] = await Promise.all([listDepartments(), listCommittees(), listUsers()]);
             setDepartments(d);
             setCommittees(c);
             setUsers(u);
-            setItemCategories(ic);
-            setItemNames(in_);
-        } catch (e) {
-            setError(e.error || 'Failed to load data');
+        } catch (err) {
+            fail(err, 'Failed to load people and teams');
         }
     };
 
-    // --- Create / Delete handlers ---
-    const handleCreate = async (type) => {
-        if (!newName.trim()) { setError('Name is required'); return; }
-        try {
-            if (type === 'department') await createDepartment(newName);
-            else await createCommittee(newName);
-            setNewName('');
-            setShowDepartmentModal(false);
-            setShowCommitteeModal(false);
-            fetchAll();
-        } catch {
-            setError(`Error creating ${type}`);
-        }
-    };
+    useEffect(() => { fetchAll(); }, []);
 
-    const handleDelete = async (type, id) => {
-        if (!confirm('Are you sure?')) return;
-        try {
-            if (type === 'department') await deleteDepartment(id);
-            if (type === 'committee') await deleteCommittee(id);
-            if (type === 'user') await deleteUser(id);
-            fetchAll();
-        } catch {
-            setError(`Error deleting ${type}`);
-        }
-    };
+    const membersOf = (id, type) => users.filter((u) => (type === 'department' ? u.department_id : u.committee_id) === id);
+    const departmentHasHod = (departmentId) => Boolean(departmentId) && users.some((u) => u.department_id === Number(departmentId) && u.is_hod);
 
-    const handleCreateUser = async e => {
+    // ── Departments and committees ──
+    const handleCreateGroup = async (e) => {
         e.preventDefault();
-        if (!newUser.name || !newUser.designation || (!newUser.departmentId && !newUser.committeeId)) {
-            setError('Name, designation & either department or committee are required');
+        const name = newName.trim();
+        if (!name) return;
+        try {
+            await (groupModal === 'department' ? createDepartment(name) : createCommittee(name));
+            setNewName('');
+            setGroupModal(null);
+            fetchAll();
+        } catch (err) {
+            fail(err, `Failed to create ${groupModal}`);
+        }
+    };
+
+    const handleDeleteGroup = async (type, group) => {
+        if (!(await confirmDialog(`Delete ${group.name}?`))) return;
+        try {
+            await (type === 'department' ? deleteDepartment(group.id) : deleteCommittee(group.id));
+            fetchAll();
+        } catch (err) {
+            fail(err, `Failed to delete ${type}`);
+        }
+    };
+
+    // ── Users ──
+    const openUserModal = (group) => {
+        setNewUser({ ...EMPTY_USER, ...group });
+        setShowUserModal(true);
+    };
+
+    const handleCreateUser = async (e) => {
+        e.preventDefault();
+        if (!newUser.name.trim() || !newUser.designation.trim() || (!newUser.departmentId && !newUser.committeeId)) {
+            toast.warning('Name, designation and a department or committee are required');
             return;
         }
         try {
             const { credentials } = await createUser(newUser);
             setCreatedCredentials(credentials);
             setShowUserModal(false);
-            setNewUser({ name: '', designation: '', departmentId: '', committeeId: '', eligibleForDemandCreation: false, isHod: false, isFinanceUser: false });
             fetchAll();
-        } catch {
-            setError('Error creating user');
+        } catch (err) {
+            fail(err, 'Failed to create user');
+        }
+    };
+
+    const handleRemoveUser = async (_type, id, name) => {
+        if (!(await confirmDialog(`Remove ${name}?`, { confirmLabel: 'Remove' }))) return;
+        try {
+            await deleteUser(id);
+            fetchAll();
+        } catch (err) {
+            fail(err, 'Failed to remove user');
+        }
+    };
+
+    const handleRevealPassword = async (user) => {
+        try {
+            const { password } = await revealUserPassword(user.id);
+            return password;
+        } catch (err) {
+            fail(err, 'Failed to load password');
+            return undefined;
+        }
+    };
+
+    const handleResetPassword = async (user) => {
+        if (!(await confirmDialog(`Reset password for ${user.name}?`, { confirmLabel: 'Reset' }))) return null;
+        try {
+            const { credentials } = await resetUserPassword(user.id);
+            return credentials;
+        } catch (err) {
+            fail(err, 'Failed to reset password');
+            return null;
         }
     };
 
@@ -133,8 +187,8 @@ const AdminDashboard = () => {
         try {
             await updateHodStatus(userId, isHod);
             fetchAll();
-        } catch (error) {
-            setError(error.error || 'Error updating HOD status');
+        } catch (err) {
+            fail(err, 'Failed to update HOD status');
         }
     };
 
@@ -142,570 +196,154 @@ const AdminDashboard = () => {
         try {
             await updateEprocStatus(userId, isEprocUser);
             fetchAll();
-        } catch (error) {
-            setError(error.error || 'Error updating eProcurement status');
+        } catch (err) {
+            fail(err, 'Failed to update access');
         }
     };
 
-    // Item Management Handlers
-    const handleCreateCategory = async (e) => {
-        e.preventDefault();
-        if (!newCategory.name.trim()) {
-            setError('Category name is required');
-            return;
-        }
-        try {
-            await createItemCategory(newCategory);
-            setNewCategory({ name: '', description: '' });
-            setShowCategoryModal(false);
-            fetchAll();
-        } catch (error) {
-            setError(error.error || 'Failed to create category');
-        }
-    };
-
-    const handleEditCategory = (category) => {
-        setEditingItem(category);
-        setNewCategory({ name: category.name, description: category.description || '' });
-        setShowCategoryModal(true);
-    };
-
-    const handleUpdateCategory = async (e) => {
-        e.preventDefault();
-        if (!newCategory.name.trim()) {
-            setError('Category name is required');
-            return;
-        }
-        try {
-            await updateItemCategory(editingItem.id, newCategory);
-            setNewCategory({ name: '', description: '' });
-            setEditingItem(null);
-            setShowCategoryModal(false);
-            fetchAll();
-        } catch (error) {
-            setError(error.error || 'Failed to update category');
-        }
-    };
-
-    const handleDeleteCategory = async (categoryId) => {
-        if (window.confirm('Are you sure you want to delete this category? This will also delete all associated item names.')) {
-            try {
-                await deleteItemCategory(categoryId);
-                fetchAll();
-            } catch (error) {
-                setError(error.error || 'Failed to delete category');
-            }
-        }
-    };
-
-    const handleCreateItemName = async (e) => {
-        e.preventDefault();
-        if (!newItemName.categoryId || !newItemName.name.trim()) {
-            setError('Category and item name are required');
-            return;
-        }
-        try {
-            await createItemName(newItemName);
-            setNewItemName({ categoryId: '', name: '', description: '' });
-            setShowItemNameModal(false);
-            fetchAll();
-        } catch (error) {
-            setError(error.error || 'Failed to create item name');
-        }
-    };
-
-    const handleEditItemName = (item) => {
-        setEditingItem(item);
-        setNewItemName({ 
-            categoryId: item.category_id, 
-            name: item.name, 
-            description: item.description || '' 
-        });
-        setShowItemNameModal(true);
-    };
-
-    const handleUpdateItemName = async (e) => {
-        e.preventDefault();
-        if (!newItemName.categoryId || !newItemName.name.trim()) {
-            setError('Category and item name are required');
-            return;
-        }
-        try {
-            await updateItemName(editingItem.id, newItemName);
-            setNewItemName({ categoryId: '', name: '', description: '' });
-            setEditingItem(null);
-            setShowItemNameModal(false);
-            fetchAll();
-        } catch (error) {
-            setError(error.error || 'Failed to update item name');
-        }
-    };
-
-    const handleDeleteItemName = async (itemId) => {
-        if (window.confirm('Are you sure you want to delete this item name?')) {
-            try {
-                await deleteItemName(itemId);
-                fetchAll();
-            } catch (error) {
-                setError(error.error || 'Failed to delete item name');
-            }
-        }
-    };
-
-    const handleCloseCategoryModal = () => {
-        setShowCategoryModal(false);
-        setEditingItem(null);
-        setNewCategory({ name: '', description: '' });
-        setError('');
-    };
-
-    const handleCloseItemNameModal = () => {
-        setShowItemNameModal(false);
-        setEditingItem(null);
-        setNewItemName({ categoryId: '', name: '', description: '' });
-        setError('');
-    };
-
-    const getUsersFor = (id, type) =>
-        users.filter(u => type === 'department' ? u.department_id === id : u.committee_id === id);
-
-    // Check if a department already has an HOD
-    const departmentHasHod = (departmentId) => {
-        if (!departmentId) return false;
-        return users.some(u => u.department_id === parseInt(departmentId) && u.is_hod === 1);
-    };
-
-    // Users filtered by selected group and search term
-    const filteredUsers = selectedGroup.id
-        ? getUsersFor(selectedGroup.id, selectedGroup.type)
-            .filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    const groupName = selectedGroup
+        ? (selectedGroup.type === 'department' ? departments : committees).find((g) => g.id === selectedGroup.id)?.name
+        : '';
+    const visibleMembers = selectedGroup
+        ? membersOf(selectedGroup.id, selectedGroup.type).filter((u) => u.name.toLowerCase().includes(searchTerm.toLowerCase()))
         : [];
+    const viewGroup = (type) => (id) => {
+        setSelectedGroup({ id, type });
+        setSearchTerm('');
+    };
+    const hodTaken = departmentHasHod(newUser.departmentId);
 
-    // Get the title for the user list modal
-    const getUserListTitle = () => {
-        if (!selectedGroup.id) return 'View Members';
-        if (selectedGroup.type === 'department') {
-            const dept = departments.find(d => d.id === selectedGroup.id);
-            return `Department Members - ${dept?.name || ''}`;
-        } else {
-            const comm = committees.find(c => c.id === selectedGroup.id);
-            return `Committee Members - ${comm?.name || ''}`;
-        }
-    }; return (
-        <div className="container mx-auto px-4 py-8 space-y-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-3xl font-bold text-black">Admin Dashboard</h1>
-            </div>
+    return (
+        <div className="admin">
+            <PageHeader title={ADMIN_PAGES[activeTab] || ADMIN_PAGES.management} />
 
-            {error && (
-                <div className="bg-red-100 border border-red-400 text-red-700 p-4 rounded flex justify-between">
-                    <span>{error}</span>
-                    <button onClick={() => setError('')} className="font-bold">×</button>
-                </div>
-            )}
             {createdCredentials && (
-                <div className="bg-green-100 border border-green-400 text-green-700 p-4 rounded">
-                    <h3 className="font-semibold">User Created!</h3>
-                    <p>Username: {createdCredentials.username}</p>
-                    <p>Password: {createdCredentials.password}</p>
-                    <button onClick={() => setCreatedCredentials(null)} className="mt-2 text-green-700">OK</button>
-                </div>
+                <Notice tone="success" actions={<Button size="sm" onClick={() => setCreatedCredentials(null)}>Done</Button>}>
+                    <strong>Account created.</strong> Username <code className="admin-code">{createdCredentials.username}</code>
+                    <CopyButton text={createdCredentials.username} label="Copy username" />
+                    password <code className="admin-code">{createdCredentials.password}</code>
+                    <CopyButton text={createdCredentials.password} label="Copy password" />
+                </Notice>
             )}
 
-            {/* Tab Navigation */}
-            <div className="flex space-x-1 bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg border border-white border-opacity-30 rounded-lg p-1">
-                <button
-                    onClick={() => setActiveTab('management')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'management'
-                            ? 'bg-white bg-opacity-30 text-black font-medium'
-                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
-                        }`}
-                >
-                    <UserPlus size={20} />
-                    <span>User Management</span>
-                </button>
-                <button
-                    onClick={() => setActiveTab('items')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'items'
-                            ? 'bg-white bg-opacity-30 text-black font-medium'
-                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
-                        }`}
-                >
-                    <Package size={20} />
-                    <span>Unified Item Management</span>
-                </button>
-                <button
-                    onClick={() => setActiveTab('demands')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'demands'
-                            ? 'bg-white bg-opacity-30 text-black font-medium'
-                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
-                        }`}
-                >
-                    <Package size={20} />
-                    <span>Demand Management</span>                </button>
-                <button
-                    onClick={() => setActiveTab('grievances')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'grievances'
-                            ? 'bg-white bg-opacity-30 text-black font-medium'
-                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
-                        }`}
-                >
-                    <Clock size={20} />
-                    <span>Grievance Settings</span>
-                </button>
-                <button
-                    onClick={() => setActiveTab('security')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'security'
-                            ? 'bg-white bg-opacity-30 text-black font-medium'
-                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
-                        }`}
-                >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                    <span>Security Settings</span>
-                </button>
-                <button
-                    onClick={() => setActiveTab('audit')}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${activeTab === 'audit'
-                            ? 'bg-white bg-opacity-30 text-black font-medium'
-                            : 'text-gray-700 hover:bg-white hover:bg-opacity-20'
-                        }`}
-                >
-                    <Shield size={20} />
-                    <span>Audit Trail</span>
-                </button>
-            </div>
-
-            {/* Tab Content */}
             {activeTab === 'management' && (
-                <div className="space-y-6">
-                    {/* Departments Table */}
-                    <div className={glassTableClass}>
-                        <div className="flex justify-between items-center p-4">
-                            <h2 className="text-xl font-semibold text-black">Departments</h2>
-                            <button
-                                onClick={() => setShowDepartmentModal(true)}
-                                className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
-                            >+ Add</button>
-                        </div>
-                        <table className="min-w-full text-black">
-                            <thead>
-                                <tr className="border-b border-white border-opacity-30">
-                                    <th className="px-4 py-2 text-left">Name</th>
-                                    <th className="px-4 py-2 text-center">Members</th>
-                                    <th className="px-4 py-2">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {departments.length === 0 ? (
-                                    <tr><td colSpan="3" className="px-4 py-3 text-center">No Departments added yet.</td></tr>
-                                ) : (
-                                    departments.map(d => (
-                                        <tr key={d.id} className="hover:bg-white hover:bg-opacity-10">
-                                            <td className="px-4 py-3">{d.name}</td>
-                                            <td className="px-4 py-3 text-center">{getUsersFor(d.id, 'department').length}</td>
-                                            <td className="px-4 py-3 flex items-center justify-center space-x-2">
-                                                <button onClick={() => { setNewUser(u => ({ ...u, departmentId: d.id })); setShowUserModal(true); }} aria-label="Add Member" className="p-1 hover:bg-gray-200 rounded">
-                                                    <UserPlus className="h-5 w-5 text-black" />
-                                                </button>
-                                                <button onClick={() => handleDelete('department', d.id)} aria-label="Delete Department" className="p-1 hover:bg-gray-200 rounded">
-                                                    <Trash2 className="h-5 w-5 text-red-600" />
-                                                </button>
-                                                <button onClick={() => { setSelectedGroup({ id: d.id, type: 'department' }); setSearchTerm(''); setShowUserListModal(true); }} aria-label="View Members" className="p-1 hover:bg-gray-200 rounded">
-                                                    <Eye className="h-5 w-5 text-black" />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div> 
-                    <div className={glassTableClass}>
-                        <div className="flex justify-between items-center p-4">
-                            <h2 className="text-xl font-semibold text-black">Committees</h2>
-                            <button onClick={() => setShowCommitteeModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">+ Add</button>
-                        </div>
-                        <table className="min-w-full text-black">
-                            <thead>
-                                <tr className="border-b border-white border-opacity-30">
-                                    <th className="px-4 py-2 text-left">Name</th>
-                                    <th className="px-4 py-2 text-center">Members</th>
-                                    <th className="px-4 py-2">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {committees.length === 0 ? (
-                                    <tr><td colSpan="3" className="px-4 py-3 text-center">No Committees added yet.</td></tr>
-                                ) : (committees.map(c => (
-                                        <tr key={c.id} className="hover:bg-white hover:bg-opacity-10">
-                                            <td className="px-4 py-3">{c.name}</td>
-                                            <td className="px-4 py-3 text-center">{getUsersFor(c.id, 'committee').length}</td>
-                                            <td className="px-4 py-3 flex items-centertainment space-x-2 justify-center">
-                                                <button onClick={() => { setNewUser(u => ({ ...u, committeeId: c.id })); setShowUserModal(true); }} aria-label="Add Member" className="p-1 hover:bg-gray-200 rounded">
-                                                    <UserPlus className="h-5 w-5 text-black" />
-                                                </button>
-                                                <button onClick={() => handleDelete('committee', c.id)} aria-label="Delete Committee" className="p-1 hover:bg-gray-200 rounded">
-                                                    <Trash2 className="h-5 w-5 text-red-600" />
-                                                </button>
-                                                <button onClick={() => { setSelectedGroup({ id: c.id, type: 'committee' }); setSearchTerm(''); setShowUserListModal(true); }} aria-label="View Members" className="p-1 hover:bg-gray-200 rounded">
-                                                    <Eye className="h-5 w-5 text-black" />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}                    </tbody>                </table>
-                    </div>
+                <div className="admin-grid stagger">
+                    <GroupTable
+                        title="Departments"
+                        type="department"
+                        groups={departments}
+                        memberCount={(id) => membersOf(id, 'department').length}
+                        onAdd={() => setGroupModal('department')}
+                        onAddMember={(id) => openUserModal({ departmentId: String(id) })}
+                        onView={viewGroup('department')}
+                        onDelete={(group) => handleDeleteGroup('department', group)}
+                    />
+                    <GroupTable
+                        title="Committees"
+                        type="committee"
+                        groups={committees}
+                        memberCount={(id) => membersOf(id, 'committee').length}
+                        onAdd={() => setGroupModal('committee')}
+                        onAddMember={(id) => openUserModal({ committeeId: String(id) })}
+                        onView={viewGroup('committee')}
+                        onDelete={(group) => handleDeleteGroup('committee', group)}
+                    />
                 </div>
             )}
 
-            {/* Unified Item Management Tab */}
-            {activeTab === 'items' && (
-                <UnifiedItemManagement />
-            )}
+            {activeTab === 'items' && <UnifiedItemManagement />}
+            {activeTab === 'demands' && <DemandManagement embedded />}
+            {activeTab === 'grievances' && <GrievanceDeadlineManagement />}
+            {activeTab === 'security' && <SecurityManagement />}
+            {activeTab === 'audit' && <AuditManagement />}
 
-            {/* Demand Management Tab */}
-            {activeTab === 'demands' && (
-                <DemandManagement />
-            )}
-
-            {/* Grievance Settings Tab */}
-            {activeTab === 'grievances' && (
-                <GrievanceDeadlineManagement />
-            )}
-
-            {/* Security Settings Tab */}
-            {activeTab === 'security' && (
-                <SecurityManagement />
-            )}
-
-            {/* User List Modal */}
             <UserListModal
-                show={showUserListModal}
-                onClose={() => setShowUserListModal(false)}
-                title={getUserListTitle()}
-                users={filteredUsers}
-                onDelete={handleDelete}
-                onToggleHod={handleToggleHod}
-                onToggleEproc={handleToggleEproc}
+                show={Boolean(selectedGroup)}
+                onClose={() => setSelectedGroup(null)}
+                title={groupName}
+                users={visibleMembers}
                 searchTerm={searchTerm}
                 onSearchChange={(e) => setSearchTerm(e.target.value)}
+                onDelete={handleRemoveUser}
+                onToggleHod={handleToggleHod}
+                onToggleEproc={handleToggleEproc}
+                onRevealPassword={handleRevealPassword}
+                onResetPassword={handleResetPassword}
             />
 
-            {/* Department Modal */}
-            <Modal show={showDepartmentModal} onClose={() => setShowDepartmentModal(false)} title="Add Department">
-                <form onSubmit={(e) => { e.preventDefault(); handleCreate('department'); }}>
-                    <input
-                        type="text"
-                        placeholder="Department Name"
-                        value={newName}
-                        onChange={e => setNewName(e.target.value)}
-                        className="w-full p-2 border rounded mb-4"
-                    />
-                    <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Create</button>
+            <Modal
+                show={Boolean(groupModal)}
+                onClose={() => setGroupModal(null)}
+                title={groupModal === 'department' ? 'Add department' : 'Add committee'}
+                size="sm"
+                footer={<Button variant="primary" type="submit" form="admin-group-form">Create</Button>}
+            >
+                <form id="admin-group-form" className="admin-form" onSubmit={handleCreateGroup}>
+                    <label className="ui-field">
+                        <span className="ui-label">Name</span>
+                        <input className="ui-input" value={newName} onChange={(e) => setNewName(e.target.value)} required />
+                    </label>
                 </form>
             </Modal>
 
-            {/* Committee Modal */}
-            <Modal show={showCommitteeModal} onClose={() => setShowCommitteeModal(false)} title="Add Committee">
-                <form onSubmit={(e) => { e.preventDefault(); handleCreate('committee'); }}>
-                    <input
-                        type="text"
-                        placeholder="Committee Name"
-                        value={newName}
-                        onChange={e => setNewName(e.target.value)}
-                        className="w-full p-2 border rounded mb-4"
-                    />
-                    <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Create</button>
-                </form>
-            </Modal>
-
-            {/* User Modal */}
-            <Modal show={showUserModal} onClose={() => setShowUserModal(false)} title="Add User">
-                <form onSubmit={handleCreateUser}>
-                    <input
-                        type="text"
-                        placeholder="Full Name"
-                        value={newUser.name}
-                        onChange={e => setNewUser(u => ({ ...u, name: e.target.value }))}
-                        className="w-full p-2 mb-3 border rounded"
-                    />
-                    <input
-                        type="text"
-                        placeholder="Designation"
-                        value={newUser.designation}
-                        onChange={e => setNewUser(u => ({ ...u, designation: e.target.value }))}
-                        className="w-full p-2 mb-3 border rounded"
-                    />
-                    <select
-                        value={newUser.departmentId}
-                        onChange={e => {
-                            const departmentId = e.target.value;
-                            const hasHod = departmentHasHod(departmentId);
-                            setNewUser(u => ({ 
-                                ...u, 
-                                departmentId, 
-                                committeeId: '', 
-                                isHod: hasHod ? false : u.isHod // Reset isHod if department already has one
-                            }));
-                        }}
-                        className="w-full p-2 mb-3 border rounded"
-                    >
-                        <option value="">Select Department</option>
-                        {departments.map(dep => (
-                            <option key={dep.id} value={dep.id}>{dep.name}</option>
-                        ))}
-                    </select>
-                    <div className="text-center my-2 text-gray-600">OR</div>
-                    <select
-                        value={newUser.committeeId}
-                        onChange={e => setNewUser(u => ({ ...u, committeeId: e.target.value, departmentId: '', isHod: false }))}
-                        className="w-full p-2 mb-3 border rounded"
-                    >
-                        <option value="">Select Committee</option>
-                        {committees.map(com => (
-                            <option key={com.id} value={com.id}>{com.name}</option>
-                        ))}
-                    </select>
-                    <label className="flex items-center space-x-2 mb-4">
-                        <input
-                            type="checkbox"
-                            checked={newUser.eligibleForDemandCreation}
-                            onChange={e =>
-                                setNewUser(u => ({
-                                    ...u,
-                                    eligibleForDemandCreation: e.target.checked
-                                }))
-                            } className="form-checkbox h-5 w-5 text-indigo-600"
-                        />
-                        <span>Eligible for demand creation</span>
+            <Modal
+                show={showUserModal}
+                onClose={() => setShowUserModal(false)}
+                title="Add user"
+                footer={<Button variant="primary" type="submit" form="admin-user-form">Add user</Button>}
+            >
+                <form id="admin-user-form" className="admin-form" onSubmit={handleCreateUser}>
+                    <label className="ui-field">
+                        <span className="ui-label">Full name</span>
+                        <input className="ui-input" value={newUser.name} onChange={(e) => setNewUser((u) => ({ ...u, name: e.target.value }))} required />
                     </label>
-                    <label className="flex items-center space-x-2 mb-4">
-                        <input
-                            type="checkbox"
-                            checked={!newUser.isFinanceUser}
-                            onChange={e =>
-                                setNewUser(u => ({
-                                    ...u,
-                                    isFinanceUser: !e.target.checked
-                                }))
-                            } className="form-checkbox h-5 w-5 text-green-600"
-                        />
-                        <span>eProcurement User</span>
-                        <span className="text-xs text-gray-500">(Uncheck for Finance-only access)</span>
+                    <label className="ui-field">
+                        <span className="ui-label">Designation</span>
+                        <input className="ui-input" value={newUser.designation} onChange={(e) => setNewUser((u) => ({ ...u, designation: e.target.value }))} required />
                     </label>
-                    {newUser.departmentId && !departmentHasHod(newUser.departmentId) && (
-                        <label className="flex items-center space-x-2 mb-4">
-                            <input
-                                type="checkbox"
-                                checked={newUser.isHod}
-                                onChange={e =>
-                                    setNewUser(u => ({
-                                        ...u,
-                                        isHod: e.target.checked
-                                    }))
-                                } className="form-checkbox h-5 w-5 text-indigo-600"
-                            />
-                            <span>Head of Department (HOD)</span>
+                    <div className="admin-form__row">
+                        <label className="ui-field">
+                            <span className="ui-label">Department</span>
+                            <select
+                                className="ui-input"
+                                value={newUser.departmentId}
+                                onChange={(e) => {
+                                    const departmentId = e.target.value;
+                                    setNewUser((u) => ({ ...u, departmentId, committeeId: '', isHod: departmentHasHod(departmentId) ? false : u.isHod }));
+                                }}
+                            >
+                                <option value="">—</option>
+                                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                            </select>
+                        </label>
+                        <label className="ui-field">
+                            <span className="ui-label">or committee</span>
+                            <select
+                                className="ui-input"
+                                value={newUser.committeeId}
+                                onChange={(e) => setNewUser((u) => ({ ...u, committeeId: e.target.value, departmentId: '', isHod: false }))}
+                            >
+                                <option value="">—</option>
+                                {committees.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        </label>
+                    </div>
+                    <label className="admin-check">
+                        <input type="checkbox" checked={newUser.eligibleForDemandCreation} onChange={(e) => setNewUser((u) => ({ ...u, eligibleForDemandCreation: e.target.checked }))} />
+                        Can create demands
+                    </label>
+                    <label className="admin-check">
+                        <input type="checkbox" checked={!newUser.isFinanceUser} onChange={(e) => setNewUser((u) => ({ ...u, isFinanceUser: !e.target.checked }))} />
+                        eProcurement access <span className="ui-hint">(off = Finance only)</span>
+                    </label>
+                    {newUser.departmentId && (
+                        <label className="admin-check">
+                            <input type="checkbox" checked={newUser.isHod} disabled={hodTaken} onChange={(e) => setNewUser((u) => ({ ...u, isHod: e.target.checked }))} />
+                            Head of department {hodTaken && <span className="ui-hint">(already assigned)</span>}
                         </label>
                     )}
-                    {newUser.departmentId && departmentHasHod(newUser.departmentId) && (
-                        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                            <p className="text-sm text-yellow-800">
-                                <strong>Note:</strong> This department already has a Head of Department (HOD). 
-                                Only one HOD is allowed per department.
-                            </p>
-                        </div>
-                    )}
-                    <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Add User</button>
                 </form>
             </Modal>
-
-            {/* Category Modal */}
-            <Modal 
-                show={showCategoryModal} 
-                onClose={handleCloseCategoryModal} 
-                title={editingItem ? "Edit Category" : "Add Category"}
-            >
-                {error && <div className="mb-4 text-red-600">{error}</div>}
-                <form onSubmit={editingItem ? handleUpdateCategory : handleCreateCategory}>
-                    <input
-                        type="text"
-                        placeholder="Category Name"
-                        value={newCategory.name}
-                        onChange={e => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full p-2 border rounded mb-3"
-                        required
-                    />
-                    <textarea
-                        placeholder="Description (optional)"
-                        value={newCategory.description}
-                        onChange={e => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
-                        className="w-full p-2 border rounded mb-4"
-                        rows="3"
-                    />
-                    <button 
-                        type="submit" 
-                        className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700"
-                    >
-                        {editingItem ? 'Update Category' : 'Create Category'}
-                    </button>
-                </form>
-            </Modal>
-
-            {/* Item Name Modal */}
-            <Modal 
-                show={showItemNameModal} 
-                onClose={handleCloseItemNameModal} 
-                title={editingItem ? "Edit Item Name" : "Add Item Name"}
-            >
-                {error && <div className="mb-4 text-red-600">{error}</div>}
-                <form onSubmit={editingItem ? handleUpdateItemName : handleCreateItemName}>
-                    <select
-                        value={newItemName.categoryId}
-                        onChange={e => setNewItemName(prev => ({ ...prev, categoryId: e.target.value }))}
-                        className="w-full p-2 border rounded mb-3"
-                        required
-                    >
-                        <option value="">Select Category</option>
-                        {itemCategories.map(category => (
-                            <option key={category.id} value={category.id}>{category.name}</option>
-                        ))}
-                    </select>
-                    <input
-                        type="text"
-                        placeholder="Item Name"
-                        value={newItemName.name}
-                        onChange={e => setNewItemName(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full p-2 border rounded mb-3"
-                        required
-                    />
-                    <textarea
-                        placeholder="Description (optional)"
-                        value={newItemName.description}
-                        onChange={e => setNewItemName(prev => ({ ...prev, description: e.target.value }))}
-                        className="w-full p-2 border rounded mb-4"
-                        rows="3"
-                    />
-                    <button 
-                        type="submit" 
-                        className="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700"
-                    >
-                        {editingItem ? 'Update Item Name' : 'Create Item Name'}
-                    </button>
-                </form>
-            </Modal>
-
-            {/* Demand Management Tab */}
-            {activeTab === 'demands' && (
-                <DemandManagement />
-            )}
-
-            {/* 2FA Setup Modal */}
-            {show2FASetup && (
-                <TwoFactorSetup onClose={() => setShow2FASetup(false)} />
-            )}
         </div>
     );
 };

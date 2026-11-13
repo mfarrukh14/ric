@@ -18,6 +18,8 @@ import {
     AreaChart
 } from 'recharts';
 
+import { formatTime } from '../../lib/time';
+import { humanize } from '../../ui/status';
 const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
     // Auto-refresh effect when data changes
     const [lastUpdate, setLastUpdate] = useState(Date.now());
@@ -93,7 +95,7 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
         }, {});
 
         return Object.entries(statusCounts).map(([status, count]) => ({
-            name: status.replace('_', ' ').toUpperCase(),
+            name: humanize(status),
             value: count,
             percentage: (count / costComparisonData.length) * 100
         }));
@@ -130,7 +132,7 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
         if (active && payload && payload.length) {
             const data = payload[0].payload;
             return (
-                <div className="bg-white p-4 border border-gray-200 rounded-lg shadow-lg">
+                <div className="ui-panel ui-panel--pad">
                     <h4 className="font-semibold text-gray-900 mb-2">{data.fullItemName}</h4>
                     <div className="space-y-1 text-sm">
                         {payload.map((entry, index) => (
@@ -143,7 +145,7 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
                         <div className="text-xs text-gray-600">
                             <div>Requested: {data.requestedQuantity} units</div>
                             <div>Fulfilling: {data.calculatedRequiredQty} units ({data.fulfillmentPercentage.toFixed(1)}%)</div>
-                            <div>Status: {data.status.replace('_', ' ').toUpperCase()}</div>
+                            <div>Status: {data.humanize(status)}</div>
                         </div>
                     </div>
                 </div>
@@ -156,7 +158,7 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
         if (active && payload && payload.length) {
             const data = payload[0];
             return (
-                <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
+                <div className="ui-panel ui-panel--pad">
                     <div className="font-semibold">{data.payload.name}</div>
                     <div className="text-sm">Count: {data.value}</div>
                     <div className="text-sm">Percentage: {data.payload.percentage.toFixed(1)}%</div>
@@ -170,18 +172,18 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
         <div className="space-y-6">
             {/* Real-time Update Indicator */}
             <div className="flex justify-between items-center">
-                <h2 className="text-xl font-bold text-gray-900">Cost Analysis & Projections</h2>
+                <h2 className="text-xl font-bold text-gray-900">Cost analysis & projections</h2>
                 <div className="flex items-center space-x-2 text-sm text-gray-600">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                     <span>Live Updates</span>
                     <span className="text-xs">
-                        Last updated: {new Date(lastUpdate).toLocaleTimeString()}
+                        Last updated: {formatTime(lastUpdate)}
                     </span>
                 </div>
             </div>
             {/* Summary Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="ui-panel ui-panel--pad">
                     <div className="text-sm text-gray-600">Total Current Year Cost</div>
                     <div className="text-2xl font-bold text-gray-900">Rs {summaryStats.totalCurrentYear.toLocaleString()}</div>
                     <div className={`text-sm ${summaryStats.yearOverYearChange >= 0 ? 'text-red-600' : 'text-green-600'}`}>
@@ -189,7 +191,7 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
                     </div>
                 </div>
                 
-                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="ui-panel ui-panel--pad">
                     <div className="text-sm text-gray-600">Store Estimated Cost</div>
                     <div className="text-2xl font-bold text-blue-600">Rs {summaryStats.totalStoreEstimated.toLocaleString()}</div>
                     <div className={`text-sm ${summaryStats.estimatedVsRequested >= 0 ? 'text-red-600' : 'text-green-600'}`}>
@@ -197,13 +199,13 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
                     </div>
                 </div>
                 
-                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="ui-panel ui-panel--pad">
                     <div className="text-sm text-gray-600">Projected Fulfillment Cost</div>
                     <div className="text-2xl font-bold text-orange-600">Rs {summaryStats.totalProjectedFulfillment.toLocaleString()}</div>
                     <div className="text-sm text-gray-600">Based on actual quantities</div>
                 </div>
                 
-                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                <div className="ui-panel ui-panel--pad">
                     <div className="text-sm text-gray-600">Potential Savings</div>
                     <div className="text-2xl font-bold text-green-600">Rs {summaryStats.fulfillmentSavings.toLocaleString()}</div>
                     <div className="text-sm text-green-600">
@@ -213,8 +215,8 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
             </div>
 
             {/* Cost Comparison Chart */}
-            <div className="bg-white p-6 rounded-lg border border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cost Analysis by Item</h3>
+            <div className="ui-panel ui-panel--pad">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cost analysis by item</h3>
                 <div className="h-96">
                     <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={costComparisonData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
@@ -240,8 +242,8 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Fulfillment Status Distribution */}
-                <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Fulfillment Status Distribution</h3>
+                <div className="ui-panel ui-panel--pad">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Fulfillment status distribution</h3>
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -269,8 +271,8 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
                 </div>
 
                 {/* Stock vs Consumption Analysis */}
-                <div className="bg-white p-6 rounded-lg border border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Stock vs Consumption Analysis</h3>
+                <div className="ui-panel ui-panel--pad">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Stock vs consumption analysis</h3>
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={consumptionAnalysisData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
@@ -302,8 +304,8 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
             </div>
 
             {/* Cost Trend Analysis */}
-            <div className="bg-white p-6 rounded-lg border border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cost Per Unit Analysis</h3>
+            <div className="ui-panel ui-panel--pad">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Cost per unit analysis</h3>
                 <div className="h-80">
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={costComparisonData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
@@ -335,28 +337,28 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
             </div>
 
             {/* Detailed Stock Analysis Table */}
-            <div className="bg-white p-6 rounded-lg border border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Detailed Stock Analysis</h3>
+            <div className="ui-panel ui-panel--pad">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Detailed stock analysis</h3>
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
+                    <table className="ui-table">
+                        <thead>
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock Status</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock in Hand</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Consumption</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Months of Stock</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fulfillment %</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Impact</th>
+                                <th className="text-left">Item</th>
+                                <th className="text-left">Stock status</th>
+                                <th className="text-left">Stock in hand</th>
+                                <th className="text-left">Monthly consumption</th>
+                                <th className="text-left">Months of stock</th>
+                                <th className="text-left">Fulfillment %</th>
+                                <th className="text-left">Cost impact</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody>
                             {consumptionAnalysisData.map((item, index) => (
                                 <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                    <td className="whitespace-nowrap">
                                         {item.fullItemName}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
+                                    <td className="whitespace-nowrap">
                                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                                             item.stockStatus === 'Adequate' ? 'bg-green-100 text-green-800' :
                                             item.stockStatus === 'Moderate' ? 'bg-yellow-100 text-yellow-800' :
@@ -365,19 +367,19 @@ const CostAnalysisChart = ({ itemStatuses, filteredItems }) => {
                                             {item.stockStatus}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <td className="whitespace-nowrap">
                                         {item.stockInHand}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <td className="whitespace-nowrap">
                                         {item.monthlyConsumption.toFixed(1)}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <td className="whitespace-nowrap">
                                         {item.monthsOfStock.toFixed(1)}
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <td className="whitespace-nowrap">
                                         {item.fulfillmentPercentage.toFixed(1)}%
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <td className="whitespace-nowrap">
                                         Rs {(item.currentYearCost - item.projectedFulfillmentCost).toLocaleString()}
                                     </td>
                                 </tr>

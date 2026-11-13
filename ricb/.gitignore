@@ -1,6 +1,15 @@
 node_modules
 .env
-.env.example
-database.sqlite
+*.sqlite
 .DS_Store
-uploads
+
+# Runtime data: uploads, generated documents and audit trails contain supplier
+# and tender data and must never be committed.
+uploads/
+tender-documents/
+tender-letters/
+meeting-minutes/
+grievance-letters/
+reports/
+financial-reports/
+audit_logs/

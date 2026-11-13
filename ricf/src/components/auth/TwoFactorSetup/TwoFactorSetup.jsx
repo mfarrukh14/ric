@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { setup2FA, enable2FA, get2FAStatus, disable2FA, regenerateBackupCodes } from '../../../config/api';
+import { staffTwoFactor } from '../../../config/api';
 
-const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
+import { formatDate } from '../../../lib/time';
+// `client` switches between the staff and supplier 2FA endpoints.
+const TwoFactorSetup = ({ onClose, onComplete, mandatory = false, client = staffTwoFactor }) => {
   const [step, setStep] = useState(1); // 1: status, 2: setup, 3: verify, 4: backup codes
   const [qrCode, setQrCode] = useState('');
   const [secret, setSecret] = useState('');
@@ -21,7 +23,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
 
   const fetchStatus = async () => {
     try {
-      const statusData = await get2FAStatus();
+      const statusData = await client.status();
       setStatus(statusData);
     } catch (err) {
       setError('Failed to fetch 2FA status');
@@ -32,7 +34,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
     setLoading(true);
     setError('');
     try {
-      const setupData = await setup2FA();
+      const setupData = await client.setup();
       setQrCode(setupData.qrCode);
       setSecret(setupData.secret);
       setStep(2);
@@ -48,7 +50,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
     setLoading(true);
     setError('');
     try {
-      const result = await enable2FA(verificationCode);
+      const result = await client.enable(verificationCode);
       setBackupCodes(result.backupCodes);
       setStatus({ enabled: true, backupCodesCount: result.backupCodes.length });
       setStep(4);
@@ -69,7 +71,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
     setLoading(true);
     setError('');
     try {
-      await disable2FA(disableToken, isBackupCode);
+      await client.disable(disableToken, isBackupCode);
       setStatus({ enabled: false, backupCodesCount: 0 });
       setDisableToken('');
       setStep(1);
@@ -86,7 +88,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
     setLoading(true);
     setError('');
     try {
-      const result = await regenerateBackupCodes(regenToken, isRegenBackupCode);
+      const result = await client.regenerate(regenToken, isRegenBackupCode);
       setBackupCodes(result.backupCodes);
       setStatus(prev => ({ ...prev, backupCodesCount: result.backupCodes.length }));
       setRegenToken('');
@@ -99,7 +101,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
   };
 
   const downloadBackupCodes = () => {
-    const content = `RIC Tender Automation - 2FA Backup Codes\n\nGenerated: ${new Date().toLocaleDateString()}\n\nBackup Codes:\n${backupCodes.map((code, i) => `${i + 1}. ${code}`).join('\n')}\n\nImportant:\n- Each backup code can only be used once\n- Store these codes in a safe place\n- Use these codes if you lose access to your authenticator app`;
+    const content = `RIC Tender Automation - 2FA Backup Codes\n\nGenerated: ${formatDate(new Date())}\n\nBackup Codes:\n${backupCodes.map((code, i) => `${i + 1}. ${code}`).join('\n')}\n\nImportant:\n- Each backup code can only be used once\n- Store these codes in a safe place\n- Use these codes if you lose access to your authenticator app`;
     
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -116,12 +118,12 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
     <div className="space-y-6">
       <div className="text-center">
         <div className={`mx-auto w-16 h-16 ${status.enabled ? 'bg-green-100' : 'bg-gray-100'} rounded-full flex items-center justify-center mb-4`}>
-          <svg className={`w-8 h-8 ${status.enabled ? 'text-green-600' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className={`w-8 h-8 ${status.enabled ? 'text-green-600' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
         </div>
         <h3 className="text-xl font-semibold text-gray-800 mb-2">
-          Two-Factor Authentication
+          Two-factor authentication
         </h3>
         <p className="text-gray-600">
           {status.enabled 
@@ -133,14 +135,14 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
 
       {status.enabled ? (
         <div className="space-y-4">
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <div className="ui-callout">
             <div className="flex items-center">
-              <svg className="w-5 h-5 text-green-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <svg className="w-5 h-5 text-green-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
               </svg>
-              <span className="text-green-800 font-medium">2FA is enabled</span>
+              <span className="font-medium">2FA is enabled</span>
             </div>
-            <p className="text-green-700 text-sm mt-1">
+            <p className="text-sm mt-1">
               Backup codes available: {status.backupCodesCount}
             </p>
           </div>
@@ -148,13 +150,13 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <div className="space-y-2">
             <button
               onClick={() => setStep(5)}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200"
+              className="ui-btn ui-btn--primary w-full"
             >
-              Regenerate Backup Codes
+              Regenerate backup codes
             </button>
             <button
               onClick={() => setStep(6)}
-              className="w-full bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition duration-200"
+              className="ui-btn ui-btn--danger-solid w-full"
             >
               Disable 2FA
             </button>
@@ -164,7 +166,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
         <button
           onClick={handleSetup}
           disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition duration-200"
+          className="ui-btn ui-btn--primary w-full"
         >
           {loading ? 'Setting up...' : 'Setup 2FA'}
         </button>
@@ -175,16 +177,16 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
   const renderStep2 = () => (
     <div className="space-y-6">
       <div className="text-center">
-        <h3 className="text-xl font-semibold text-gray-800 mb-4">Scan QR Code</h3>
+        <h3 className="text-xl font-semibold text-gray-800 mb-4">Scan QR code</h3>
         <p className="text-gray-600 mb-6">
           Use your authenticator app (Google Authenticator, Authy, etc.) to scan this QR code:
         </p>
         
-        <div className="bg-white p-4 rounded-lg border inline-block">
+        <div className="ui-panel ui-panel--pad inline-block">
           <img src={qrCode} alt="2FA QR Code" className="w-48 h-48" />
         </div>
         
-        <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+        <div className="ui-callout mt-4">
           <p className="text-sm text-gray-600 mb-2">Manual entry key:</p>
           <code className="text-sm bg-gray-200 px-2 py-1 rounded break-all">{secret}</code>
         </div>
@@ -192,9 +194,9 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
 
       <button
         onClick={() => setStep(3)}
-        className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition duration-200"
+        className="ui-btn ui-btn--primary w-full"
       >
-        I've Added the Account
+        I've added the account
       </button>
     </div>
   );
@@ -202,7 +204,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
   const renderStep3 = () => (
     <div className="space-y-6">
       <div className="text-center">
-        <h3 className="text-xl font-semibold text-gray-800 mb-4">Verify Setup</h3>
+        <h3 className="text-xl font-semibold text-gray-800 mb-4">Verify setup</h3>
         <p className="text-gray-600 mb-6">
           Enter the 6-digit code from your authenticator app to verify the setup:
         </p>
@@ -214,7 +216,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           value={verificationCode}
           onChange={(e) => setVerificationCode(e.target.value)}
           placeholder="000000"
-          className="w-full px-4 py-3 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="ui-input text-center"
           maxLength={6}
           required
         />
@@ -223,7 +225,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <button
             type="submit"
             disabled={loading || verificationCode.length !== 6}
-            className="w-full bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50 transition duration-200"
+            className="ui-btn ui-btn--primary w-full"
           >
             {loading ? 'Verifying...' : 'Enable 2FA'}
           </button>
@@ -231,7 +233,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <button
             type="button"
             onClick={() => setStep(2)}
-            className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition duration-200"
+            className="ui-btn ui-btn--secondary w-full"
           >
             Back
           </button>
@@ -248,16 +250,16 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
-        <h3 className="text-xl font-semibold text-gray-800 mb-4">2FA Enabled Successfully!</h3>
+        <h3 className="text-xl font-semibold text-gray-800 mb-4">Two-factor authentication is on</h3>
         <p className="text-gray-600 mb-6">
           Here are your backup codes. Save them in a secure location:
         </p>
       </div>
 
-      <div className="bg-gray-50 p-4 rounded-lg">
+      <div className="ui-callout">
         <div className="grid grid-cols-2 gap-2 text-center">
           {backupCodes.map((code, index) => (
-            <div key={index} className="bg-white p-2 rounded border text-sm font-mono">
+            <div key={index} className="ui-panel ui-panel--pad">
               {code}
             </div>
           ))}
@@ -267,9 +269,9 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
       <div className="space-y-2">
         <button
           onClick={downloadBackupCodes}
-          className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition duration-200"
+          className="ui-btn ui-btn--secondary w-full"
         >
-          Download Backup Codes
+          Download backup codes
         </button>
         
         <button
@@ -277,13 +279,13 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
             setStep(1);
             fetchStatus();
           }}
-          className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition duration-200"
+          className="ui-btn ui-btn--secondary w-full"
         >
           Done
         </button>
       </div>
 
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+      <div className="ui-callout ui-callout--warning">
         <p className="text-yellow-800 text-sm">
           <strong>Important:</strong> Each backup code can only be used once. Store them safely!
         </p>
@@ -294,7 +296,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
   const renderStep5 = () => (
     <div className="space-y-6">
       <div className="text-center">
-        <h3 className="text-xl font-semibold text-gray-800 mb-4">Regenerate Backup Codes</h3>
+        <h3 className="text-xl font-semibold text-gray-800 mb-4">Regenerate backup codes</h3>
         <p className="text-gray-600 mb-6">
           Enter a verification code to generate new backup codes:
         </p>
@@ -307,7 +309,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
             value={regenToken}
             onChange={(e) => setRegenToken(e.target.value)}
             placeholder={isRegenBackupCode ? "Enter backup code" : "Enter 6-digit code"}
-            className="w-full px-4 py-3 text-center border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="ui-input text-center"
             maxLength={isRegenBackupCode ? 8 : 6}
             required
           />
@@ -333,7 +335,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <button
             type="submit"
             disabled={loading || !regenToken.trim()}
-            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition duration-200"
+            className="ui-btn ui-btn--primary w-full"
           >
             {loading ? 'Regenerating...' : 'Regenerate Codes'}
           </button>
@@ -341,7 +343,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <button
             type="button"
             onClick={() => setStep(1)}
-            className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition duration-200"
+            className="ui-btn ui-btn--secondary w-full"
           >
             Cancel
           </button>
@@ -364,7 +366,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
         </p>
       </div>
 
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+      <div className="ui-callout ui-callout--danger mb-4">
         <p className="text-red-800 text-sm">
           <strong>Warning:</strong> Disabling 2FA will make your account less secure.
         </p>
@@ -377,7 +379,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
             value={disableToken}
             onChange={(e) => setDisableToken(e.target.value)}
             placeholder={isBackupCode ? "Enter backup code" : "Enter 6-digit code"}
-            className="w-full px-4 py-3 text-center border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="ui-input text-center"
             maxLength={isBackupCode ? 8 : 6}
             required
           />
@@ -403,7 +405,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <button
             type="submit"
             disabled={loading || !disableToken.trim()}
-            className="w-full bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50 transition duration-200"
+            className="ui-btn ui-btn--danger-solid w-full"
           >
             {loading ? 'Disabling...' : 'Disable 2FA'}
           </button>
@@ -411,7 +413,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           <button
             type="button"
             onClick={() => setStep(1)}
-            className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition duration-200"
+            className="ui-btn ui-btn--secondary w-full"
           >
             Cancel
           </button>
@@ -421,8 +423,8 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
   );
 
   return (
-    <div className="fixed inset-0 bg-black/15 bg-opacity-30 backdrop-filter backdrop-blur-md flex items-center justify-center p-4 z-50">
-      <div className="max-w-md w-full bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg rounded-2xl shadow-xl p-6 max-h-[90vh] overflow-y-auto border border-white border-opacity-30">
+    <div className="ui-scrim">
+      <div className="ui-dialog ui-dialog--legacy ui-dialog--sm overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-gray-800">
             {mandatory ? 'Required: Set Up 2FA' : 'Security Settings'}
@@ -430,7 +432,7 @@ const TwoFactorSetup = ({ onClose, onComplete, mandatory = false }) => {
           {!mandatory && (
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition duration-200"
+              className="ui-btn ui-btn--ghost ui-btn--sm"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

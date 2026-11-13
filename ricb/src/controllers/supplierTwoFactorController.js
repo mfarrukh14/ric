@@ -1,26 +1,34 @@
-const { getDatabase } = require('../config/database');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const crypto = require('crypto');
 const auditLogger = require('../utils/auditLogger');
+const { dbGet, dbRun } = require('../db');
+
+/** Checks a supplier's TOTP code or single-use backup code (consuming it). */
+exports.verifySupplierSecondFactor = async (supplierId, code, isBackupCode) => {
+    const supplier = await dbGet('SELECT two_factor_secret, two_factor_enabled, backup_codes FROM suppliers WHERE id = ?', [supplierId]);
+    if (!supplier || !supplier.two_factor_enabled || !code) return false;
+    if (!isBackupCode) {
+        return speakeasy.totp.verify({ secret: supplier.two_factor_secret, encoding: 'base32', token: String(code), window: 2 });
+    }
+    const backupCodes = JSON.parse(supplier.backup_codes || '[]');
+    const index = backupCodes.indexOf(String(code).toUpperCase());
+    if (index === -1) return false;
+    backupCodes.splice(index, 1);
+    await dbRun('UPDATE suppliers SET backup_codes = ? WHERE id = ?', [JSON.stringify(backupCodes), supplierId]);
+    return true;
+};
 
 // Generate 2FA secret and QR code for setup
 exports.setup2FA = async (req, res) => {
     const supplierId = req.supplier.id;
-    const db = getDatabase();
 
     try {
         // Check if supplier already has 2FA enabled
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT two_factor_enabled, two_factor_secret FROM suppliers WHERE id = ?',
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT two_factor_enabled, two_factor_secret FROM suppliers WHERE id = ?',
+            [supplierId]
+        );
 
         if (supplier.two_factor_enabled) {
             return res.status(400).json({ error: '2FA is already enabled for this account' });
@@ -34,23 +42,16 @@ exports.setup2FA = async (req, res) => {
         });
 
         // Store the temporary secret (not yet enabled)
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET two_factor_secret = ? WHERE id = ?',
-                [secret.base32, supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            'UPDATE suppliers SET two_factor_secret = ? WHERE id = ?',
+            [secret.base32, supplierId]
+        );
 
         // Generate QR code
         const qrCodeDataURL = await QRCode.toDataURL(secret.otpauth_url);
 
         // Log audit
-        await auditLogger.log(supplierId, 'supplier', 'two_factor_setup_initiated', 
-            'Supplier initiated 2FA setup', req.ip);
+        await auditLogger.record(req, 'SUPPLIER_2FA_SETUP_INITIATED', 'Supplier initiated 2FA setup');
 
         res.json({
             secret: secret.base32,
@@ -68,7 +69,6 @@ exports.setup2FA = async (req, res) => {
 exports.enable2FA = async (req, res) => {
     const { token } = req.body;
     const supplierId = req.supplier.id;
-    const db = getDatabase();
 
     if (!token) {
         return res.status(400).json({ error: 'Verification token is required' });
@@ -76,16 +76,10 @@ exports.enable2FA = async (req, res) => {
 
     try {
         // Get the supplier's secret
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT two_factor_secret, two_factor_enabled FROM suppliers WHERE id = ?',
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT two_factor_secret, two_factor_enabled FROM suppliers WHERE id = ?',
+            [supplierId]
+        );
 
         if (!supplier.two_factor_secret) {
             return res.status(400).json({ error: 'No 2FA setup found. Please setup 2FA first.' });
@@ -104,8 +98,7 @@ exports.enable2FA = async (req, res) => {
         });
 
         if (!verified) {
-            await auditLogger.log(supplierId, 'supplier', 'two_factor_enable_failed', 
-                'Failed 2FA verification attempt during enable', req.ip);
+            await auditLogger.record(req, 'SUPPLIER_2FA_ENABLE_FAILED', 'Failed 2FA verification attempt during enable');
             return res.status(400).json({ error: 'Invalid verification code' });
         }
 
@@ -116,20 +109,13 @@ exports.enable2FA = async (req, res) => {
         }
 
         // Enable 2FA
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET two_factor_enabled = 1, backup_codes = ? WHERE id = ?',
-                [JSON.stringify(backupCodes), supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            'UPDATE suppliers SET two_factor_enabled = 1, backup_codes = ? WHERE id = ?',
+            [JSON.stringify(backupCodes), supplierId]
+        );
 
         // Log audit
-        await auditLogger.log(supplierId, 'supplier', 'two_factor_enabled', 
-            'Supplier successfully enabled 2FA', req.ip);
+        await auditLogger.record(req, 'SUPPLIER_2FA_ENABLED', 'Supplier successfully enabled 2FA');
 
         res.json({
             message: '2FA has been successfully enabled',
@@ -146,7 +132,6 @@ exports.enable2FA = async (req, res) => {
 exports.verify2FA = async (req, res) => {
     const { token, backupCode } = req.body;
     const supplierId = req.supplier.id;
-    const db = getDatabase();
 
     if (!token && !backupCode) {
         return res.status(400).json({ error: 'Verification token or backup code is required' });
@@ -154,16 +139,10 @@ exports.verify2FA = async (req, res) => {
 
     try {
         // Get supplier's 2FA settings
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT two_factor_secret, two_factor_enabled, backup_codes FROM suppliers WHERE id = ?',
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT two_factor_secret, two_factor_enabled, backup_codes FROM suppliers WHERE id = ?',
+            [supplierId]
+        );
 
         if (!supplier.two_factor_enabled) {
             return res.status(400).json({ error: '2FA is not enabled for this account' });
@@ -183,19 +162,12 @@ exports.verify2FA = async (req, res) => {
                 
                 // Remove used backup code
                 backupCodes.splice(codeIndex, 1);
-                await new Promise((resolve, reject) => {
-                    db.run(
-                        'UPDATE suppliers SET backup_codes = ? WHERE id = ?',
-                        [JSON.stringify(backupCodes), supplierId],
-                        (err) => {
-                            if (err) reject(err);
-                            else resolve();
-                        }
-                    );
-                });
+                await dbRun(
+                    'UPDATE suppliers SET backup_codes = ? WHERE id = ?',
+                    [JSON.stringify(backupCodes), supplierId]
+                );
 
-                await auditLogger.log(supplierId, 'supplier', 'two_factor_backup_code_used', 
-                    'Supplier used backup code for 2FA verification', req.ip);
+                await auditLogger.record(req, 'SUPPLIER_2FA_BACKUP_CODE_USED', 'Supplier used backup code for 2FA verification');
             }
         } else {
             // Verify TOTP token
@@ -208,13 +180,11 @@ exports.verify2FA = async (req, res) => {
         }
 
         if (!verified) {
-            await auditLogger.log(supplierId, 'supplier', 'two_factor_verification_failed', 
-                'Failed 2FA verification attempt', req.ip);
+            await auditLogger.record(req, 'SUPPLIER_2FA_VERIFICATION_FAILED', 'Failed 2FA verification attempt');
             return res.status(400).json({ error: 'Invalid verification code' });
         }
 
-        await auditLogger.log(supplierId, 'supplier', 'two_factor_verification_success', 
-            `Successful 2FA verification${usedBackupCode ? ' using backup code' : ''}`, req.ip);
+        await auditLogger.record(req, 'SUPPLIER_2FA_VERIFICATION_SUCCESS', `Successful 2FA verification${usedBackupCode ? ' using backup code' : ''}`);
 
         res.json({ 
             message: '2FA verification successful',
@@ -231,7 +201,6 @@ exports.verify2FA = async (req, res) => {
 exports.disable2FA = async (req, res) => {
     const { token, backupCode } = req.body;
     const supplierId = req.supplier.id;
-    const db = getDatabase();
 
     if (!token && !backupCode) {
         return res.status(400).json({ error: 'Verification token or backup code is required to disable 2FA' });
@@ -239,16 +208,10 @@ exports.disable2FA = async (req, res) => {
 
     try {
         // Get supplier's 2FA settings
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT two_factor_secret, two_factor_enabled, backup_codes FROM suppliers WHERE id = ?',
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT two_factor_secret, two_factor_enabled, backup_codes FROM suppliers WHERE id = ?',
+            [supplierId]
+        );
 
         if (!supplier.two_factor_enabled) {
             return res.status(400).json({ error: '2FA is not enabled for this account' });
@@ -271,25 +234,17 @@ exports.disable2FA = async (req, res) => {
         }
 
         if (!verified) {
-            await auditLogger.log(supplierId, 'supplier', 'two_factor_disable_failed', 
-                'Failed 2FA verification attempt during disable', req.ip);
+            await auditLogger.record(req, 'SUPPLIER_2FA_DISABLE_FAILED', 'Failed 2FA verification attempt during disable');
             return res.status(400).json({ error: 'Invalid verification code' });
         }
 
         // Disable 2FA
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET two_factor_enabled = 0, two_factor_secret = NULL, backup_codes = NULL WHERE id = ?',
-                [supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            'UPDATE suppliers SET two_factor_enabled = 0, two_factor_secret = NULL, backup_codes = NULL WHERE id = ?',
+            [supplierId]
+        );
 
-        await auditLogger.log(supplierId, 'supplier', 'two_factor_disabled', 
-            'Supplier disabled 2FA', req.ip);
+        await auditLogger.record(req, 'SUPPLIER_2FA_DISABLED', 'Supplier disabled 2FA');
 
         res.json({ message: '2FA has been successfully disabled' });
 
@@ -302,19 +257,12 @@ exports.disable2FA = async (req, res) => {
 // Get 2FA status
 exports.get2FAStatus = async (req, res) => {
     const supplierId = req.supplier.id;
-    const db = getDatabase();
 
     try {
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT two_factor_enabled, backup_codes FROM suppliers WHERE id = ?',
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT two_factor_enabled, backup_codes FROM suppliers WHERE id = ?',
+            [supplierId]
+        );
 
         const backupCodes = supplier.backup_codes ? JSON.parse(supplier.backup_codes) : [];
 
@@ -333,7 +281,6 @@ exports.get2FAStatus = async (req, res) => {
 exports.regenerateBackupCodes = async (req, res) => {
     const { token } = req.body;
     const supplierId = req.supplier.id;
-    const db = getDatabase();
 
     if (!token) {
         return res.status(400).json({ error: 'Verification token is required' });
@@ -341,16 +288,10 @@ exports.regenerateBackupCodes = async (req, res) => {
 
     try {
         // Get supplier's 2FA settings
-        const supplier = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT two_factor_secret, two_factor_enabled FROM suppliers WHERE id = ?',
-                [supplierId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const supplier = await dbGet(
+            'SELECT two_factor_secret, two_factor_enabled FROM suppliers WHERE id = ?',
+            [supplierId]
+        );
 
         if (!supplier.two_factor_enabled) {
             return res.status(400).json({ error: '2FA is not enabled for this account' });
@@ -365,8 +306,7 @@ exports.regenerateBackupCodes = async (req, res) => {
         });
 
         if (!verified) {
-            await auditLogger.log(supplierId, 'supplier', 'two_factor_backup_regen_failed', 
-                'Failed 2FA verification attempt during backup code regeneration', req.ip);
+            await auditLogger.record(req, 'SUPPLIER_2FA_BACKUP_REGEN_FAILED', 'Failed 2FA verification attempt during backup code regeneration');
             return res.status(400).json({ error: 'Invalid verification code' });
         }
 
@@ -377,19 +317,12 @@ exports.regenerateBackupCodes = async (req, res) => {
         }
 
         // Update backup codes
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE suppliers SET backup_codes = ? WHERE id = ?',
-                [JSON.stringify(backupCodes), supplierId],
-                (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(
+            'UPDATE suppliers SET backup_codes = ? WHERE id = ?',
+            [JSON.stringify(backupCodes), supplierId]
+        );
 
-        await auditLogger.log(supplierId, 'supplier', 'two_factor_backup_regenerated', 
-            'Supplier regenerated backup codes', req.ip);
+        await auditLogger.record(req, 'SUPPLIER_2FA_BACKUP_REGENERATED', 'Supplier regenerated backup codes');
 
         res.json({
             message: 'Backup codes have been regenerated',

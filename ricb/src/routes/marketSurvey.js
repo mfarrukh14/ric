@@ -1,25 +1,18 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const survey = require('../controllers/marketSurveyController');
+
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
-const {
-    getActiveTenders,
-    sendForMarketSurvey,
-    getTendersForSurvey,
-    submitEvaluation,
-    getCompletedSurveys,
-    downloadDocument
-} = require('../controllers/marketSurveyController');
 
-// Purchase Department Routes
-router.get('/active-tenders', authenticateToken, getActiveTenders);
-router.get('/completed-surveys', authenticateToken, getCompletedSurveys);
-router.post('/send/:tenderId', authenticateToken, sendForMarketSurvey);
-
-// Market Survey Committee Routes
-router.get('/surveys', authenticateToken, getTendersForSurvey);
-router.post('/submit-evaluation/:surveyId', authenticateToken, submitEvaluation);
-
-// Common Routes
-router.get('/download/:documentId', authenticateToken, downloadDocument);
+router.use(staffOnly);
+// Purchase department
+router.get('/active-tenders', allow('purchase'), survey.getActiveTenders);
+router.get('/completed-surveys', allow('purchase'), survey.getCompletedSurveys);
+router.post('/send/:tenderId', allow('purchase'), survey.sendForMarketSurvey);
+// Market survey committee
+router.get('/surveys', allow('marketSurvey'), survey.getTendersForSurvey);
+router.post('/submit-evaluation/:surveyId', allow('marketSurvey'), survey.submitEvaluation);
+router.get('/download/:documentId', allow('marketSurvey', 'purchase'), survey.downloadDocument);
 
 module.exports = router;

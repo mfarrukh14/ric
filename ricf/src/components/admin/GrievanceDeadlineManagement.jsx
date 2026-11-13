@@ -3,6 +3,7 @@ import axios from 'axios';
 import { toast } from 'react-toastify';
 import { apiUrl } from '../../config/api';
 
+import { formatDate } from '../../lib/time';
 const GrievanceDeadlineManagement = () => {
     const [config, setConfig] = useState({
         grievance_deadline_hours: 72
@@ -70,9 +71,9 @@ const GrievanceDeadlineManagement = () => {
             // Show detailed success message
             const data = response.data;
             if (data.updated_active_deadlines > 0) {
-                toast.success(`Configuration updated successfully! ${data.updated_active_deadlines} active deadline(s) were also updated with the new timeframe.`);
+                toast.success(`Configuration updated. ${data.updated_active_deadlines} active deadline(s) were also updated with the new timeframe.`);
             } else {
-                toast.success('Configuration updated successfully!');
+                toast.success('Configuration updated');
             }
             
             // Refresh the active deadlines to show updated times
@@ -144,7 +145,7 @@ const GrievanceDeadlineManagement = () => {
             );
         } else {
             return (
-                <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100">
                     Active
                 </span>
             );
@@ -173,28 +174,19 @@ const GrievanceDeadlineManagement = () => {
     };
 
     return (
-        <div className="max-w-6xl mx-auto">
-            <div className="mb-8">
-                <h2 className="text-2xl font-bold text-gray-900 flex items-center">
-                    <i className="fas fa-clock mr-3 text-indigo-600"></i>
-                    Grievance Deadline Management
-                </h2>
-                <p className="mt-2 text-sm text-gray-600">
-                    Configure grievance application timeframes and monitor active deadlines
-                </p>
-            </div>
+        <div>
 
             {/* Configuration Section */}
-            <div className="bg-white shadow rounded-lg p-6 mb-8">
+            <div className="ui-panel ui-panel--pad mb-8">
                 <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
                     <i className="fas fa-cog mr-2 text-gray-600"></i>
-                    Deadline Configuration
+                    Deadline configuration
                 </h3>
                 
                 <form onSubmit={handleConfigUpdate} className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Grievance Application Deadline
+                        <label className="ui-label block mb-2">
+                            Grievance application deadline
                         </label>
                         <div className="flex items-center space-x-4">
                             <input
@@ -202,13 +194,13 @@ const GrievanceDeadlineManagement = () => {
                                 {...getMinMaxValues()}
                                 value={timeValue}
                                 onChange={(e) => handleTimeValueChange(parseFloat(e.target.value))}
-                                className="w-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                className="ui-input w-32"
                                 placeholder={timeUnit === 'minutes' ? 'Minutes' : 'Hours'}
                             />
                             <select
                                 value={timeUnit}
                                 onChange={(e) => handleTimeUnitChange(e.target.value)}
-                                className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                                className="ui-input"
                             >
                                 <option value="minutes">Minutes</option>
                                 <option value="hours">Hours</option>
@@ -231,7 +223,7 @@ const GrievanceDeadlineManagement = () => {
                         
                         {/* Quick preset buttons */}
                         <div className="mt-3">
-                            <label className="block text-xs font-medium text-gray-700 mb-2">Quick Presets:</label>
+                            <label className="ui-label block mb-2">Quick presets:</label>
                             <div className="flex flex-wrap gap-2">
                                 <button
                                     type="button"
@@ -239,7 +231,7 @@ const GrievanceDeadlineManagement = () => {
                                         setTimeUnit('minutes');
                                         handleTimeValueChange(5);
                                     }}
-                                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+                                    className="ui-btn ui-btn--secondary ui-btn--sm"
                                 >
                                     5 min
                                 </button>
@@ -249,7 +241,7 @@ const GrievanceDeadlineManagement = () => {
                                         setTimeUnit('minutes');
                                         handleTimeValueChange(30);
                                     }}
-                                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+                                    className="ui-btn ui-btn--secondary ui-btn--sm"
                                 >
                                     30 min
                                 </button>
@@ -259,7 +251,7 @@ const GrievanceDeadlineManagement = () => {
                                         setTimeUnit('hours');
                                         handleTimeValueChange(1);
                                     }}
-                                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+                                    className="ui-btn ui-btn--secondary ui-btn--sm"
                                 >
                                     1 hour
                                 </button>
@@ -269,7 +261,7 @@ const GrievanceDeadlineManagement = () => {
                                         setTimeUnit('hours');
                                         handleTimeValueChange(24);
                                     }}
-                                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors"
+                                    className="ui-btn ui-btn--secondary ui-btn--sm"
                                 >
                                     24 hours
                                 </button>
@@ -279,7 +271,7 @@ const GrievanceDeadlineManagement = () => {
                                         setTimeUnit('hours');
                                         handleTimeValueChange(72);
                                     }}
-                                    className="px-3 py-1 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-md transition-colors font-medium"
+                                    className="ui-btn ui-btn--ghost ui-btn--sm"
                                 >
                                     72 hours (default)
                                 </button>
@@ -291,17 +283,17 @@ const GrievanceDeadlineManagement = () => {
                         <button
                             type="submit"
                             disabled={saving}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 flex items-center"
+                            className="ui-btn ui-btn--primary"
                         >
                             {saving ? (
                                 <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                    <div className="ui-spin mr-2"></div>
                                     Saving...
                                 </>
                             ) : (
                                 <>
                                     <i className="fas fa-save mr-2"></i>
-                                    Save Configuration
+                                    Save configuration
                                 </>
                             )}
                         </button>
@@ -310,15 +302,15 @@ const GrievanceDeadlineManagement = () => {
             </div>
 
             {/* Active Deadlines Section */}
-            <div className="bg-white shadow rounded-lg">
+            <div className="ui-panel">
                 <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                     <h3 className="text-lg font-medium text-gray-900 flex items-center">
                         <i className="fas fa-list mr-2 text-gray-600"></i>
-                        Active Grievance Deadlines
+                        Active grievance deadlines
                     </h3>
                     <button
                         onClick={fetchActiveDeadlines}
-                        className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-sm flex items-center"
+                        className="ui-btn ui-btn--secondary ui-btn--sm"
                     >
                         <i className="fas fa-sync-alt mr-1"></i>
                         Refresh
@@ -327,13 +319,13 @@ const GrievanceDeadlineManagement = () => {
 
                 {loading ? (
                     <div className="flex items-center justify-center py-12">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                        <div className="ui-spin"></div>
                         <p className="ml-3 text-gray-600">Loading deadlines...</p>
                     </div>
                 ) : deadlines.length === 0 ? (
                     <div className="px-6 py-12 text-center">
                         <i className="fas fa-calendar-times text-4xl text-gray-400 mb-4"></i>
-                        <h4 className="text-lg font-medium text-gray-900 mb-2">No Active Deadlines</h4>
+                        <h4 className="text-lg font-medium text-gray-900 mb-2">No active deadlines</h4>
                         <p className="text-gray-500">There are currently no active grievance deadlines.</p>
                     </div>
                 ) : (
@@ -355,21 +347,11 @@ const GrievanceDeadlineManagement = () => {
                                             </div>
                                             <div>
                                                 <span className="font-medium">Started:</span>{' '}
-                                                {new Date(deadline.deadline_start).toLocaleDateString('en-US', {
-                                                    month: 'short',
-                                                    day: 'numeric',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit'
-                                                })}
+                                                {formatDate(deadline.deadline_start)}
                                             </div>
                                             <div>
                                                 <span className="font-medium">Expires:</span>{' '}
-                                                {new Date(deadline.deadline_end).toLocaleDateString('en-US', {
-                                                    month: 'short',
-                                                    day: 'numeric',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit'
-                                                })}
+                                                {formatDate(deadline.deadline_end)}
                                             </div>
                                         </div>
                                     </div>
@@ -389,7 +371,7 @@ const GrievanceDeadlineManagement = () => {
                                 </div>
                                 
                                 {deadline.description && (
-                                    <div className="mt-3 p-3 bg-gray-50 rounded-md">
+                                    <div className="ui-callout mt-3">
                                         <p className="text-sm text-gray-700">{deadline.description}</p>
                                     </div>
                                 )}

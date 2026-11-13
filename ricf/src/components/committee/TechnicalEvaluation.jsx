@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiUrl } from '../../config/api';
 
+import { formatDateTime } from '../../lib/time';
 const TechnicalEvaluation = () => {
     const [expiredTenders, setExpiredTenders] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -41,25 +42,22 @@ const TechnicalEvaluation = () => {
     const handleEvaluateBids = (tenderId) => {
         navigate(`/committee/technical-evaluation/${tenderId}/evaluate`);
     };
-
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleString();
-    };
+
 
     if (loading) {
         return (
             <div className="flex justify-center items-center h-64">
-                <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div>
+                <div className="ui-spin"></div>
             </div>
         );
     }
 
     return (
         <div className="space-y-6">
-            <div className="bg-white shadow rounded-lg">
+            <div className="ui-panel">
                 <div className="px-4 py-5 sm:p-6">
                     <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                        Technical Evaluation - Expired Tenders
+                        Technical evaluation - expired tenders
                     </h3>
 
                     {error && (
@@ -75,7 +73,7 @@ const TechnicalEvaluation = () => {
                     ) : (
                         <div className="space-y-4">
                             {expiredTenders.map((tender) => (
-                                <div key={tender.id} className="border rounded-lg p-4 hover:bg-gray-50">
+                                <div key={tender.id} className="ui-card">
                                     <div className="flex justify-between items-start">
                                         <div className="flex-1">
                                             <h4 className="text-lg font-medium text-gray-900">
@@ -99,7 +97,7 @@ const TechnicalEvaluation = () => {
                                                     </span>
                                                 </div>
                                                 <div>
-                                                    <span className="font-medium">Expired On:</span> {formatDate(tender.bidding_end_time)}
+                                                    <span className="font-medium">Expired On:</span> {formatDateTime(tender.bidding_end_time)}
                                                 </div>
                                                 <div>
                                                     <span className="font-medium">Total Bids:</span> {tender.bids?.length || 0}
@@ -108,9 +106,9 @@ const TechnicalEvaluation = () => {
                                         </div>
                                         <button
                                             onClick={() => handleEvaluateBids(tender.id)}
-                                            className="ml-4 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            className="ui-btn ui-btn--primary ml-4"
                                         >
-                                            Evaluate Bids
+                                            Evaluate bids
                                         </button>
                                     </div>
                                 </div>

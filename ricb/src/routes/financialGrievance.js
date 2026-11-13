@@ -1,19 +1,13 @@
 const express = require('express');
+const { staffOnly } = require('../middleware/auth');
+const { allow } = require('../middleware/roles');
+const grievance = require('../controllers/financialGrievanceController');
+
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
-const {
-    initiateFinancialGrievance,
-    uploadFinancialGrievanceMinutes,
-    getFinancialGrievanceStatus
-} = require('../controllers/financialGrievanceController');
 
-// Initiate financial grievance process
-router.post('/initiate/:tenderId', authenticateToken, initiateFinancialGrievance);
-
-// Upload meeting minutes and distribute
-router.post('/upload-minutes/:tenderId', authenticateToken, uploadFinancialGrievanceMinutes);
-
-// Get financial grievance status for a tender
-router.get('/status/:tenderId', authenticateToken, getFinancialGrievanceStatus);
+router.use(staffOnly, allow('purchase'));
+router.post('/initiate/:tenderId', grievance.initiateFinancialGrievance);
+router.post('/upload-minutes/:tenderId', grievance.uploadFinancialGrievanceMinutes);
+router.get('/status/:tenderId', grievance.getFinancialGrievanceStatus);
 
 module.exports = router;

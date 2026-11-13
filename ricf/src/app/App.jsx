@@ -1,297 +1,125 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import React, { useState, useEffect, useCallback } from 'react';
-import '../index.css';
-import Login from '../components/auth/Login/Login';
-import SupplierRegister from '../components/auth/SupplierRegister';
-import AdminDashboard from '../components/admin/AdminDashboard';
-import UserDashboard from '../components/user/UserDashboard';
-import SupplierDashboard from '../components/supplier/SupplierDashboard';
-import BidApplication from '../components/supplier/BidApplication';
-import TechnicalEvaluation from '../components/committee/TechnicalEvaluation';
-import TechnicalEvaluationDashboard from '../components/committee/TechnicalEvaluationDashboard';
-import ItemWiseEvaluation from '../components/committee/ItemWiseEvaluation';
-import TenderOpeningDetails from '../components/purchase/TenderOpeningDetails';
-import GrievanceCommitteeNew from '../components/committee/GrievanceCommitteeNew';
-import VettingDashboard from '../components/vetting/VettingDashboard';
-import TenderReviewPage from '../components/vetting/TenderReviewPage';
-import CreateDemandForm from '../components/demand/CreateDemandForm';
-import FulfillmentPage from '../components/store/FulfillmentPage';
-import Header from '../components/layout/header/Header';
-import TwoFactorEnforcementWrapper from '../components/auth/TwoFactorEnforcementWrapper';
-import HodDashboard from '../components/hod/HodDashboard';
+import { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Slide, ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import { useSession } from '../lib/session';
+import { play } from '../lib/sound';
+import { clearNavBadges } from '../lib/navBadges';
+import { ConfirmHost } from '../lib/confirm';
+import { capabilitiesOf, homePathFor } from './navigation';
+import { AppShell } from './AppShell';
+import { LoadingBlock } from '../ui';
 
-const ProtectedRoute = ({ children, allowedRoles, currentUser }) => {
-  if (!currentUser) {
-    return <Navigate to="/login" replace />;
-  }
+// Every screen is its own chunk; the first paint only loads the shell.
+const LoginPage = lazy(() => import('../pages/auth/LoginPage'));
+const MyDemands = lazy(() => import('../pages/MyDemands'));
+const AdminDashboard = lazy(() => import('../components/admin/AdminDashboard'));
+const DemandManagement = lazy(() => import('../components/admin/DemandManagement'));
+const SupplierEvaluation = lazy(() => import('../components/admin/SupplierEvaluation'));
+const StorePurchaseOrders = lazy(() => import('../components/store/StorePurchaseOrders'));
+const FulfillmentPage = lazy(() => import('../components/store/FulfillmentPage'));
+const CreateDemandForm = lazy(() => import('../components/demand/CreateDemandForm'));
+const PurchaseDepartment = lazy(() => import('../components/department/PurchaseDepartment'));
+const TenderOpeningDetails = lazy(() => import('../components/purchase/TenderOpeningDetails'));
+const HodDashboard = lazy(() => import('../components/hod/HodDashboard'));
+const TechnicalEvaluationDashboard = lazy(() => import('../components/committee/TechnicalEvaluationDashboard'));
+const TechnicalEvaluation = lazy(() => import('../components/committee/TechnicalEvaluation'));
+const ItemWiseEvaluation = lazy(() => import('../components/committee/ItemWiseEvaluation'));
+const GrievanceCommitteeNew = lazy(() => import('../components/committee/GrievanceCommitteeNew'));
+const MarketSurveyCommittee = lazy(() => import('../components/committee/MarketSurveyCommittee'));
+const VettingDashboard = lazy(() => import('../components/vetting/VettingDashboard'));
+const TenderReviewPage = lazy(() => import('../components/vetting/TenderReviewPage'));
+const SupplierDashboard = lazy(() => import('../components/supplier/SupplierDashboard'));
+const Awards = lazy(() => import('../pages/supplier/Awards'));
+const BidApplication = lazy(() => import('../components/supplier/BidApplication'));
 
-  if (allowedRoles && !allowedRoles.includes(currentUser.role)) {
-    return <Navigate to="/" replace />;
-  }
-
-  return children;
-};
-
-function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    try {
-      const storedUser = localStorage.getItem('user');
-      const storedSupplier = localStorage.getItem('supplier');
-      const registrationIncomplete = localStorage.getItem('supplierRegistrationIncomplete') === 'true';
-
-      if (storedUser) {
-        const userData = JSON.parse(storedUser);
-        setUser(userData);
-      } else if (storedSupplier && registrationIncomplete) {
-        // This supplier token only exists to drive the registration wizard
-        // (Login.jsx) - it was never a real logged-in session, so a page
-        // refresh mid-registration must NOT land the user on the dashboard.
-        // Drop it and leave `user` unset so every protected route bounces to
-        // /login and the supplier has to sign in (or restart registration)
-        // for real.
-        localStorage.removeItem('supplier');
-        localStorage.removeItem('supplierToken');
-        localStorage.removeItem('supplierRegistrationIncomplete');
-      } else if (storedSupplier) {
-        // Handle supplier login - convert supplier data to user format
-        const supplierData = JSON.parse(storedSupplier);
-        const supplierUser = {
-          ...supplierData,
-          role: 'supplier'
-        };
-        setUser(supplierUser);
-      }
-    } catch (error) {
-      console.error('Error parsing user data:', error);
-      localStorage.removeItem('user');
-      localStorage.removeItem('supplier');
-      localStorage.removeItem('supplierToken');
-      localStorage.removeItem('supplierRegistrationIncomplete');
-    } finally {
-      setLoading(false);
-    }
-  }, []); // Empty dependency array to prevent infinite loops
-
-  const handleLogin = useCallback((newUser) => {
-    setUser(newUser);
-  }, []);
-
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem('user');
-    localStorage.removeItem('token');
-    localStorage.removeItem('supplier');
-    localStorage.removeItem('supplierToken');
-    setUser(null);
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <Router>
-      <div>
-        {user && <Header user={user} onLogout={handleLogout} />} 
-
-        <Routes>
-          <Route
-            path="/login"
-            element={
-              user ? (
-                <Navigate to="/" replace />
-              ) : (
-                <Login onLogin={handleLogin} /> 
-              )
-            }
-          />
-          <Route
-            path="/supplier-register"
-            element={
-              user ? (
-                <Navigate to="/" replace />
-              ) : (
-                <SupplierRegister />
-              )
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <ProtectedRoute allowedRoles={['superadmin']} currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <AdminDashboard />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <UserDashboard />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/technical-evaluation"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <TechnicalEvaluationDashboard />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/technical-evaluation/:tenderId"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <TechnicalEvaluation />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/technical-evaluation/:tenderId/evaluate"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <ItemWiseEvaluation />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/grievance"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <GrievanceCommitteeNew />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/vetting"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <VettingDashboard />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/vetting/tender/:tenderId"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <TenderReviewPage />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/supplier-dashboard"
-            element={
-              <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <SupplierDashboard />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/supplier/apply-bid/:tenderId"
-            element={
-              <ProtectedRoute allowedRoles={['supplier']} currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <BidApplication />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/hod"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <HodDashboard />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/create-demand"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <CreateDemandForm />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/store/fulfillment/:demandId"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <FulfillmentPage />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/purchase-department/tender-opening/:tenderId"
-            element={
-              <ProtectedRoute currentUser={user}>
-                <TwoFactorEnforcementWrapper>
-                  <TenderOpeningDetails />
-                </TwoFactorEnforcementWrapper>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/"
-            element={
-              user ? (
-                user.role === 'superadmin' ? (
-                  <Navigate to="/admin" replace />
-                ) : user.role === 'supplier' ? (
-                  <Navigate to="/supplier-dashboard" replace />
-                ) : user.is_hod ? (
-                  <Navigate to="/hod" replace />
-                ) : user.committee_name === 'Vetting Committee' ? (
-                  <Navigate to="/committee/vetting" replace />
-                ) : user.committee_name === 'Technical Evaluation Committee' ? (
-                  <Navigate to="/committee/technical-evaluation" replace />
-                ) : user.committee_name === 'Grievance Committee' ? (
-                  <Navigate to="/committee/grievance" replace />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
-          />
-        </Routes>
-      </div>
-    </Router>
-  );
+/** Renders children only when the signed-in person passes `allow`; otherwise sends them home. */
+function Gate({ user, allow, children }) {
+    return allow(capabilitiesOf(user)) ? children : <Navigate to={homePathFor(user)} replace />;
 }
 
-export default App;
+/** Old bookmark /committee/vetting/tender/7 → /vetting/tender/7, and friends. */
+function Redirect({ to }) {
+    const params = useParams();
+    return <Navigate to={to.replace(/:(\w+)/g, (_, key) => params[key] ?? '')} replace />;
+}
+
+function SignedInRoutes({ user }) {
+    const staff = (can) => !can.supplier;
+    return (
+        <Routes>
+            <Route element={<AppShell user={user} />}>
+                <Route index element={<Navigate to={homePathFor(user)} replace />} />
+
+                {/* Administration */}
+                <Route path="admin/:tab?" element={<Gate user={user} allow={(c) => c.superadmin}><AdminDashboard /></Gate>} />
+
+                {/* Staff workspace */}
+                <Route path="demands" element={<Gate user={user} allow={staff}><MyDemands user={user} /></Gate>} />
+                <Route path="create-demand" element={<Gate user={user} allow={(c) => c.canCreateDemand}><CreateDemandForm /></Gate>} />
+                <Route path="approvals" element={<Gate user={user} allow={(c) => c.hod}><HodDashboard /></Gate>} />
+
+                <Route path="store/demands" element={<Gate user={user} allow={(c) => c.store || c.superadmin}><DemandManagement /></Gate>} />
+                <Route path="store/purchase-orders" element={<Gate user={user} allow={(c) => c.store}><StorePurchaseOrders /></Gate>} />
+                <Route path="store/fulfillment/:demandId" element={<Gate user={user} allow={staff}><FulfillmentPage /></Gate>} />
+
+                <Route path="purchase/:tab?" element={<Gate user={user} allow={(c) => c.purchase}><PurchaseDepartment /></Gate>} />
+                <Route path="purchase-department/tender-opening/:tenderId" element={<Gate user={user} allow={staff}><TenderOpeningDetails /></Gate>} />
+
+                <Route path="supplier-evaluation" element={<Gate user={user} allow={(c) => c.supplierEvaluation}><SupplierEvaluation /></Gate>} />
+                <Route path="technical-evaluation" element={<Gate user={user} allow={staff}><TechnicalEvaluationDashboard /></Gate>} />
+                <Route path="technical-evaluation/:tenderId" element={<Gate user={user} allow={staff}><TechnicalEvaluation /></Gate>} />
+                <Route path="committee/technical-evaluation/:tenderId/evaluate" element={<Gate user={user} allow={staff}><ItemWiseEvaluation /></Gate>} />
+                <Route path="vetting" element={<Gate user={user} allow={staff}><VettingDashboard /></Gate>} />
+                <Route path="vetting/tender/:tenderId" element={<Gate user={user} allow={staff}><TenderReviewPage /></Gate>} />
+                <Route path="grievances" element={<Gate user={user} allow={staff}><GrievanceCommitteeNew /></Gate>} />
+                <Route path="market-survey" element={<Gate user={user} allow={(c) => c.marketSurvey}><MarketSurveyCommittee /></Gate>} />
+
+                {/* Suppliers */}
+                <Route path="supplier/awards" element={<Gate user={user} allow={(c) => c.supplier}><Awards /></Gate>} />
+                <Route path="supplier/apply-bid/:tenderId" element={<Gate user={user} allow={(c) => c.supplier}><BidApplication /></Gate>} />
+                <Route path="supplier/:tab?" element={<Gate user={user} allow={(c) => c.supplier}><SupplierDashboard /></Gate>} />
+
+                {/* Addresses from before the redesign */}
+                <Route path="dashboard" element={<Navigate to={homePathFor(user)} replace />} />
+                <Route path="hod" element={<Navigate to="/approvals" replace />} />
+                <Route path="supplier-dashboard" element={<Navigate to="/supplier/overview" replace />} />
+                <Route path="purchase-department" element={<Navigate to="/purchase/demands" replace />} />
+                <Route path="committee/technical-evaluation" element={<Navigate to="/technical-evaluation" replace />} />
+                <Route path="committee/grievance" element={<Navigate to="/grievances" replace />} />
+                <Route path="committee/vetting" element={<Navigate to="/vetting" replace />} />
+                <Route path="committee/vetting/tender/:tenderId" element={<Redirect to="/vetting/tender/:tenderId" />} />
+
+                <Route path="*" element={<Navigate to={homePathFor(user)} replace />} />
+            </Route>
+        </Routes>
+    );
+}
+
+export default function App() {
+    const user = useSession();
+
+    // Toasts speak: a chime for success, a low tone for errors.
+    useEffect(() => toast.onChange((event) => event.status === 'added' && play(event.type)), []);
+
+    useEffect(() => {
+        if (!user) clearNavBadges();
+    }, [user]);
+
+    return (
+        <BrowserRouter>
+            <Suspense fallback={<LoadingBlock />}>
+                {user ? (
+                    <SignedInRoutes user={user} />
+                ) : (
+                    <Routes>
+                        <Route path="/login" element={<LoginPage />} />
+                        <Route path="*" element={<Navigate to="/login" replace />} />
+                    </Routes>
+                )}
+            </Suspense>
+            <ConfirmHost />
+            <ToastContainer position="bottom-right" autoClose={4000} hideProgressBar newestOnTop closeOnClick={false} pauseOnFocusLoss={false} transition={Slide} limit={4} />
+        </BrowserRouter>
+    );
+}

@@ -1,308 +1,108 @@
+/**
+ * Audit trail: every entry goes to the audit_logs table (when the database is
+ * up) and to a daily text file under audit_logs/.
+ */
 const fs = require('fs');
 const path = require('path');
-const { getDatabase } = require('../config/database');
+const { dbAll, dbRun, isDatabaseConnected } = require('../db');
+const { parseInstant } = require('./time');
 
-class AuditLogger {
-    constructor() {
-        this.auditDir = path.join(__dirname, '../../audit_logs');
-        
-        // Ensure audit directory exists
-        if (!fs.existsSync(this.auditDir)) {
-            fs.mkdirSync(this.auditDir, { recursive: true });
+const AUDIT_DIR = path.join(__dirname, '../../audit_logs');
+const FILE_PATTERN = /^audit_log_\d{4}_\d{2}_\d{2}\.txt$/;
+
+fs.mkdirSync(AUDIT_DIR, { recursive: true });
+
+const SYSTEM_ACTOR = { id: 0, role: 'system', name: 'System' };
+
+const actorName = (actor) => actor?.name || actor?.username || actor?.businessEmail || 'Unknown';
+
+const formatLine = ({ timestamp, userId, role, name, action, details, ip, userAgent }) =>
+    `[${timestamp}] ${name} (ID: ${userId}) [${String(role).toUpperCase()}] - ${action} | Details: ${details} | IP: ${ip} | User-Agent: ${userAgent}`;
+
+async function write(actor, action, details, ip, userAgent) {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        userId: Number.isInteger(Number(actor?.id)) ? Number(actor.id) : 0,
+        role: actor?.role || 'unknown',
+        name: actorName(actor),
+        action,
+        details: details || '',
+        ip: ip || 'unknown',
+        userAgent: userAgent || 'unknown',
+    };
+    try {
+        if (isDatabaseConnected()) {
+            await dbRun(
+                'INSERT INTO audit_logs (user_id, user_role, user_name, action, details, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [entry.userId, entry.role, entry.name, action, entry.details, entry.ip, entry.userAgent],
+            );
         }
-    }
-
-    // Core logging function that writes to both database and file
-    async writeAuditEntry(userId, userRole, userName, action, details, ipAddress, userAgent, requestData = null) {
-        const timestamp = new Date().toISOString();
-        
-        try {
-            // Write to database
-            await this.logToDatabase(userId, userRole, userName, action, details, ipAddress, userAgent);
-            
-            // Write to daily log file
-            await this.logToFile(userId, userRole, userName, action, details, ipAddress, userAgent, timestamp);
-            
-        } catch (error) {
-            console.error('Error writing audit log:', error);
-        }
-    }
-
-    // Write to database
-    async logToDatabase(userId, userRole, userName, action, details, ipAddress, userAgent) {
-        return new Promise((resolve, reject) => {
-            const db = getDatabase();
-            const query = `
-                INSERT INTO audit_logs (user_id, user_role, user_name, action, details, ip_address, user_agent)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `;
-            
-            db.run(query, [userId, userRole, userName, action, details, ipAddress, userAgent], (err) => {
-                if (err) {
-                    console.error('Database audit log error:', err);
-                    reject(err);
-                } else {
-                    resolve();
-                }
-            });
-        });
-    }
-
-    // Write to daily log file
-    async logToFile(userId, userRole, userName, action, details, ipAddress, userAgent, timestamp) {
-        const today = new Date().toISOString().split('T')[0].replace(/-/g, '_');
-        const logFile = path.join(this.auditDir, `audit_log_${today}.txt`);
-        
-        // Format: [timestamp] Username (ID: userId) [ROLE] - ACTION | Details: details | IP: ipAddress | User-Agent: userAgent
-        const logEntry = `[${timestamp}] ${userName} (ID: ${userId}) [${userRole.toUpperCase()}] - ${action} | Details: ${details} | IP: ${ipAddress} | User-Agent: ${userAgent}\n`;
-        
-        return new Promise((resolve, reject) => {
-            fs.appendFile(logFile, logEntry, (err) => {
-                if (err) {
-                    console.error('File audit log error:', err);
-                    reject(err);
-                } else {
-                    resolve();
-                }
-            });
-        });
-    }
-
-    // Authentication related logging
-    async logAuth(userId, userRole, userName, action, details, req) {
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
-        const userAgent = (req.get && req.get('User-Agent')) || req.headers?.['user-agent'] || 'unknown';
-        
-        // Only add department/committee info if not already present in details
-        let formattedDetails = details;
-        if (!details.includes('Department:') && !details.includes('Committee:')) {
-            formattedDetails = `${details} | Department: ${req.user?.department || 'None'} | Committee: ${req.user?.committee || 'None'}`;
-        }
-        
-        await this.writeAuditEntry(
-            userId,
-            userRole,
-            userName,
-            action,
-            formattedDetails,
-            ipAddress,
-            userAgent
-        );
-    }
-
-    // Two-factor authentication logging
-    async log2FA(userId, userRole, userName, action, details, req) {
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
-        const userAgent = (req.get && req.get('User-Agent')) || req.headers?.['user-agent'] || 'unknown';
-        
-        await this.writeAuditEntry(
-            userId,
-            userRole,
-            userName,
-            action,
-            `2FA: ${details}`,
-            ipAddress,
-            userAgent
-        );
-    }
-
-    // User management logging
-    async logUserManagement(userId, userRole, userName, action, targetData, req) {
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
-        const userAgent = (req.get && req.get('User-Agent')) || req.headers?.['user-agent'] || 'unknown';
-        
-        let details = '';
-        if (targetData && typeof targetData === 'object') {
-            details = `Target: ${targetData.name || targetData.username || 'unknown'} | Role: ${targetData.role || 'unknown'}`;
-            if (targetData.department) details += ` | Department: ${targetData.department}`;
-            if (targetData.committee) details += ` | Committee: ${targetData.committee}`;
-        } else {
-            details = targetData || 'No target data provided';
-        }
-        
-        await this.writeAuditEntry(
-            userId,
-            userRole,
-            userName,
-            action,
-            details,
-            ipAddress,
-            userAgent
-        );
-    }
-
-    // Data access logging
-    async logDataAccess(userId, userRole, userName, action, dataType, dataId, details, req) {
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
-        const userAgent = (req.get && req.get('User-Agent')) || req.headers?.['user-agent'] || 'unknown';
-        
-        const formattedDetails = `Data Type: ${dataType} | ID: ${dataId} | ${details}`;
-        
-        await this.writeAuditEntry(
-            userId,
-            userRole,
-            userName,
-            action,
-            formattedDetails,
-            ipAddress,
-            userAgent
-        );
-    }
-
-    // Demand management logging
-    async logDemandManagement(userId, userRole, userName, action, demandData, req) {
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
-        const userAgent = (req.get && req.get('User-Agent')) || req.headers?.['user-agent'] || 'unknown';
-        
-        let details = '';
-        if (typeof demandData === 'object' && demandData !== null) {
-            details = `Demand ID: ${demandData.id || 'new'} | Department: ${demandData.department || 'unknown'}`;
-            if (demandData.title) details += ` | Title: ${demandData.title}`;
-            if (demandData.status) details += ` | Status: ${demandData.status}`;
-        } else {
-            details = demandData || 'No demand data provided';
-        }
-        
-        await this.writeAuditEntry(
-            userId,
-            userRole,
-            userName,
-            action,
-            details,
-            ipAddress,
-            userAgent
-        );
-    }
-
-    // System configuration logging
-    async logSystemConfig(userId, userRole, userName, action, configDetails, req) {
-        const ipAddress = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
-        const userAgent = (req.get && req.get('User-Agent')) || req.headers?.['user-agent'] || 'unknown';
-        
-        await this.writeAuditEntry(
-            userId,
-            userRole,
-            userName,
-            action,
-            `System Config: ${configDetails}`,
-            ipAddress,
-            userAgent
-        );
-    }
-
-    // Generate audit report
-    async generateAuditReport(startDate, endDate, format = 'json') {
-        return new Promise((resolve, reject) => {
-            const db = getDatabase();
-            let query = `
-                SELECT * FROM audit_logs 
-                WHERE created_at >= ? AND created_at <= ?
-                ORDER BY created_at DESC
-            `;
-            
-            db.all(query, [startDate, endDate], (err, rows) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    if (format === 'txt') {
-                        const textReport = rows.map(row => 
-                            `[${row.created_at}] ${row.user_name} (ID: ${row.user_id}) [${row.user_role.toUpperCase()}] - ${row.action} | Details: ${row.details} | IP: ${row.ip_address} | User-Agent: ${row.user_agent}`
-                        ).join('\n');
-                        resolve(textReport);
-                    } else {
-                        resolve(rows);
-                    }
-                }
-            });
-        });
-    }
-
-    // Get audit files in the audit directory
-    getAuditFiles() {
-        try {
-            const files = fs.readdirSync(this.auditDir);
-            return files
-                .filter(file => file.startsWith('audit_log_') && file.endsWith('.txt'))
-                .map(file => {
-                    const filePath = path.join(this.auditDir, file);
-                    const stats = fs.statSync(filePath);
-                    return {
-                        filename: file,
-                        size: stats.size,
-                        modified: stats.mtime
-                    };
-                })
-                .sort((a, b) => b.modified - a.modified);
-        } catch (error) {
-            console.error('Error getting audit files:', error);
-            return [];
-        }
-    }
-
-    // Clean up old log files
-    cleanupOldLogs(retentionDays) {
-        try {
-            const files = fs.readdirSync(this.auditDir);
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
-            
-            let deletedCount = 0;
-            
-            files.forEach(file => {
-                if (file.startsWith('audit_log_') && file.endsWith('.txt')) {
-                    const filePath = path.join(this.auditDir, file);
-                    const stats = fs.statSync(filePath);
-                    
-                    if (stats.mtime < cutoffDate) {
-                        fs.unlinkSync(filePath);
-                        deletedCount++;
-                        console.log(`Deleted old audit log: ${file}`);
-                    }
-                }
-            });
-            
-            return deletedCount;
-        } catch (error) {
-            console.error('Error cleaning up old logs:', error);
-            return 0;
-        }
-    }
-
-    // Search audit logs
-    async searchLogs(query, startDate = null, endDate = null) {
-        return new Promise((resolve, reject) => {
-            const db = getDatabase();
-            let sqlQuery = `
-                SELECT * FROM audit_logs 
-                WHERE (action LIKE ? OR details LIKE ? OR user_name LIKE ?)
-            `;
-            let params = [`%${query}%`, `%${query}%`, `%${query}%`];
-            
-            if (startDate) {
-                sqlQuery += ` AND created_at >= ?`;
-                params.push(startDate);
-            }
-            
-            if (endDate) {
-                sqlQuery += ` AND created_at <= ?`;
-                params.push(endDate);
-            }
-            
-            sqlQuery += ` ORDER BY created_at DESC LIMIT 1000`;
-            
-            db.all(sqlQuery, params, (err, rows) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve({
-                        results: rows,
-                        count: rows.length
-                    });
-                }
-            });
-        });
+        const day = entry.timestamp.slice(0, 10).replace(/-/g, '_');
+        await fs.promises.appendFile(path.join(AUDIT_DIR, `audit_log_${day}.txt`), `${formatLine(entry)}\n`);
+    } catch (err) {
+        console.error('Could not write audit entry:', err.message);
     }
 }
 
-// Export singleton instance
-module.exports = new AuditLogger();
+/**
+ * Records an action taken during a request. The actor defaults to the signed-in
+ * user; pass one explicitly before sign-in completes (e.g. a failed login).
+ */
+const record = (req, action, details = '', actor = req?.user) =>
+    write(actor, action, details, req?.ip || req?.socket?.remoteAddress, req?.get?.('User-Agent'));
+
+/** Records an action taken by the server itself (scheduled jobs). */
+const system = (action, details = '') => write(SYSTEM_ACTOR, action, details);
+
+/** Audit rows in a date range, as an array or as text lines. */
+async function report({ startDate, endDate, userId, action, format = 'json' }) {
+    const where = ['created_at >= ?', 'created_at <= ?'];
+    const params = [parseInstant(startDate), parseInstant(endDate)];
+    if (userId) { where.push('user_id = ?'); params.push(Number(userId)); }
+    if (action) { where.push('action LIKE ?'); params.push(`%${action}%`); }
+    const rows = await dbAll(`SELECT * FROM audit_logs WHERE ${where.join(' AND ')} ORDER BY created_at DESC`, params);
+    if (format === 'json') return rows;
+    return rows.map((row) => formatLine({
+        timestamp: new Date(row.created_at).toISOString(),
+        userId: row.user_id,
+        role: row.user_role,
+        name: row.user_name,
+        action: row.action,
+        details: row.details,
+        ip: row.ip_address,
+        userAgent: row.user_agent,
+    })).join('\n');
+}
+
+const logFiles = () => {
+    try {
+        return fs.readdirSync(AUDIT_DIR).filter((file) => FILE_PATTERN.test(file));
+    } catch {
+        return [];
+    }
+};
+
+/** Daily log files, newest first. */
+const getAuditFiles = () =>
+    logFiles()
+        .map((filename) => {
+            const stats = fs.statSync(path.join(AUDIT_DIR, filename));
+            return { filename, size: stats.size, modified: stats.mtime };
+        })
+        .sort((a, b) => b.modified - a.modified);
+
+/** Deletes daily files older than `retentionDays`; returns how many. */
+function cleanupOldLogs(retentionDays) {
+    const cutoff = Date.now() - retentionDays * 86_400_000;
+    let deleted = 0;
+    for (const file of logFiles()) {
+        const filePath = path.join(AUDIT_DIR, file);
+        if (fs.statSync(filePath).mtimeMs < cutoff) {
+            fs.unlinkSync(filePath);
+            deleted += 1;
+        }
+    }
+    return deleted;
+}
+
+module.exports = { record, system, report, getAuditFiles, cleanupOldLogs, auditDir: AUDIT_DIR, FILE_PATTERN };

@@ -1,0 +1,118 @@
+.supplier,
+.supplier-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.supplier-overview .ui-stats {
+  margin-bottom: 0;
+}
+
+.supplier-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.supplier-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-l);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--motion-base) var(--ease);
+}
+
+.supplier-action:hover {
+  border-color: var(--border-strong);
+}
+
+.supplier-action__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-m);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.supplier-action__title {
+  flex: 1;
+  font-weight: 650;
+}
+
+.supplier-action__go {
+  color: var(--text-subtle);
+}
+
+/* ── Bid application ─────────────────────────────────────────────── */
+.bid-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-l);
+  background: var(--surface);
+}
+
+.bid-summary__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.bid-summary__head h4 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+
+.bid-summary__deadline {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.bid-summary dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.bid-summary dl div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+}
+
+.bid-summary dt {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.bid-summary dd {
+  margin: 0;
+  text-transform: none;
+}
+
+.bid-panel,
+.bid-item {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-l);
+  background: var(--surface);
+}
+
+.bid-item--on {
+  border-color: color-mix(in oklab, var(--brand) 45%, var(--border));
+}

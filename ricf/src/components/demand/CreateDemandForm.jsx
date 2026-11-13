@@ -1,6 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiUrl, getItemCategories, getItemNamesByCategory, getCategoryFields } from '../../config/api';
+import { Plus, Trash } from '@phosphor-icons/react';
+import api, { getItemCategories, getItemNamesByCategory, getCategoryFields } from '../../config/api';
+import { todayInPakistan } from '../../lib/time';
+import { toast } from '../../lib/notify';
+import { Button, Notice, PageHeader, Panel, cx } from '../../ui';
+import './demand.css';
+
+const STEPS = ['Description', 'Items', 'Details'];
 
 const CreateDemandForm = () => {
   const navigate = useNavigate();
@@ -221,11 +228,8 @@ const CreateDemandForm = () => {
       if (!formData.requiredBy) {
         newErrors.requiredBy = 'Required by date is required';
       } else {
-        const selectedDate = new Date(formData.requiredBy);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        if (selectedDate < today) {
+        // YYYY-MM-DD strings compare as dates; "today" is the Pakistan calendar day.
+        if (formData.requiredBy < todayInPakistan()) {
           newErrors.requiredBy = 'Required by date cannot be in the past';
         }
       }
@@ -259,26 +263,11 @@ const CreateDemandForm = () => {
     setError('');
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${apiUrl}/demands`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create demand');
-      }
-
-      // Redirect to dashboard on success
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Error submitting demand:', error);
-      setError(error.message || 'Failed to create demand. Please try again.');
+      await api.post('/demands', formData);
+      toast.success('Demand submitted');
+      navigate('/demands');
+    } catch (err) {
+      setError(err.response?.data?.message || err.response?.data?.error || 'Failed to create demand');
     } finally {
       setLoading(false);
     }
@@ -290,9 +279,8 @@ const CreateDemandForm = () => {
     const fieldValues = item.fieldValues || {};
     const value = fieldValues[field.id] ?? '';
     const errorKey = `item_${index}_field_${field.id}`;
-    const inputClass = `w-full px-3 py-2 border rounded-md text-sm ${
-      errors[errorKey] ? 'border-red-500' : 'border-gray-300'
-    }`;
+    const inputClass = 'ui-input';
+    const invalid = errors[errorKey] ? true : undefined;
 
     if (field.fieldType === 'text') {
       return (
@@ -301,7 +289,7 @@ const CreateDemandForm = () => {
           value={value}
           onChange={(e) => handleFieldValueChange(index, item.categoryId, field.id, e.target.value)}
           className={inputClass}
-          placeholder={field.label}
+          aria-invalid={invalid}
         />
       );
     }
@@ -313,7 +301,7 @@ const CreateDemandForm = () => {
           value={value}
           onChange={(e) => handleFieldValueChange(index, item.categoryId, field.id, e.target.value)}
           className={inputClass}
-          placeholder={field.label}
+          aria-invalid={invalid}
         />
       );
     }
@@ -330,11 +318,10 @@ const CreateDemandForm = () => {
         value={value}
         onChange={(e) => handleFieldValueChange(index, item.categoryId, field.id, e.target.value)}
         disabled={isBlockedByParent}
-        className={`${inputClass} ${isBlockedByParent ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+        className={inputClass}
+        aria-invalid={invalid}
       >
-        <option value="">
-          {isBlockedByParent ? `Select ${field.label} after choosing its parent field` : `Select ${field.label}`}
-        </option>
+        <option value="">{isBlockedByParent ? '—' : 'Select'}</option>
         {options.map(option => (
           <option key={option.id} value={option.id}>{option.value}</option>
         ))}
@@ -346,364 +333,150 @@ const CreateDemandForm = () => {
   // at least one field defined) - a category with nothing to select isn't usable yet.
   const selectableCategories = categories.filter((category) => (category.field_count || 0) > 0);
 
+  const fieldError = (key) => errors[key] && <span className="ui-field__error">{errors[key]}</span>;
+
   return (
-    <div className="container mx-auto p-8">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Create New Demand</h1>
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-        >
-          Cancel
-        </button>
-      </div>
+    <div className="demand-form">
+      <PageHeader title="New demand" actions={<Button onClick={() => navigate('/demands')}>Cancel</Button>} />
 
-      {/* Progress Bar */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-2">
-          <div className={`flex-1 text-center ${currentStep >= 1 ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
-            Description
-          </div>
-          <div className={`flex-1 text-center ${currentStep >= 2 ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
-            Items
-          </div>
-          <div className={`flex-1 text-center ${currentStep >= 3 ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
-            Details
-          </div>
-        </div>
-        <div className="h-2 flex rounded-full overflow-hidden">
-          <div className="bg-blue-600 flex-1"></div>
-          <div className={`${currentStep >= 2 ? 'bg-blue-600' : 'bg-gray-200'} flex-1`}></div>
-          <div className={`${currentStep >= 3 ? 'bg-blue-600' : 'bg-gray-200'} flex-1`}></div>
-        </div>
-      </div>
+      <ol className="demand-steps" aria-label="Steps">
+        {STEPS.map((label, i) => (
+          <li key={label} data-state={currentStep === i + 1 ? 'current' : currentStep > i + 1 ? 'done' : 'todo'}>
+            <span className="demand-steps__n">{i + 1}</span>{label}
+          </li>
+        ))}
+      </ol>
 
-      {/* Error Display */}
-      {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-700">{error}</p>
-        </div>
-      )}
+      {error && <Notice tone="danger">{error}</Notice>}
 
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <form onSubmit={currentStep === 3 ? handleSubmit : e => e.preventDefault()}>
-          {/* Step 1: Description */}
-          {currentStep === 1 && (
-            <div>
-              <h2 className="text-xl font-semibold mb-4">Step 1: Demand Description</h2>
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Describe your demand *
-                </label>
-                <textarea
-                  name="description"
-                  value={formData.description}
-                  onChange={handleChange}
-                  rows="4"
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.description ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                  placeholder="Provide a detailed description of what you are requesting"
-                ></textarea>
-                {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description}</p>}
-                <p className="text-gray-500 text-sm mt-1">
-                  Please be clear and specific about the purpose of this demand.
-                </p>
-              </div>
-            </div>
-          )}
+      <form onSubmit={currentStep === 3 ? handleSubmit : (e) => e.preventDefault()}>
+        {currentStep === 1 && (
+          <Panel>
+            <label className="ui-field">
+              <span className="ui-label">Description</span>
+              <textarea
+                name="description"
+                value={formData.description}
+                onChange={handleChange}
+                rows={5}
+                className="ui-input ui-textarea"
+                aria-invalid={errors.description ? true : undefined}
+                autoFocus
+              />
+              {fieldError('description')}
+            </label>
+          </Panel>
+        )}
 
-          {/* Step 2: Items */}
-          {currentStep === 2 && (
-            <div>
-              <h2 className="text-xl font-semibold mb-4">Step 2: Add Demand Items</h2>
-
-              <div className="mb-4 flex justify-between items-center">
-                <p className="text-gray-600 text-sm">Add all items that you need for this demand.</p>
-                <button
-                  type="button"
-                  onClick={addItem}
-                  className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+        {currentStep === 2 && (
+          <div className="demand-items">
+            {formData.items.map((item, index) => {
+              const fields = fieldsByCategory[item.categoryId] || [];
+              const err = (name) => errors[`item_${index}_${name}`];
+              return (
+                <Panel
+                  key={index}
+                  title={`Item ${index + 1}`}
+                  actions={formData.items.length > 1 && (
+                    <Button size="sm" variant="ghost" className="demand-remove" icon={<Trash size={15} />} aria-label={`Remove item ${index + 1}`} title="Remove item" onClick={() => removeItem(index)} />
+                  )}
                 >
-                  + Add Item
-                </button>
-              </div>
+                  <div className="demand-grid">
+                    <label className="ui-field">
+                      <span className="ui-label">Category</span>
+                      <select className="ui-input" value={item.categoryId} aria-invalid={err('categoryId') ? true : undefined} onChange={(e) => handleItemChange(index, 'categoryId', e.target.value)}>
+                        <option value="">Select</option>
+                        {selectableCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                      </select>
+                      {fieldError(`item_${index}_categoryId`)}
+                      {selectableCategories.length === 0 && <span className="ui-hint">No categories are set up yet.</span>}
+                    </label>
 
-              <div className="space-y-4">
-                {formData.items.map((item, index) => {
-                  const fields = fieldsByCategory[item.categoryId] || [];
+                    {item.categoryId && fields.length === 0 && (
+                      <label className="ui-field">
+                        <span className="ui-label">Item</span>
+                        <select className="ui-input" value={item.itemNameId} aria-invalid={err('itemNameId') ? true : undefined} onChange={(e) => handleItemChange(index, 'itemNameId', e.target.value)}>
+                          <option value="">Select</option>
+                          {(itemNamesByCategory[item.categoryId] || []).map((itemName) => <option key={itemName.id} value={itemName.id}>{itemName.name}</option>)}
+                        </select>
+                        {fieldError(`item_${index}_itemNameId`)}
+                      </label>
+                    )}
 
-                  return (
-                    <div key={index} className="border border-gray-200 rounded-lg p-4 mb-3">
-                      <div className="flex justify-between items-center mb-3">
-                        <h4 className="text-sm font-medium text-gray-800">Item {index + 1}</h4>
-                        {formData.items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeItem(index)}
-                            className="text-red-600 hover:text-red-800 text-sm"
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </div>
+                    {item.categoryId && fields.map((field) => (
+                      <label key={field.id} className="ui-field">
+                        <span className="ui-label">{field.label}{field.isRequired ? '' : ' (optional)'}</span>
+                        {renderCustomField(item, index, field)}
+                        {fieldError(`item_${index}_field_${field.id}`)}
+                      </label>
+                    ))}
 
-                      <div className="grid grid-cols-2 gap-3">
-                        {/* Item Category Dropdown */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Item Category *
-                          </label>
-                          <select
-                            value={item.categoryId}
-                            onChange={(e) => handleItemChange(index, 'categoryId', e.target.value)}
-                            className={`w-full px-3 py-2 border rounded-md text-sm ${
-                              errors[`item_${index}_categoryId`] ? 'border-red-500' : 'border-gray-300'
-                            }`}
-                          >
-                            <option value="">Select Category</option>
-                            {selectableCategories.map((category) => (
-                              <option key={category.id} value={category.id}>
-                                {category.name}
-                              </option>
-                            ))}
-                          </select>
-                          {errors[`item_${index}_categoryId`] && (
-                            <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_categoryId`]}</p>
-                          )}
-                          {selectableCategories.length === 0 && (
-                            <p className="text-gray-500 text-xs mt-1">
-                              No categories are available yet. Ask an admin to configure fields for a category in Unified Item Management.
-                            </p>
-                          )}
-                        </div>
+                    <label className="ui-field">
+                      <span className="ui-label">Quantity</span>
+                      <input type="number" min="1" className="ui-input" value={item.quantity} aria-invalid={err('quantity') ? true : undefined} onChange={(e) => handleItemChange(index, 'quantity', e.target.value)} />
+                      {fieldError(`item_${index}_quantity`)}
+                    </label>
 
-                        {/* Item Name Dropdown - only for categories with no custom fields configured */}
-                        {item.categoryId && fields.length === 0 && (
-                          <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">
-                              Item Name *
-                            </label>
-                            <select
-                              value={item.itemNameId}
-                              onChange={(e) => handleItemChange(index, 'itemNameId', e.target.value)}
-                              disabled={!item.categoryId}
-                              className={`w-full px-3 py-2 border rounded-md text-sm ${
-                                errors[`item_${index}_itemNameId`] ? 'border-red-500' : 'border-gray-300'
-                              } ${!item.categoryId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                            >
-                              <option value="">Select Item</option>
-                              {item.categoryId && itemNamesByCategory[item.categoryId] &&
-                               itemNamesByCategory[item.categoryId].map((itemName) => (
-                                <option key={itemName.id} value={itemName.id}>
-                                  {itemName.name}
-                                </option>
-                              ))}
-                            </select>
-                            {errors[`item_${index}_itemNameId`] && (
-                              <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_itemNameId`]}</p>
-                            )}
-                          </div>
-                        )}
+                    <label className="ui-field">
+                      <span className="ui-label">Unit</span>
+                      <select className="ui-input" value={item.unit} onChange={(e) => handleItemChange(index, 'unit', e.target.value)}>
+                        {unitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                      </select>
+                      {fieldError(`item_${index}_unit`)}
+                    </label>
 
-                        {/* Category-specific custom fields, defined by the admin for this category */}
-                        {item.categoryId && fields.length > 0 && (
-                          <div className="col-span-full border-l-4 border-blue-500 bg-blue-50 p-4 rounded-md">
-                            <h4 className="text-sm font-semibold text-blue-800 mb-3">
-                              {categories.find(c => String(c.id) === String(item.categoryId))?.name || 'Category'} Details
-                            </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              {fields.map(field => (
-                                <div key={field.id}>
-                                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                                    {field.label}{field.isRequired ? ' *' : ''}
-                                  </label>
-                                  {renderCustomField(item, index, field)}
-                                  {errors[`item_${index}_field_${field.id}`] && (
-                                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_field_${field.id}`]}</p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                    <label className="ui-field demand-grid__wide">
+                      <span className="ui-label">Specifications</span>
+                      <textarea rows={3} className="ui-input ui-textarea" value={item.specifications} aria-invalid={err('specifications') ? true : undefined} onChange={(e) => handleItemChange(index, 'specifications', e.target.value)} />
+                      {fieldError(`item_${index}_specifications`)}
+                    </label>
 
-                        {/* Quantity */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Quantity *
-                          </label>
-                          <input
-                            type="number"
-                            value={item.quantity}
-                            onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
-                            min="1"
-                            className={`w-full px-3 py-2 border rounded-md text-sm ${
-                              errors[`item_${index}_quantity`] ? 'border-red-500' : 'border-gray-300'
-                            }`}
-                            placeholder="Qty"
-                          />
-                          {errors[`item_${index}_quantity`] && (
-                            <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_quantity`]}</p>
-                          )}
-                        </div>
-
-                        {/* Unit Dropdown */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Unit *
-                          </label>
-                          <select
-                            value={item.unit}
-                            onChange={(e) => handleItemChange(index, 'unit', e.target.value)}
-                            className={`w-full px-3 py-2 border rounded-md text-sm ${
-                              errors[`item_${index}_unit`] ? 'border-red-500' : 'border-gray-300'
-                            }`}
-                          >
-                            {unitOptions.map((unit) => (
-                              <option key={unit} value={unit}>
-                                {unit}
-                              </option>
-                            ))}
-                          </select>
-                          {errors[`item_${index}_unit`] && (
-                            <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_unit`]}</p>
-                          )}
-                        </div>
-
-                        {/* Specifications */}
-                        <div className="col-span-2">
-                          <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Item Specifications *
-                          </label>
-                          <textarea
-                            value={item.specifications}
-                            onChange={(e) => handleItemChange(index, 'specifications', e.target.value)}
-                            className={`w-full px-3 py-2 border rounded-md text-sm resize-vertical ${
-                              errors[`item_${index}_specifications`] ? 'border-red-500' : 'border-gray-300'
-                            }`}
-                            placeholder="Enter detailed specifications for this item"
-                            rows="3"
-                          />
-                          {errors[`item_${index}_specifications`] && (
-                            <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_specifications`]}</p>
-                          )}
-                        </div>
-
-                        {/* Remarks */}
-                        <div className="col-span-2">
-                          <label className="block text-xs font-medium text-gray-600 mb-1">
-                            Remarks (Optional)
-                          </label>
-                          <input
-                            type="text"
-                            value={item.remarks}
-                            onChange={(e) => handleItemChange(index, 'remarks', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                            placeholder="Any remarks"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Urgency & Required Date */}
-          {currentStep === 3 && (
-            <div>
-              <h2 className="text-xl font-semibold mb-4">Step 3: Demand Details</h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Urgency Level
-                  </label>
-                  <select
-                    name="urgency"
-                    value={formData.urgency}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="low">Low</option>
-                    <option value="normal">Normal</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                  <p className="text-gray-500 text-sm mt-1">
-                    Select the appropriate urgency level for this demand.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Required By Date *
-                  </label>
-                  <input
-                    type="date"
-                    name="requiredBy"
-                    value={formData.requiredBy}
-                    onChange={handleChange}
-                    min={new Date().toISOString().split('T')[0]}
-                    className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                      errors.requiredBy ? 'border-red-500' : 'border-gray-300'
-                    }`}
-                  />
-                  {errors.requiredBy && <p className="text-red-500 text-xs mt-1">{errors.requiredBy}</p>}
-                  <p className="text-gray-500 text-sm mt-1">
-                    When do you need this demand to be fulfilled?
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 mb-6">
-                <h3 className="font-medium text-blue-800 mb-2">Summary</h3>
-                <p className="text-blue-700 mb-1">
-                  <span className="font-medium">Description:</span> {formData.description}
-                </p>
-                <p className="text-blue-700">
-                  <span className="font-medium">Total Items:</span> {formData.items.length}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Navigation Buttons */}
-          <div className="flex justify-between mt-6">
-            {currentStep > 1 && (
-              <button
-                type="button"
-                onClick={handlePreviousStep}
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-              >
-                Previous
-              </button>
-            )}
-
-            <div className="ml-auto">
-              {currentStep < 3 ? (
-                <button
-                  type="button"
-                  onClick={handleNextStep}
-                  className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  Next
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
-                >
-                  {loading ? 'Submitting...' : 'Submit Demand'}
-                </button>
-              )}
-            </div>
+                    <label className="ui-field demand-grid__wide">
+                      <span className="ui-label">Remarks (optional)</span>
+                      <input type="text" className="ui-input" value={item.remarks} onChange={(e) => handleItemChange(index, 'remarks', e.target.value)} />
+                    </label>
+                  </div>
+                </Panel>
+              );
+            })}
+            <Button icon={<Plus size={15} weight="bold" />} onClick={addItem} className="demand-add">Add item</Button>
           </div>
-        </form>
-      </div>
+        )}
+
+        {currentStep === 3 && (
+          <Panel>
+            <div className="demand-grid">
+              <label className="ui-field">
+                <span className="ui-label">Urgency</span>
+                <select name="urgency" className="ui-input" value={formData.urgency} onChange={handleChange}>
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+              <label className="ui-field">
+                <span className="ui-label">Required by</span>
+                <input type="date" name="requiredBy" className="ui-input" value={formData.requiredBy} min={todayInPakistan()} aria-invalid={errors.requiredBy ? true : undefined} onChange={handleChange} />
+                {fieldError('requiredBy')}
+              </label>
+            </div>
+            <dl className="demand-summary">
+              <div><dt>Description</dt><dd>{formData.description}</dd></div>
+              <div><dt>Items</dt><dd>{formData.items.length}</dd></div>
+            </dl>
+          </Panel>
+        )}
+
+        <div className={cx('demand-nav', currentStep === 1 && 'demand-nav--end')}>
+          {currentStep > 1 && <Button onClick={handlePreviousStep}>Back</Button>}
+          {currentStep < 3 ? (
+            <Button variant="primary" onClick={handleNextStep}>Next</Button>
+          ) : (
+            <Button variant="primary" type="submit" loading={loading}>Submit demand</Button>
+          )}
+        </div>
+      </form>
     </div>
   );
 };

@@ -1,25 +1,15 @@
-const { getDatabase } = require('../config/database');
+const { getDatabase, dbAll, dbGet, dbRun } = require('../db');
 const EmailService = require('../utils/emailService');
 
 // Get all pending grievance notifications for purchase department
 const getPendingGrievances = async (req, res) => {
     try {
-        const db = getDatabase();
-        
-        const grievances = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
-                 FROM purchase_department_grievances pg
-                 JOIN demand_tenders dt ON pg.tender_id = dt.id
-                 JOIN demands d ON dt.demand_id = d.id
-                 WHERE pg.status = 'pending'
-                 ORDER BY pg.created_at DESC`,
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const grievances = await dbAll(`SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
+         FROM purchase_department_grievances pg
+         JOIN demand_tenders dt ON pg.tender_id = dt.id
+         JOIN demands d ON dt.demand_id = d.id
+         WHERE pg.status = 'pending'
+         ORDER BY pg.created_at DESC`);
 
         res.json({
             success: true,
@@ -38,24 +28,16 @@ const getPendingGrievances = async (req, res) => {
 const approveGrievance = async (req, res) => {
     try {
         const { grievanceId } = req.params;
-        const { approvalComments, reviewedBy } = req.body;
+        const { approvalComments } = req.body;
+        const reviewedBy = req.user.name || req.user.username;
         const db = getDatabase();
 
         // Get grievance details
-        const grievance = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
-                 FROM purchase_department_grievances pg
-                 JOIN demand_tenders dt ON pg.tender_id = dt.id
-                 JOIN demands d ON dt.demand_id = d.id
-                 WHERE pg.id = ?`,
-                [grievanceId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        const grievance = await dbGet(`SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
+         FROM purchase_department_grievances pg
+         JOIN demand_tenders dt ON pg.tender_id = dt.id
+         JOIN demands d ON dt.demand_id = d.id
+         WHERE pg.id = ?`, [grievanceId]);
 
         if (!grievance) {
             return res.status(404).json({
@@ -65,18 +47,9 @@ const approveGrievance = async (req, res) => {
         }
 
         // Update grievance status to approved
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE purchase_department_grievances 
-                 SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, approval_comments = ?
-                 WHERE id = ?`,
-                [reviewedBy, approvalComments, grievanceId],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`UPDATE purchase_department_grievances 
+         SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, approval_comments = ?
+         WHERE id = ?`, [reviewedBy, approvalComments, grievanceId]);
 
         // Send email notification to supplier
         const emailService = new EmailService();
@@ -89,7 +62,6 @@ const approveGrievance = async (req, res) => {
                 grievance.contact_person
             );
 
-            console.log(`✅ Grievance email sent successfully to ${grievance.supplier_name}`);
         } catch (emailError) {
             console.error(`❌ Failed to send grievance email:`, emailError);
             // Update status to indicate email sending failed
@@ -121,22 +93,13 @@ const approveGrievance = async (req, res) => {
 const rejectGrievance = async (req, res) => {
     try {
         const { grievanceId } = req.params;
-        const { rejectionComments, reviewedBy } = req.body;
-        const db = getDatabase();
+        const { rejectionComments } = req.body;
+        const reviewedBy = req.user.name || req.user.username;
 
         // Update grievance status to rejected
-        await new Promise((resolve, reject) => {
-            db.run(
-                `UPDATE purchase_department_grievances 
-                 SET status = 'rejected', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, approval_comments = ?
-                 WHERE id = ?`,
-                [reviewedBy, rejectionComments, grievanceId],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve();
-                }
-            );
-        });
+        await dbRun(`UPDATE purchase_department_grievances 
+         SET status = 'rejected', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, approval_comments = ?
+         WHERE id = ?`, [reviewedBy, rejectionComments, grievanceId]);
 
         res.json({
             success: true,
@@ -154,21 +117,11 @@ const rejectGrievance = async (req, res) => {
 // Get all grievances (pending, approved, rejected) for purchase department
 const getAllGrievances = async (req, res) => {
     try {
-        const db = getDatabase();
-        
-        const grievances = await new Promise((resolve, reject) => {
-            db.all(
-                `SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
-                 FROM purchase_department_grievances pg
-                 JOIN demand_tenders dt ON pg.tender_id = dt.id
-                 JOIN demands d ON dt.demand_id = d.id
-                 ORDER BY pg.created_at DESC`,
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
+        const grievances = await dbAll(`SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
+         FROM purchase_department_grievances pg
+         JOIN demand_tenders dt ON pg.tender_id = dt.id
+         JOIN demands d ON dt.demand_id = d.id
+         ORDER BY pg.created_at DESC`);
 
         res.json({
             success: true,
@@ -186,7 +139,8 @@ const getAllGrievances = async (req, res) => {
 // Bulk approve grievances
 const bulkApproveGrievances = async (req, res) => {
     try {
-        const { grievanceIds, approvalComments, reviewedBy } = req.body;
+        const { grievanceIds, approvalComments } = req.body;
+        const reviewedBy = req.user.name || req.user.username;
         const db = getDatabase();
         const emailService = new EmailService();
 
@@ -197,20 +151,11 @@ const bulkApproveGrievances = async (req, res) => {
         for (const grievanceId of grievanceIds) {
             try {
                 // Get grievance details
-                const grievance = await new Promise((resolve, reject) => {
-                    db.get(
-                        `SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
-                         FROM purchase_department_grievances pg
-                         JOIN demand_tenders dt ON pg.tender_id = dt.id
-                         JOIN demands d ON dt.demand_id = d.id
-                         WHERE pg.id = ?`,
-                        [grievanceId],
-                        (err, row) => {
-                            if (err) reject(err);
-                            else resolve(row);
-                        }
-                    );
-                });
+                const grievance = await dbGet(`SELECT pg.*, d.item_name as tender_title, dt.id as tender_number
+                 FROM purchase_department_grievances pg
+                 JOIN demand_tenders dt ON pg.tender_id = dt.id
+                 JOIN demands d ON dt.demand_id = d.id
+                 WHERE pg.id = ?`, [grievanceId]);
 
                 if (!grievance) {
                     results.push({ grievanceId, status: 'failed', reason: 'Grievance not found' });
@@ -219,18 +164,9 @@ const bulkApproveGrievances = async (req, res) => {
                 }
 
                 // Update grievance status to approved
-                await new Promise((resolve, reject) => {
-                    db.run(
-                        `UPDATE purchase_department_grievances 
-                         SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, approval_comments = ?
-                         WHERE id = ?`,
-                        [reviewedBy, approvalComments, grievanceId],
-                        function(err) {
-                            if (err) reject(err);
-                            else resolve();
-                        }
-                    );
-                });
+                await dbRun(`UPDATE purchase_department_grievances 
+                 SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, approval_comments = ?
+                 WHERE id = ?`, [reviewedBy, approvalComments, grievanceId]);
 
                 // Send email notification to supplier
                 try {
